@@ -1,0 +1,28 @@
+{
+  "id": "v07",
+  "name": "said_mismatch",
+  "description": "ACDC SAID doesn't match computed hash → INVALID (requires SAID verification)",
+  "tier": 2,
+  "skip_reason": "SAID verification not implemented (Tier 2)",
+  "input": {
+    "vvp_identity_header": "",
+    "passport_jwt": "",
+    "call_context": {}
+  },
+  "artifacts": {
+    "evd_body": null,
+    "evd_content_type": "application/json",
+    "http_status_evd": 200,
+    "should_timeout_evd": false
+  },
+  "verification_context": {
+    "reference_time_t": 0,
+    "clock_skew": 300,
+    "max_token_age": 300
+  },
+  "expected": {
+    "overall_status": "INVALID",
+    "root_claim": null,
+    "errors": [{"code": "ACDC_SAID_MISMATCH"}]
+  }
+}

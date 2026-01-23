@@ -1,6 +1,6 @@
 # Verifiable Voice Protocol (VVP) Verifier
 
-**Authoritative Specification --- v1.3**
+**Authoritative Specification — v1.3 (FINAL)**
 
 ------------------------------------------------------------------------
 
@@ -14,6 +14,8 @@ rules (how truth is determined) - Output structures (how results are
 expressed) - Constraints for implementations and coding agents
 
 Non‑normative guidance is explicitly marked.
+
+This document is considered specification-locked; future changes require an explicit version bump.
 
 ------------------------------------------------------------------------
 
@@ -124,7 +126,7 @@ evidence - INDETERMINATE --- insufficient or unverifiable evidence
 
 ### 3.3 Claim Tree
 
-Each parent-child relationship in the claim tree MUST declare whether the child is REQUIRED or OPTIONAL for the parent’s semantics. If not declared, the child relationship MUST be treated as REQUIRED (conservative default).
+Each parent-child relationship in the claim tree MUST declare whether the child is REQUIRED or OPTIONAL for the parent’s semantics. Omission of this declaration is a schema violation and MUST be treated as an error by the verifier.
 
 Verification output is a recursive **claim tree**.
 
@@ -137,7 +139,6 @@ Verification output is a recursive **claim tree**.
     -   Else → parent MAY be VALID
 -   OPTIONAL children MUST NOT invalidate a parent
 
-Non-normative note: REQUIRED vs OPTIONAL is a schema-level decision. Early prototypes MAY treat all children as REQUIRED to be conservative.
 Implementation hint: represent child dependencies as objects with a boolean flag, e.g., { "node": <claim-node>, "required": true }.
 
 ------------------------------------------------------------------------
@@ -180,7 +181,7 @@ Rules: - MUST decode via base64url - MUST enforce iat/exp - MUST reject
 malformed JSON - MUST bind kid to PASSporT issuer
 - MUST allow configurable clock skew; default policy for this project is ±300 seconds.
 - SHOULD use a UTC time source synchronized via standard system mechanisms (e.g., NTP) to reduce false INVALIDs.
-- `exp` is OPTIONAL; if absent, implementations MUST rely on `iat` plus local maximum-age policy.
+- `exp` is OPTIONAL; if absent, implementations MUST enforce a maximum token age of 300 seconds derived from `iat`, unless explicitly configured otherwise.
 - `iat` values in the future within the allowed clock skew MUST be accepted; values beyond skew MUST be rejected.
 
 ------------------------------------------------------------------------
@@ -219,6 +220,44 @@ malformed JSON - MUST bind kid to PASSporT issuer
 
 ------------------------------------------------------------------------
 
+### 4.3A overall_status Derivation (Normative)
+
+For responses that contain `claims`, the verifier MUST derive `overall_status` from the set of root claims:
+- If any root claim is INVALID → overall_status MUST be INVALID.
+- Else if any root claim is INDETERMINATE → overall_status MUST be INDETERMINATE.
+- Else → overall_status MUST be VALID.
+For responses that contain only `errors` (no `claims`), the verifier MUST derive `overall_status` as follows:
+- If any error has recoverable=false → overall_status MUST be INVALID.
+- Else → overall_status MUST be INDETERMINATE.
+
+A response MAY contain both `claims` and `errors`. In such cases, the following precedence rules apply:
+- Non-recoverable errors (`recoverable=false`) take precedence and force `overall_status` to `INVALID`.
+- Recoverable errors may coexist with claims and do not override a worse claim-derived status.
+- The `overall_status` is the maximum severity across all errors and claims, where `INVALID` > `INDETERMINATE` > `VALID`.
+
+------------------------------------------------------------------------
+
+### 4.3B Claim Node Schema (Normative)
+
+Each child relationship in a claim node MUST explicitly declare whether it is REQUIRED or OPTIONAL.
+
+A claim node is a JSON object with the following fields:
+
+- `name`: string — the claim name
+- `status`: string — one of `"VALID"`, `"INVALID"`, or `"INDETERMINATE"`
+- `reasons`: array of strings — explanations for the status
+- `evidence`: array of strings — identifiers of supporting evidence
+- `children`: array of child link objects
+
+Each child link object has the following fields:
+
+- `required`: boolean — true if the child is REQUIRED, false if OPTIONAL
+- `node`: claim node — the child claim node
+
+Implementations MUST NOT represent `children` as a bare list of claim nodes without the `required` flag.
+
+------------------------------------------------------------------------
+
 ### 4.3 Successful Verification Response
 
 ``` json
@@ -247,42 +286,6 @@ malformed JSON - MUST bind kid to PASSporT issuer
   ]
 }
 ```
-
-### 4.3B Claim Node Schema (Normative)
-
-Each child relationship in a claim node MUST explicitly declare whether it is REQUIRED or OPTIONAL.
-
-A claim node is a JSON object with the following fields:
-
-- `name`: string — the claim name
-- `status`: string — one of `"VALID"`, `"INVALID"`, or `"INDETERMINATE"`
-- `reasons`: array of strings — explanations for the status
-- `evidence`: array of strings — identifiers of supporting evidence
-- `children`: array of child link objects
-
-Each child link object has the following fields:
-
-- `required`: boolean — true if the child is REQUIRED, false if OPTIONAL
-- `node`: claim node — the child claim node
-
-Implementations MUST NOT represent `children` as a bare list of claim nodes without the `required` flag.
-
-------------------------------------------------------------------------
-
-### 4.3A overall_status Derivation (Normative)
-
-For responses that contain `claims`, the verifier MUST derive `overall_status` from the set of root claims:
-- If any root claim is INVALID → overall_status MUST be INVALID.
-- Else if any root claim is INDETERMINATE → overall_status MUST be INDETERMINATE.
-- Else → overall_status MUST be VALID.
-For responses that contain only `errors` (no `claims`), the verifier MUST derive `overall_status` as follows:
-- If any error has recoverable=false → overall_status MUST be INVALID.
-- Else → overall_status MUST be INDETERMINATE.
-
-A response MAY contain both `claims` and `errors`. In such cases, the following precedence rules apply:
-- Non-recoverable errors (`recoverable=false`) take precedence and force `overall_status` to `INVALID`.
-- Recoverable errors may coexist with claims and do not override a worse claim-derived status.
-- The `overall_status` is the maximum severity across all errors and claims, where `INVALID` > `INDETERMINATE` > `VALID`.
 
 ------------------------------------------------------------------------
 
