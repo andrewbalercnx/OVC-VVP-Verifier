@@ -1,14 +1,14 @@
-## Review: Phase 2 - VVP-Identity Header Parser
+## Review: Phase 3 - PASSporT JWT Verification
 
 **Verdict:** APPROVED
 
 ### Findings
-- [Low]: Consider adding type validation for `iat`/`exp` (must be integers) and for `ppt`/`kid`/`evd` (must be non-empty strings) to prevent accepting malformed JSON types; the plan implies presence checks but doesn’t explicitly require type validation.
+- [Low]: Consider adding a note that `exp > iat` and exp/iat drift failures are treated as `PASSPORT_PARSE_FAILED` because they’re binding/protocol violations, to avoid confusion with expiry policy errors in downstream handling.
 
 ### Answers to Open Questions
-1. OOBI validation: Defer KERI/CESR parsing to Phase 4 and treat `kid`/`evd` as opaque strings in Phase 2; avoid URL validation that could reject valid OOBI schemes.
-2. Error style: Typed exceptions with error codes are the right approach; keep parser return type simple.
-3. `ppt` validation: Only require presence in Phase 2; bind/validate value during PASSporT verification per §5.2.
+1. `typ` validation: Ignoring `typ` is acceptable since v1.4 doesn’t mandate it; keep it untouched unless you explicitly add local policy.
+2. Binding failure error code: Using `PASSPORT_PARSE_FAILED` for ppt/kid/iat/exp binding mismatches is consistent with §4.2A and keeps `PASSPORT_EXPIRED` reserved for true expiry policy failures.
+3. `call-reason` mapping: `call-reason` → `call_reason` with raw payload retention is good.
 
 ### Additional Recommendations
-- Add a test that rejects non-integer `iat`/`exp` and empty string `kid`/`evd` values, mapping to `VVP_IDENTITY_INVALID`.
+- None required; plan aligns with v1.4 §§5.0–5.4 and cleanly separates spec‑mandated vs local policy checks.

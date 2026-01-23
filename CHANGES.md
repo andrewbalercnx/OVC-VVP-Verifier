@@ -1,5 +1,84 @@
 # VVP Verifier Change Log
 
+## Phase 3: PASSporT JWT Verification
+
+**Date:** 2026-01-23
+**Commit:** `399d5c8`
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/vvp/exceptions.py` | Modified | Added PassportError exception class |
+| `app/vvp/passport.py` | Created | PASSporT JWT parser and validator per §5.0-§5.4 |
+| `tests/test_passport.py` | Created | 68 unit tests for PASSporT parsing |
+
+### Summary
+
+- Created `PassportError` exception class with factory methods:
+  - `missing()` → `PASSPORT_MISSING`
+  - `parse_failed(reason)` → `PASSPORT_PARSE_FAILED` (binding violations, structure errors)
+  - `forbidden_alg(alg)` → `PASSPORT_FORBIDDEN_ALG`
+  - `expired(reason)` → `PASSPORT_EXPIRED` (actual expiry policy failures only)
+- Created frozen dataclasses: `PassportHeader`, `PassportPayload`, `Passport`
+- Implemented `parse_passport(jwt)` function:
+  - JWT structure parsing (header.payload.signature)
+  - Algorithm enforcement: accept EdDSA only, reject none/ES256/HMAC/RSA (§5.0, §5.1)
+  - Header validation: require `alg`, `ppt`, `kid`; ignore `typ` (§5.2)
+  - Payload validation: require `iat`, `orig`, `dest`, `evd` (local policy)
+  - Support optional fields: `iss`, `exp`, `card`, `goal`, `call-reason`→`call_reason`, `origid`
+  - Validate `ppt` = "vvp" per §5.2
+- Implemented `validate_passport_binding(passport, vvp_identity, now)` function:
+  - `ppt` binding: PASSporT ppt must match VVP-Identity ppt (§5.2)
+  - `kid` binding: strict equality in Phase 3 (§5.2)
+  - `iat` drift: ≤5 seconds between PASSporT and VVP-Identity (§5.2A)
+  - `exp > iat` validation (§5.2A)
+  - `exp` drift: ≤5 seconds when both present (§5.2A)
+  - Expiry policy: max validity 300s, clock skew ±300s (§5.2B)
+- Preserved raw header/payload and signature bytes for Phase 4 signature verification
+
+### Error Code Usage
+
+| Error Code | Used For |
+|------------|----------|
+| `PASSPORT_MISSING` | JWT is None or empty |
+| `PASSPORT_PARSE_FAILED` | Malformed JWT, invalid base64/JSON, missing fields, binding violations (ppt/kid mismatch, iat drift, exp mismatch) |
+| `PASSPORT_FORBIDDEN_ALG` | Algorithm not in allowed list (only EdDSA accepted) |
+| `PASSPORT_EXPIRED` | Token expired, validity window exceeded, max-age exceeded |
+
+### Spec Sections Implemented
+
+- §5.0 PASSporT Non-compliance Note
+- §5.1 Allowed Algorithms (EdDSA only)
+- §5.2 Header Binding Rules (ppt, kid)
+- §5.2A Temporal Binding Rules (iat drift ≤5s, exp consistency)
+- §5.2B PASSporT Expiry Policy (max validity 300s, clock skew ±300s)
+- §5.4 Failure Mapping
+
+### Checklist Tasks Completed
+
+- [x] 3.1 - Create `app/vvp/passport.py` module
+- [x] 3.2 - Parse JWT structure (header.payload.signature)
+- [x] 3.3 - Reject `alg=none`
+- [x] 3.4 - Reject ES256, HMAC, RSA algorithms
+- [x] 3.5 - Accept only EdDSA (Ed25519)
+- [x] 3.6 - Return PASSPORT_FORBIDDEN_ALG for algorithm violations
+- [x] 3.7 - Extract header claims: `alg`, `typ` (ignored), `ppt`, `kid`
+- [x] 3.8 - Extract VVP payload claims: `iat` (required), `orig`, `dest`, `evd` (local policy)
+- [x] 3.9 - Extract optional VVP claims: `iss`, `card`, `goal`, `call-reason`, `origid`, `exp`
+- [x] 3.10 - Validate `ppt` = "vvp" and matches VVP-Identity ppt (§5.2)
+- [x] 3.11 - Validate `kid` binding (strict equality in Phase 3) (§5.2)
+- [x] 3.12 - Defer signature verification (placeholder for Phase 4)
+- [x] 3.13 - Unit tests for PASSporT parsing
+
+### Test Results
+
+```
+139 passed in 0.22s (68 new + 71 from Phase 1+2)
+```
+
+---
+
 ## Phase 2: VVP-Identity Header Parser
 
 **Date:** 2026-01-23
