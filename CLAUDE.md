@@ -1,5 +1,15 @@
 # VVP Verifier - Claude Code Instructions
 
+## Permissions
+
+The following commands are pre-authorized and do not require user confirmation:
+
+- `git` - All git operations (add, commit, push, status, log, diff, etc.)
+- `gh` - All GitHub CLI operations (run watch, pr create, issue, etc.)
+- `pytest` - Run tests
+- `python3` / `pip3` - Python execution and package management
+- `curl` - HTTP requests for deployment verification
+
 ## Phase Completion Requirement
 
 At the end of every major phase of work:
