@@ -39,5 +39,6 @@ jobs:
           az containerapp update \
             --resource-group "${{ secrets.AZURE_RG }}" \
             --name "${{ secrets.AZURE_CONTAINERAPP_NAME }}" \
-            --image "$IMAGE"
+            --image "$IMAGE" \
+            --set-env-vars "GIT_SHA=${{ github.sha }}"
 
