@@ -65,8 +65,15 @@ def valid_payload(iat: int = None) -> dict:
     }
 
 
-def valid_vvp_identity(iat: int = None, exp: int = None) -> VVPIdentity:
-    """Return a valid VVPIdentity for binding tests."""
+def valid_vvp_identity(iat: int = None, exp: int = None, exp_provided: bool = False) -> VVPIdentity:
+    """Return a valid VVPIdentity for binding tests.
+
+    Args:
+        iat: Issued-at timestamp (defaults to current time)
+        exp: Expiry timestamp (defaults to iat + 300)
+        exp_provided: Whether exp was explicitly provided in the header.
+                      Defaults to False to simulate computed default per §4.1A.
+    """
     if iat is None:
         iat = int(time.time())
     if exp is None:
@@ -77,6 +84,7 @@ def valid_vvp_identity(iat: int = None, exp: int = None) -> VVPIdentity:
         evd="oobi:http://example.com/oobi/EExampleAID123",
         iat=iat,
         exp=exp,
+        exp_provided=exp_provided,
     )
 
 
@@ -524,6 +532,7 @@ class TestBindingValidation:
             evd="oobi:http://example.com/oobi/EExampleAID123",
             iat=now,
             exp=now + 300,
+            exp_provided=False,
         )
         with pytest.raises(PassportError) as exc:
             validate_passport_binding(passport, identity, now)
@@ -540,6 +549,7 @@ class TestBindingValidation:
             evd="oobi:http://example.com/oobi/EExampleAID123",
             iat=now,
             exp=now + 300,
+            exp_provided=False,
         )
         with pytest.raises(PassportError) as exc:
             validate_passport_binding(passport, identity, now)
@@ -632,6 +642,7 @@ class TestTemporalBinding:
             evd="oobi:http://example.com/oobi/EExampleAID123",
             iat=now,
             exp=identity_exp,
+            exp_provided=True,  # Explicit exp for drift check
         )
         with pytest.raises(PassportError) as exc:
             validate_passport_binding(passport, identity, now)
@@ -652,6 +663,7 @@ class TestTemporalBinding:
             evd="oobi:http://example.com/oobi/EExampleAID123",
             iat=now,
             exp=identity_exp,
+            exp_provided=True,  # Explicit exp for drift check
         )
         # Should not raise
         validate_passport_binding(passport, identity, now)
@@ -677,6 +689,7 @@ class TestExpiryPolicy:
             evd="oobi:http://example.com/oobi/EExampleAID123",
             iat=now,
             exp=now + 400,
+            exp_provided=True,  # Explicit exp for drift check
         )
         with pytest.raises(PassportError) as exc:
             validate_passport_binding(passport, identity, now)
@@ -706,6 +719,7 @@ class TestExpiryPolicy:
             evd="oobi:http://example.com/oobi/EExampleAID123",
             iat=past,
             exp=past + 100,
+            exp_provided=True,  # Explicit exp
         )
         with pytest.raises(PassportError) as exc:
             validate_passport_binding(passport, identity, now)
@@ -727,23 +741,26 @@ class TestExpiryPolicy:
             evd="oobi:http://example.com/oobi/EExampleAID123",
             iat=iat_time,
             exp=exp_time,
+            exp_provided=True,  # Explicit exp
         )
         # Should not raise (within 300s clock skew)
         validate_passport_binding(passport, identity, now)
 
     def test_max_age_exceeded_no_exp(self):
-        """exp absent, max-age exceeded → PASSPORT_EXPIRED."""
+        """exp absent (both), max-age exceeded → PASSPORT_EXPIRED."""
         now = int(time.time())
         old_iat = now - 1000  # Very old
         payload = valid_payload(old_iat)
-        # No exp field
+        # No exp field in PASSporT
         passport = parse_passport(make_jwt(valid_header(), payload))
+        # VVP-Identity exp computed (not explicit) - tests §5.2B max-age policy
         identity = VVPIdentity(
             ppt="vvp",
             kid="did:keri:EExampleAID123",
             evd="oobi:http://example.com/oobi/EExampleAID123",
             iat=old_iat,
-            exp=old_iat + 300,  # Identity always has exp
+            exp=old_iat + 300,
+            exp_provided=False,  # Computed default - follow max-age policy
         )
         with pytest.raises(PassportError) as exc:
             validate_passport_binding(passport, identity, now)
@@ -751,21 +768,48 @@ class TestExpiryPolicy:
         assert "max-age" in exc.value.message.lower()
 
     def test_max_age_within_limit_no_exp(self):
-        """exp absent, within max-age → Valid."""
+        """exp absent (both computed), within max-age → Valid per §5.2B."""
         now = int(time.time())
         recent_iat = now - 100  # Recent (within 300s + 300s skew)
         payload = valid_payload(recent_iat)
-        # No exp field
+        # No exp field in PASSporT
         passport = parse_passport(make_jwt(valid_header(), payload))
+        # VVP-Identity exp computed (not explicit) - tests §5.2B max-age policy
         identity = VVPIdentity(
             ppt="vvp",
             kid="did:keri:EExampleAID123",
             evd="oobi:http://example.com/oobi/EExampleAID123",
             iat=recent_iat,
-            exp=recent_iat + 300,  # Identity always has exp
+            exp=recent_iat + 300,
+            exp_provided=False,  # Computed default - follow max-age policy
         )
-        # Should not raise
+        # Should not raise - both exp absent, within max-age per §5.2B
         validate_passport_binding(passport, identity, now)
+
+    def test_exp_omission_rejected_when_identity_exp_explicit(self):
+        """PASSporT exp absent, VVP-Identity exp explicit → PASSPORT_EXPIRED per §5.2A.
+
+        §5.2A: "If VVP-Identity exp is present but PASSporT exp is absent,
+        the verifier MUST treat the PASSporT as expired unless explicitly
+        configured to allow exp omission (default: reject)."
+        """
+        now = int(time.time())
+        payload = valid_payload(now)
+        # No exp field in PASSporT
+        passport = parse_passport(make_jwt(valid_header(), payload))
+        # VVP-Identity has explicit exp
+        identity = VVPIdentity(
+            ppt="vvp",
+            kid="did:keri:EExampleAID123",
+            evd="oobi:http://example.com/oobi/EExampleAID123",
+            iat=now,
+            exp=now + 300,
+            exp_provided=True,  # Explicit exp - triggers §5.2A rejection
+        )
+        with pytest.raises(PassportError) as exc:
+            validate_passport_binding(passport, identity, now)
+        assert exc.value.code == ErrorCode.PASSPORT_EXPIRED
+        assert "exp absent" in exc.value.message.lower() or "omission" in exc.value.message.lower()
 
 
 # =============================================================================

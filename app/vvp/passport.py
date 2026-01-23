@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from app.core.config import (
+    ALLOW_PASSPORT_EXP_OMISSION,
     ALLOWED_ALGORITHMS,
     CLOCK_SKEW_SECONDS,
     FORBIDDEN_ALGORITHMS,
@@ -189,11 +190,15 @@ def validate_passport_binding(
             )
     else:
         # PASSporT exp absent - check if VVP-Identity had explicit exp
-        # VVP-Identity always computes exp, so we check if it was explicit
-        # by seeing if identity_exp != iat + MAX_TOKEN_AGE_SECONDS
-        # For now, we allow exp omission if both are effectively using default
-        # This matches §5.2A: "unless explicitly configured to allow exp omission"
-        pass  # Allow exp omission for now (configurable policy)
+        # §5.2A: "If VVP-Identity exp is present but PASSporT exp is absent,
+        # the verifier MUST treat the PASSporT as expired unless explicitly
+        # configured to allow exp omission (default: reject)."
+        if vvp_identity.exp_provided and not ALLOW_PASSPORT_EXP_OMISSION:
+            raise PassportError.expired(
+                f"PASSporT exp absent but VVP-Identity exp explicitly provided "
+                f"(VVP-Identity exp={identity_exp}); configure ALLOW_PASSPORT_EXP_OMISSION "
+                f"to permit this"
+            )
 
     # §5.2B: Expiry policy
     _validate_expiry(passport, now)

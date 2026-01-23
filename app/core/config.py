@@ -46,6 +46,11 @@ MAX_TOKEN_AGE_SECONDS: int = 300
 # §5.2B: "unless explicitly configured otherwise"
 MAX_PASSPORT_VALIDITY_SECONDS: int = 300
 
+# Allow PASSporT exp omission when VVP-Identity has explicit exp
+# §5.2A: "unless explicitly configured to allow exp omission (default: reject)"
+# Default is False (reject) per spec
+ALLOW_PASSPORT_EXP_OMISSION: bool = False
+
 # =============================================================================
 # POLICY CONSTANTS (spec requires enforcement, values are implementation choice)
 # =============================================================================

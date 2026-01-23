@@ -25,12 +25,15 @@ class VVPIdentity:
         evd: Evidence/dossier URL - opaque OOBI reference per §4.1B
         iat: Issued-at timestamp (seconds since epoch)
         exp: Expiry timestamp (computed from iat if absent in header)
+        exp_provided: True if exp was explicitly provided in the header,
+                      False if computed as default. Used for §5.2A binding.
     """
     ppt: str
     kid: str
     evd: str
     iat: int
     exp: int
+    exp_provided: bool = False
 
 
 def parse_vvp_identity(header: Optional[str]) -> VVPIdentity:
@@ -67,9 +70,9 @@ def parse_vvp_identity(header: Optional[str]) -> VVPIdentity:
     _validate_iat_not_future(iat)
 
     # Step 6: Handle optional exp
-    exp = _get_optional_exp(data, iat)
+    exp, exp_provided = _get_optional_exp(data, iat)
 
-    return VVPIdentity(ppt=ppt, kid=kid, evd=evd, iat=iat, exp=exp)
+    return VVPIdentity(ppt=ppt, kid=kid, evd=evd, iat=iat, exp=exp, exp_provided=exp_provided)
 
 
 def _base64url_decode(encoded: str) -> bytes:
@@ -134,17 +137,23 @@ def _validate_iat_not_future(iat: int) -> None:
         )
 
 
-def _get_optional_exp(data: dict[str, Any], iat: int) -> int:
-    """Get exp field, computing default if absent."""
+def _get_optional_exp(data: dict[str, Any], iat: int) -> tuple[int, bool]:
+    """Get exp field, computing default if absent.
+
+    Returns:
+        Tuple of (exp_value, exp_provided) where exp_provided is True if
+        exp was explicitly in the header, False if computed as default.
+        This distinction is needed for §5.2A binding validation.
+    """
     if "exp" not in data:
-        return iat + MAX_TOKEN_AGE_SECONDS
+        return (iat + MAX_TOKEN_AGE_SECONDS, False)
 
     value = data["exp"]
     # Same validation as iat
     if isinstance(value, bool):
         raise VVPIdentityError.invalid("field exp must be an integer")
     if isinstance(value, int):
-        return value
+        return (value, True)
     if isinstance(value, float) and value.is_integer():
-        return int(value)
+        return (int(value), True)
     raise VVPIdentityError.invalid("field exp must be an integer")

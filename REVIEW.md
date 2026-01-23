@@ -1,14 +1,17 @@
 ## Review: Phase 3 - PASSporT JWT Verification
 
-**Verdict:** APPROVED
+**Verdict:** CHANGES_REQUESTED
 
 ### Findings
-- [Low]: Consider adding a note that `exp > iat` and exp/iat drift failures are treated as `PASSPORT_PARSE_FAILED` because they’re binding/protocol violations, to avoid confusion with expiry policy errors in downstream handling.
+- [High]: `validate_passport_binding` allows PASSporT `exp` omission unconditionally, but v1.4 §5.2A requires treating PASSporT as expired when VVP‑Identity `exp` is present and PASSporT `exp` is absent (default reject). Since `VVPIdentity.exp` is always populated (computed in Phase 2), the current implementation never triggers this rejection and is spec‑noncompliant. `app/vvp/passport.py:118` `app/vvp/passport.py:153` `app/vvp/header.py:86`
+- [High]: The tests codify the above noncompliance: `test_max_age_within_limit_no_exp` expects a valid outcome when PASSporT `exp` is absent and VVP‑Identity has `exp`. Per §5.2A default policy, this should be rejected unless explicitly configured to allow omission. `tests/test_passport.py:742` `app/Documentation/VVP_Verifier_Specification_v1.4_FINAL.md:352`
+- [Medium]: There is no way to distinguish whether VVP‑Identity `exp` was explicitly provided vs computed default. §5.2A’s rule depends on this distinction, so Phase 2/3 needs an explicit flag (e.g., `exp_provided: bool`) carried in `VVPIdentity`. Without it, binding can’t follow spec. `app/vvp/header.py:20`
 
 ### Answers to Open Questions
-1. `typ` validation: Ignoring `typ` is acceptable since v1.4 doesn’t mandate it; keep it untouched unless you explicitly add local policy.
-2. Binding failure error code: Using `PASSPORT_PARSE_FAILED` for ppt/kid/iat/exp binding mismatches is consistent with §4.2A and keeps `PASSPORT_EXPIRED` reserved for true expiry policy failures.
-3. `call-reason` mapping: `call-reason` → `call_reason` with raw payload retention is good.
+1. `typ` validation: Ignoring `typ` is consistent with v1.4 (no requirement). 
+2. Binding failure error code: Mapping binding violations to `PASSPORT_PARSE_FAILED` is reasonable; keep `PASSPORT_EXPIRED` for actual expiry policy checks.
+3. `call-reason` mapping: `call-reason` → `call_reason` with raw payload preservation is fine.
 
 ### Additional Recommendations
-- None required; plan aligns with v1.4 §§5.0–5.4 and cleanly separates spec‑mandated vs local policy checks.
+- Add a specific test that PASSporT `exp` omission is rejected when VVP‑Identity `exp` was explicitly provided (default behavior), and a separate test for the “configured to allow omission” case.
+- Consider adding a small note in `PassportPayload`/`VVPIdentity` to carry explicit `exp` presence to support §5.2A.
