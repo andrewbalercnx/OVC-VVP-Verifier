@@ -1,6 +1,6 @@
 # Current Plan
 
-<!-- STATUS: READY_FOR_REVIEW -->
+<!-- STATUS: IMPLEMENTED -->
 
 ## Phase 2: VVP-Identity Header Parser
 
@@ -19,13 +19,14 @@ Implement parsing and validation of the VVP-Identity HTTP header per spec §4.1A
 | File | Action | Description |
 |------|--------|-------------|
 | `app/vvp/header.py` | Create | VVP-Identity header parser |
+| `app/vvp/exceptions.py` | Create | Typed exceptions for error codes |
 | `tests/test_header.py` | Create | Unit tests for header parsing |
 
 ### Decoded Header Structure (§4.1A)
 
 ```json
 {
-  "ppt": "vvp",
+  "ppt": "shaken",
   "kid": "oobi:...",
   "evd": "oobi:...",
   "iat": 1737500000,
@@ -33,53 +34,79 @@ Implement parsing and validation of the VVP-Identity HTTP header per spec §4.1A
 }
 ```
 
+**Note:** Field values shown are illustrative per §4.1A. The `ppt` value is not validated in Phase 2; only field presence is checked. Value validation (e.g., binding `ppt` to VVP PASSporT) is deferred to Phase 3/5 per §5.2.
+
 ### Implementation Approach
 
-#### 1. Data Model: `VVPIdentity`
+#### 1. Custom Exception: `VVPIdentityError`
+
+Per reviewer recommendation, use typed exceptions to keep the parsing API clean:
+
+```python
+class VVPIdentityError(Exception):
+    """Base exception for VVP-Identity parsing errors."""
+    def __init__(self, code: str, message: str):
+        self.code = code
+        self.message = message
+        super().__init__(message)
+```
+
+This allows the caller to convert exceptions to `ErrorDetail` while keeping the parser return type simple.
+
+#### 2. Data Model: `VVPIdentity`
 
 ```python
 @dataclass
 class VVPIdentity:
-    ppt: str           # PASSporT profile (e.g., "vvp")
-    kid: str           # Key identifier (OOBI reference)
-    evd: str           # Evidence/dossier URL (OOBI reference)
+    ppt: str           # PASSporT profile (value not validated in Phase 2)
+    kid: str           # Key identifier (opaque OOBI reference)
+    evd: str           # Evidence/dossier URL (opaque OOBI reference)
     iat: int           # Issued-at timestamp (seconds since epoch)
-    exp: Optional[int] # Optional expiry timestamp
+    exp: int           # Expiry timestamp (computed if absent in header)
 ```
 
-#### 2. Parser Function: `parse_vvp_identity(header: str) -> VVPIdentity`
+#### 3. Parser Function: `parse_vvp_identity(header: Optional[str]) -> VVPIdentity`
 
 Steps:
-1. Base64url decode the header string
-2. Parse as JSON
-3. Validate required fields exist: `ppt`, `kid`, `evd`, `iat`
-4. Validate `iat` is not in the future beyond clock skew
-5. Handle optional `exp`; if absent, compute default expiry as `iat + MAX_TOKEN_AGE_SECONDS`
-6. Return `VVPIdentity` dataclass or raise appropriate error
+1. If `header` is `None` or empty, raise `VVPIdentityError` with `VVP_IDENTITY_MISSING`
+2. Base64url decode the header string
+3. Parse as JSON
+4. Validate required fields exist: `ppt`, `kid`, `evd`, `iat`
+5. Validate `iat` is not in the future beyond clock skew
+6. Handle optional `exp`; if absent, compute default expiry as `iat + MAX_TOKEN_AGE_SECONDS`
+7. Return `VVPIdentity` dataclass
 
-#### 3. Validation Rules (§4.1A)
+On any decode/parse/validation failure (steps 2-6), raise `VVPIdentityError` with `VVP_IDENTITY_INVALID`.
 
-| Rule | Implementation |
-|------|----------------|
-| Base64url decode | `base64.urlsafe_b64decode()` with padding fix |
-| Malformed JSON | Return `VVP_IDENTITY_INVALID` |
-| Missing required field | Return `VVP_IDENTITY_INVALID` |
-| `iat` in future beyond skew | Return `VVP_IDENTITY_INVALID` |
-| `exp` absent | Use `iat + 300` as effective expiry |
+#### 4. Validation Rules (§4.1A)
 
-#### 4. Error Handling
+| Rule | Implementation | Error Code |
+|------|----------------|------------|
+| Header absent/empty | Raise before decoding | `VVP_IDENTITY_MISSING` |
+| Base64url decode failure | `base64.urlsafe_b64decode()` with padding fix | `VVP_IDENTITY_INVALID` |
+| Malformed JSON | `json.loads()` | `VVP_IDENTITY_INVALID` |
+| Missing required field | Check `ppt`, `kid`, `evd`, `iat` exist | `VVP_IDENTITY_INVALID` |
+| `iat` in future beyond skew | Compare to `now + CLOCK_SKEW_SECONDS` | `VVP_IDENTITY_INVALID` |
+| `exp` absent | Compute as `iat + MAX_TOKEN_AGE_SECONDS` | N/A (valid) |
 
-```python
-def parse_vvp_identity(header: str) -> Union[VVPIdentity, ErrorDetail]:
-    # Returns VVPIdentity on success, ErrorDetail on failure
-```
+#### 5. OOBI Field Handling (§4.1B)
 
-Or alternatively, raise custom exceptions that map to error codes.
+**Critical:** `kid` and `evd` fields are OOBI (Out-Of-Band Introduction) references per §4.1B. In Phase 2:
+
+- Treat `kid` and `evd` as **opaque strings**
+- **DO NOT** apply URL normalization
+- **DO NOT** apply generic URL validation that could reject OOBI schemes
+- Only validate that the fields are **present and non-empty strings**
+- Deep OOBI validation (KERI/CESR parsing, `application/json+cesr` support) is deferred to Phase 4
+
+This ensures we don't reject valid OOBI references that don't conform to standard URL patterns.
 
 ### Test Strategy
 
 | Test Case | Expected Result |
 |-----------|-----------------|
+| Missing header (None) | `VVP_IDENTITY_MISSING` |
+| Empty header ("") | `VVP_IDENTITY_MISSING` |
 | Valid header with all fields | Returns `VVPIdentity` |
 | Valid header without `exp` | Returns `VVPIdentity` with computed expiry |
 | Invalid base64 | `VVP_IDENTITY_INVALID` |
@@ -90,31 +117,32 @@ Or alternatively, raise custom exceptions that map to error codes.
 | Missing `iat` | `VVP_IDENTITY_INVALID` |
 | `iat` in future beyond skew | `VVP_IDENTITY_INVALID` |
 | `iat` in future within skew | Valid (accepted) |
+| `ppt` with any string value | Valid (value not validated in Phase 2) |
+| `kid`/`evd` with non-URL OOBI format | Valid (treated as opaque) |
 
-### Open Questions
+### Resolved Questions
 
-1. **OOBI validation**: Should we validate that `kid` and `evd` look like OOBI references in Phase 2, or defer to Phase 4 (KERI Integration)?
-   - Recommendation: Defer deep OOBI validation to Phase 4; in Phase 2, just ensure they're non-empty strings.
+Based on reviewer feedback:
 
-2. **Error return style**: Return `Union[VVPIdentity, ErrorDetail]` or raise exceptions?
-   - Recommendation: Raise exceptions with error codes; caller converts to `ErrorDetail`.
+1. **OOBI validation**: Defer KERI/CESR parsing to Phase 4. In Phase 2, treat `kid`/`evd` as opaque OOBI references. Avoid URL-specific validation that could reject valid OOBI schemes.
 
-3. **`ppt` value validation**: §4.1A shows `"ppt": "vvp"` but earlier versions showed `"shaken"`. Should we validate the value or just ensure it exists?
-   - Recommendation: Per §5.2, `ppt` must be `"vvp"` for VVP passports. Validate in Phase 3 when binding to PASSporT.
+2. **Error return style**: Raise typed `VVPIdentityError` exceptions carrying error codes. This keeps the parser API clean (`-> VVPIdentity`) and allows the caller to convert to `ErrorDetail`.
+
+3. **`ppt` value validation**: Only require presence in Phase 2. Actual value checks (`ppt == "vvp"` for VVP PASSporTs) must be done in Phase 3/5 when binding PASSporT to VVP-Identity per §5.2.
 
 ### Checklist Tasks Covered
 
-- [ ] 2.1 - Create `app/vvp/header.py` module
-- [ ] 2.2 - Implement base64url decoding of VVP-Identity header
-- [ ] 2.3 - Parse JSON with fields: `ppt`, `kid`, `evd`, `iat`, `exp`
-- [ ] 2.4 - Validate `ppt` field exists
-- [ ] 2.5 - Validate `kid` and `evd` are present (OOBI validation deferred)
-- [ ] 2.6 - Implement clock skew validation (±300s) on `iat`
-- [ ] 2.7 - Handle optional `exp`; if absent, use `iat` + 300s max age
-- [ ] 2.8 - Reject future `iat` beyond clock skew
-- [ ] 2.9 - Return structured errors for all failure modes
-- [ ] 2.10 - Unit tests for header parsing
+- [x] 2.1 - Create `app/vvp/header.py` module
+- [x] 2.2 - Implement base64url decoding of VVP-Identity header
+- [x] 2.3 - Parse JSON with fields: `ppt`, `kid`, `evd`, `iat`, `exp`
+- [x] 2.4 - Validate `ppt` field exists (value validation deferred to Phase 3)
+- [x] 2.5 - Validate `kid` and `evd` are present as opaque strings (OOBI validation deferred)
+- [x] 2.6 - Implement clock skew validation (±300s) on `iat`
+- [x] 2.7 - Handle optional `exp`; if absent, use `iat` + 300s max age
+- [x] 2.8 - Reject future `iat` beyond clock skew
+- [x] 2.9 - Return structured errors: `VVP_IDENTITY_MISSING` vs `VVP_IDENTITY_INVALID`
+- [x] 2.10 - Unit tests for header parsing
 
 ---
 
-**Status:** Ready for reviewer feedback
+**Status:** Implemented
