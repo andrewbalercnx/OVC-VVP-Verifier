@@ -180,6 +180,8 @@ Rules: - MUST decode via base64url - MUST enforce iat/exp - MUST reject
 malformed JSON - MUST bind kid to PASSporT issuer
 - MUST allow configurable clock skew; default policy for this project is ±300 seconds.
 - SHOULD use a UTC time source synchronized via standard system mechanisms (e.g., NTP) to reduce false INVALIDs.
+- `exp` is OPTIONAL; if absent, implementations MUST rely on `iat` plus local maximum-age policy.
+- `iat` values in the future within the allowed clock skew MUST be accepted; values beyond skew MUST be rejected.
 
 ------------------------------------------------------------------------
 
@@ -229,11 +231,41 @@ malformed JSON - MUST bind kid to PASSporT issuer
       "status": "VALID",
       "reasons": [],
       "evidence": ["said:abc"],
-      "children": []
+      "children": [
+        {
+          "required": true,
+          "node": {
+            "name": "example_child_claim",
+            "status": "VALID",
+            "reasons": [],
+            "evidence": [],
+            "children": []
+          }
+        }
+      ]
     }
   ]
 }
 ```
+
+### 4.3B Claim Node Schema (Normative)
+
+Each child relationship in a claim node MUST explicitly declare whether it is REQUIRED or OPTIONAL.
+
+A claim node is a JSON object with the following fields:
+
+- `name`: string — the claim name
+- `status`: string — one of `"VALID"`, `"INVALID"`, or `"INDETERMINATE"`
+- `reasons`: array of strings — explanations for the status
+- `evidence`: array of strings — identifiers of supporting evidence
+- `children`: array of child link objects
+
+Each child link object has the following fields:
+
+- `required`: boolean — true if the child is REQUIRED, false if OPTIONAL
+- `node`: claim node — the child claim node
+
+Implementations MUST NOT represent `children` as a bare list of claim nodes without the `required` flag.
 
 ------------------------------------------------------------------------
 
@@ -246,6 +278,11 @@ For responses that contain `claims`, the verifier MUST derive `overall_status` f
 For responses that contain only `errors` (no `claims`), the verifier MUST derive `overall_status` as follows:
 - If any error has recoverable=false → overall_status MUST be INVALID.
 - Else → overall_status MUST be INDETERMINATE.
+
+A response MAY contain both `claims` and `errors`. In such cases, the following precedence rules apply:
+- Non-recoverable errors (`recoverable=false`) take precedence and force `overall_status` to `INVALID`.
+- Recoverable errors may coexist with claims and do not override a worse claim-derived status.
+- The `overall_status` is the maximum severity across all errors and claims, where `INVALID` > `INDETERMINATE` > `VALID`.
 
 ------------------------------------------------------------------------
 
@@ -347,7 +384,7 @@ function verify(request):
   return response(id, claims)
 ```
 
-All failures must surface explicit error codes.
+Implementations MAY short-circuit claim derivation on fatal PASSporT failures, returning an error-only response. For recoverable failures (e.g., KERI resolution timeout), implementations SHOULD return a partial claim tree with affected claims marked INDETERMINATE. This behavior aligns with the overall_status derivation rules in §4.3A.
 
 ------------------------------------------------------------------------
 
