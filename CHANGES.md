@@ -3,7 +3,7 @@
 ## Phase 9: VVP Verifier Specification v1.5
 
 **Date:** 2026-01-24
-**Commit:** (pending)
+**Commit:** `953e694`
 
 ### Files Changed
 
