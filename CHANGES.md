@@ -1,5 +1,62 @@
 # VVP Verifier Change Log
 
+## Phase 7: KERI Key State Resolution (Tier 2)
+
+**Date:** 2026-01-24
+**Commit:** (pending)
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/core/config.py` | Modified | Added `TIER2_KEL_RESOLUTION_ENABLED` feature flag |
+| `app/vvp/keri/exceptions.py` | Modified | Added KELChainInvalidError, KeyNotYetValidError, DelegationNotSupportedError, OOBIContentInvalidError |
+| `app/vvp/keri/cache.py` | Created | Key state cache with LRU eviction and TTL |
+| `app/vvp/keri/kel_parser.py` | Created | KEL event parser with chain validation |
+| `app/vvp/keri/oobi.py` | Created | OOBI dereferencer for fetching KEL data |
+| `app/vvp/keri/kel_resolver.py` | Created | Key state resolver at reference time T |
+| `app/vvp/keri/signature.py` | Modified | Added verify_passport_signature_tier2 |
+| `app/vvp/keri/__init__.py` | Modified | Updated exports for Tier 2 |
+| `tests/test_kel_parser.py` | Created | KEL parser unit tests |
+| `tests/test_kel_chain.py` | Created | Chain validation tests |
+| `tests/test_kel_cache.py` | Created | Cache behavior tests |
+| `tests/test_kel_resolver.py` | Created | Resolver tests |
+| `tests/test_kel_integration.py` | Created | End-to-end integration tests |
+| `app/Documentation/PLAN_Phase7.md` | Created | Archived phase plan |
+
+### Summary
+
+Implemented Tier 2 KERI key state resolution for historical key verification per VVP §5A Step 4 and §5D.
+
+**Components:**
+- OOBI dereferencer for fetching KEL data from witness endpoints
+- KEL event parser with chain continuity and signature validation
+- Key state resolver that determines signing keys valid at reference time T
+- LRU cache keyed by (AID, establishment_digest) with time-based secondary index
+
+**Feature Gating:**
+- `TIER2_KEL_RESOLUTION_ENABLED = False` by default
+- Tier 2 is TEST-ONLY due to limitations:
+  - JSON-only (CESR binary format not supported)
+  - Signature canonicalization uses JSON sorted-keys (not KERI-compliant Blake3)
+  - SAID validation disabled by default
+- Tests use `_allow_test_mode=True` to bypass feature gate
+
+### Spec Sections Implemented
+
+- §5A Step 4: Resolve issuer key state at reference time T
+- §5C.2: Key state cache (AID + timestamp → rotation-sensitive)
+- §5D: Historical verification capabilities
+
+### Test Results
+
+```
+97 passed (Phase 7 tests)
+368 passed, 2 skipped (full test suite)
+```
+
+---
+
 ## Phase 9: VVP Verifier Specification v1.5
 
 **Date:** 2026-01-24

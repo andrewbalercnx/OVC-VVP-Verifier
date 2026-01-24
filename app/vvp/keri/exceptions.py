@@ -53,3 +53,54 @@ class StateInvalidError(KeriError):
 
     def __init__(self, message: str = "KERI state invalid"):
         super().__init__(ErrorCode.KERI_STATE_INVALID, message)
+
+
+class KELChainInvalidError(StateInvalidError):
+    """KEL chain validation failed.
+
+    Used when:
+    - Chain continuity broken (prior_digest doesn't match previous event's digest)
+    - Event signature is invalid (not signed by keys from prior event)
+    - Inception event is not properly self-signed
+
+    Maps to KERI_STATE_INVALID (non-recoverable → INVALID).
+    """
+
+    def __init__(self, message: str = "KEL chain validation failed"):
+        super().__init__(message)
+
+
+class KeyNotYetValidError(StateInvalidError):
+    """No establishment event exists at or before reference time T.
+
+    This occurs when the reference time (PASSporT iat) is before the
+    AID's inception event, meaning no valid key state existed at that time.
+
+    Maps to KERI_STATE_INVALID (non-recoverable → INVALID).
+    """
+
+    def __init__(self, message: str = "No valid key state at reference time"):
+        super().__init__(message)
+
+
+class DelegationNotSupportedError(ResolutionFailedError):
+    """Delegated event (dip/drt) detected but not yet supported.
+
+    Delegated identifiers require additional validation of the delegator's
+    authorization, which is deferred to a future phase.
+
+    Maps to KERI_RESOLUTION_FAILED (recoverable → INDETERMINATE).
+    """
+
+    def __init__(self, message: str = "Delegated events not yet supported"):
+        super().__init__(message)
+
+
+class OOBIContentInvalidError(KeriError):
+    """OOBI response has invalid content type or malformed data.
+
+    Maps to VVP_OOBI_CONTENT_INVALID (non-recoverable → INVALID).
+    """
+
+    def __init__(self, message: str = "Invalid OOBI content"):
+        super().__init__(ErrorCode.VVP_OOBI_CONTENT_INVALID, message)

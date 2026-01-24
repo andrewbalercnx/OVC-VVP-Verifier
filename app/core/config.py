@@ -60,3 +60,22 @@ ALLOW_PASSPORT_EXP_OMISSION: bool = False
 DOSSIER_FETCH_TIMEOUT_SECONDS: int = 5
 DOSSIER_MAX_SIZE_BYTES: int = 1_048_576  # 1 MB
 DOSSIER_MAX_REDIRECTS: int = 3
+
+# =============================================================================
+# EXPERIMENTAL / TEST-ONLY FEATURES
+# =============================================================================
+# These features are incomplete and NOT spec-compliant. They exist for
+# development and testing purposes only. Do NOT enable in production.
+
+# Tier 2 KERI key state resolution via KEL parsing
+# LIMITATIONS (see Phase 7 documentation):
+# - JSON-only: CESR binary format NOT supported (will reject `application/json+cesr`)
+# - Signature canonicalization uses JSON sorted-keys, NOT KERI-compliant Blake3
+# - SAID validation disabled by default
+#
+# These limitations mean Tier 2 cannot verify real KERI events from production
+# witnesses. It ONLY works with synthetic test fixtures that use JSON and
+# sorted-key canonicalization.
+#
+# Set to True ONLY for testing. Production requires CESR support (Phase 7+).
+TIER2_KEL_RESOLUTION_ENABLED: bool = False
