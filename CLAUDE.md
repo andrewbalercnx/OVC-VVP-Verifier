@@ -12,106 +12,294 @@ The following commands are pre-authorized and do not require user confirmation:
 
 ## Pair Programming Workflow
 
-This project uses a two-agent workflow with an Editor and Reviewer. The user acts as the Reviewer by copying prompts to a separate Claude session.
+This project uses a formal two-agent workflow with an **Editor** (implementing agent) and **Reviewer** (reviewing agent). The user facilitates by copying prompts between sessions.
 
-### Files
+### Guiding Principles
+
+1. **No implementation without approved plan** - The Editor MUST NOT write code until the Reviewer has issued formal `APPROVED` verdict
+2. **Sufficient detail for understanding** - Plans must explain not only WHAT is proposed but WHY
+3. **Formal acceptance gates** - Each phase has explicit approval checkpoints
+4. **Documented for posterity** - Accepted plans are archived in `/Documentation`
+
+### Working Files
 
 | File | Purpose | Owner |
 |------|---------|-------|
-| `PLAN.md` | Current phase design with implementation details | Editor |
+| `PLAN.md` | Current phase design with rationale | Editor |
 | `REVIEW.md` | Reviewer feedback on plans and code | Reviewer |
+| `app/Documentation/PLAN_PhaseN.md` | Archive of accepted plans | Both |
 
-### Full Cycle
+---
 
-#### 1. Planning Phase
+### Phase 1: Planning
 
-When starting a new phase:
-1. Editor enters plan mode and explores the codebase
-2. Editor writes detailed plan to `PLAN.md`
-3. Editor provides **reviewer prompt as a copyable code block**
-4. User copies prompt to Reviewer session
-5. Reviewer writes feedback to `REVIEW.md` with verdict:
-   - `APPROVED` - Proceed with implementation
-   - `CHANGES_REQUESTED` - Address feedback first
-6. If changes requested, Editor revises plan and provides new reviewer prompt
-7. Repeat until `APPROVED`
+#### Step 1.1: Draft the Plan
 
-#### 2. Implementation Phase
+The Editor writes `PLAN.md` with sufficient detail for the Reviewer to understand:
 
-After plan approval:
-1. Editor implements the plan
-2. Editor runs tests and verifies all pass
-3. Editor commits the code
-4. Editor provides **code review prompt as a copyable code block**
+```markdown
+# Phase N: [Title]
 
-#### 3. Code Review Phase
+## Problem Statement
+What problem are we solving? Why does it matter?
 
-1. User copies code review prompt to Reviewer session
-2. Reviewer examines all modified files
-3. Reviewer writes feedback to `REVIEW.md` with verdict:
-   - `APPROVED` - Phase complete
-   - `CHANGES_REQUESTED` - Fix issues first
-4. If changes requested:
-   - Editor fixes issues
-   - Editor provides new review prompt
-   - Repeat until `APPROVED`
+## Spec References
+- §X.Y: [Quote or paraphrase the normative requirement]
+- §X.Z: [Additional relevant sections]
 
-### Reviewer Prompt Format
+## Current State
+What exists today? What are its limitations?
 
-Always provide prompts as copyable code blocks:
+## Proposed Solution
 
+### Approach
+High-level description of the solution approach and WHY this approach was chosen over alternatives.
+
+### Alternatives Considered
+| Alternative | Pros | Cons | Why Rejected |
+|-------------|------|------|--------------|
+| Option A | ... | ... | ... |
+| Option B | ... | ... | ... |
+
+### Detailed Design
+
+#### Component 1: [Name]
+- **Purpose**: Why this component exists
+- **Location**: `path/to/file.py`
+- **Interface**: Function signatures, class definitions
+- **Behavior**: What it does, edge cases handled
+
+#### Component 2: [Name]
+...
+
+### Data Flow
+Describe how data moves through the system.
+
+### Error Handling
+How errors are classified, propagated, and reported.
+
+### Test Strategy
+What tests will be written and what they verify.
+
+## Files to Create/Modify
+| File | Action | Purpose |
+|------|--------|---------|
+| `path/to/file.py` | Create | Description |
+| `path/to/other.py` | Modify | What changes |
+
+## Open Questions
+1. [Question requiring Reviewer input]
+2. [Another question]
+
+## Risks and Mitigations
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| ... | ... | ... | ... |
 ```
-## Review Request: Phase N - Title
+
+#### Step 1.2: Request Plan Review
+
+The Editor provides a **copyable prompt** for the Reviewer **directly in the conversation** (not just in PLAN.md). The prompt should be in a fenced code block so the user can easily copy it to the Reviewer agent:
+
+~~~
+```
+## Plan Review Request: Phase N - [Title]
+
+You are the Reviewer in a pair programming workflow. Please review the plan in `PLAN.md` and provide your assessment in `REVIEW.md`.
+
+### Your Task
+1. Read `PLAN.md` thoroughly
+2. Evaluate against the spec references cited
+3. Assess the rationale for design decisions
+4. Answer any open questions
+5. Provide verdict and feedback in `REVIEW.md`
+
+### Evaluation Criteria
+- Does the plan correctly interpret the spec requirements?
+- Is the proposed approach sound and well-justified?
+- Are there gaps, ambiguities, or risks not addressed?
+- Is the test strategy adequate?
+
+### Response Format
+Write your response to `REVIEW.md` using this structure:
+
+## Plan Review: Phase N - [Title]
+
+**Verdict:** APPROVED | CHANGES_REQUESTED
+
+### Spec Compliance
+[Assessment of how well the plan addresses spec requirements]
+
+### Design Assessment
+[Evaluation of the proposed approach and alternatives]
+
+### Findings
+- [High]: Critical issue that blocks approval
+- [Medium]: Important issue that should be addressed
+- [Low]: Suggestion for improvement (optional)
+
+### Answers to Open Questions
+1. [Answer to question 1]
+2. [Answer to question 2]
+
+### Required Changes (if CHANGES_REQUESTED)
+1. [Specific change required]
+2. [Another required change]
+
+### Recommendations
+- [Optional improvements or future considerations]
+```
+~~~
+
+#### Step 1.3: Iterate Until Approved
+
+If Reviewer returns `CHANGES_REQUESTED`:
+1. Editor revises `PLAN.md` addressing all required changes
+2. Editor provides new review prompt
+3. Repeat until `APPROVED`
+
+---
+
+### Phase 2: Implementation
+
+#### Step 2.1: Implement According to Plan
+
+After receiving `APPROVED` verdict:
+1. Editor implements exactly as specified in the approved plan
+2. Editor writes comprehensive in-line documentation:
+   - Module docstrings explaining purpose and usage
+   - Function docstrings with parameters, returns, and exceptions
+   - Comments for non-obvious logic explaining WHY, not WHAT
+3. Editor runs tests and verifies all pass
+4. Editor commits the code
+
+#### Step 2.2: Document Implementation
+
+The Editor updates `PLAN.md` with an implementation appendix:
+
+```markdown
+---
+
+## Implementation Notes
+
+### Deviations from Plan
+[Any necessary deviations and why they were required]
+
+### Implementation Details
+[Additional context discovered during implementation]
+
+### Test Results
+```
+[pytest output showing all tests pass]
+```
+
+### Files Changed
+| File | Lines | Summary |
+|------|-------|---------|
+| `path/to/file.py` | +150 | Created new module for X |
+| `tests/test_file.py` | +80 | Tests for X |
+```
+
+#### Step 2.3: Request Code Review
+
+The Editor provides a **copyable prompt** for code review:
+
+~~~
+```
+## Code Review Request: Phase N - [Title]
+
+You are the Reviewer in a pair programming workflow. Please review the implementation and provide your assessment in `REVIEW.md`.
 
 ### Context
-Brief description of what was implemented.
+[Brief description of what was implemented]
 
 ### Spec References
-- §X.Y: Section name
+- §X.Y: [Section name]
 
 ### Files to Review
-- `path/to/file.py` (action: created/modified)
-- ...
+- `path/to/file.py` (created) - [purpose]
+- `tests/test_file.py` (created) - [what it tests]
 
-### Verification
+### Verification Commands
 ```bash
-# Commands to verify the implementation
 python3 -m pytest tests/test_xxx.py -v
 ```
 
 ### Key Design Decisions
-1. Decision 1 and rationale
-2. Decision 2 and rationale
-
-### Open Questions
-1. Question for reviewer to consider
-2. Another question
+1. [Decision and rationale]
+2. [Another decision and rationale]
 
 ### Test Results
-N passed
-```
+[N passed in X.XXs]
 
-### Reviewer Response Format
+### Your Task
+1. Review all listed files for correctness and style
+2. Verify implementation matches approved plan
+3. Check test coverage and edge cases
+4. Provide verdict and feedback in `REVIEW.md`
 
-Reviewer writes to `REVIEW.md`:
+### Response Format
+Write your response to `REVIEW.md` using this structure:
 
-```markdown
-## Review: Phase N - Title
+## Code Review: Phase N - [Title]
 
-**Verdict:** APPROVED | CHANGES_REQUESTED
+**Verdict:** APPROVED | CHANGES_REQUESTED | PLAN_REVISION_REQUIRED
+
+### Implementation Assessment
+[Does the code correctly implement the approved plan?]
+
+### Code Quality
+[Assessment of code clarity, documentation, error handling]
+
+### Test Coverage
+[Assessment of test adequacy]
 
 ### Findings
-- [High]: Critical issue that must be fixed
+- [High]: Critical issue that blocks approval
 - [Medium]: Important issue that should be fixed
 - [Low]: Minor suggestion (optional)
 
-### Answers to Open Questions
-1. Answer to question 1
-2. Answer to question 2
+### Required Changes (if not APPROVED)
+1. [Specific change required]
+2. [Another required change]
 
-### Additional Recommendations
-- Any other suggestions
+### Plan Revisions (if PLAN_REVISION_REQUIRED)
+[What needs to change in the plan before re-implementation]
 ```
+~~~
+
+#### Step 2.4: Iterate Until Approved
+
+- If `CHANGES_REQUESTED`: Fix issues, provide new review prompt
+- If `PLAN_REVISION_REQUIRED`: Return to Phase 1 with revised plan
+- If `APPROVED`: Proceed to Phase 3
+
+---
+
+### Phase 3: Completion and Archival
+
+#### Step 3.1: Archive the Plan
+
+Move accepted plan to documentation:
+1. Copy `PLAN.md` to `app/Documentation/PLAN_PhaseN.md`
+2. Include implementation notes and review history
+3. Update `CHANGES.md` with phase summary
+
+#### Step 3.2: Clean Up
+
+1. Clear `PLAN.md` for next phase (or leave as reference)
+2. Clear `REVIEW.md` for next phase
+3. Commit all documentation updates
+
+---
+
+### Quick Reference: Verdicts
+
+| Verdict | Meaning | Next Action |
+|---------|---------|-------------|
+| `APPROVED` | Proceed to next phase | Move forward |
+| `CHANGES_REQUESTED` | Minor issues to fix | Address and re-submit |
+| `PLAN_REVISION_REQUIRED` | Fundamental issues | Revise plan, restart cycle |
 
 ## Phase Completion Requirement
 

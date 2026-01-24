@@ -1,5 +1,49 @@
 # VVP Verifier Change Log
 
+## Phase 9: VVP Verifier Specification v1.5
+
+**Date:** 2026-01-24
+**Commit:** (pending)
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/Documentation/VVP_Verifier_Specification_v1.5.md` | Created | Complete verification algorithm specification |
+| `app/Documentation/PLAN_Phase9.md` | Created | Archived plan for Phase 9 |
+
+### Summary
+
+Extended VVP_Verifier_Specification_v1.4_FINAL with complete verification algorithms per authoritative VVP draft §5.
+
+**New Sections:**
+- §3.3B: Complete claim tree structure for caller and callee verification
+- §4.2A: 8 new error codes (CREDENTIAL_REVOKED, CONTEXT_MISMATCH, AUTHORIZATION_FAILED, TN_RIGHTS_INVALID, BRAND_CREDENTIAL_INVALID, GOAL_REJECTED, DIALOG_MISMATCH, ISSUER_MISMATCH)
+- §4.4: SIP Context Fields normative section
+- §5A: 13-step Caller Verification Algorithm per VVP §5.1
+- §5B: 14-step Callee Verification Algorithm per VVP §5.2
+- §5C: Efficiency and Caching guidance per VVP §5.3
+- §5D: Historical Verification capabilities per VVP §5.4
+- §9: Full pseudocode for caller and callee verification with explicit claim node initialization
+- §10.2: Test vectors tiered by implementation phase (Tier 1/2/3)
+- §12: Implementation Tiers (Tier 1/2/3)
+- Appendix A: Spec §5 Traceability Matrix
+
+**Key Design Decisions:**
+- SIP context absence produces INDETERMINATE, not rejection (policy-driven)
+- Replay tolerance (30s) distinguished from iat binding tolerance (5s)
+- `issuer_matched` placed under `dossier_verified` in callee claim tree
+- Step-to-claim mapping tables added to prevent drift
+
+### Spec Sections Implemented
+
+- VVP §5.1.1-2.1 through §5.1.1-2.13: Caller verification algorithm
+- VVP §5.2-2.1 through §5.2-2.14: Callee verification algorithm
+- VVP §5.3: Efficiency and caching
+- VVP §5.4: Historical verification
+
+---
+
 ## Phase 3: PASSporT JWT Verification
 
 **Date:** 2026-01-23
