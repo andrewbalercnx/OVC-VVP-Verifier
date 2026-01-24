@@ -3,7 +3,7 @@
 ## Phase 7: KERI Key State Resolution (Tier 2)
 
 **Date:** 2026-01-24
-**Commit:** (pending)
+**Commit:** `850df11`
 
 ### Files Changed
 
