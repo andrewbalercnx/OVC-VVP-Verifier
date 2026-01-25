@@ -103,29 +103,35 @@ class TELClient:
         Returns:
             RevocationResult with status and event details
         """
+        log.info(f"check_revocation: cred={credential_said[:20]}... reg={registry_said[:20] if registry_said else 'None'}...")
         cache_key = f"{credential_said}:{registry_said}"
 
         # Check cache first
         if cache_key in self._cache:
             cached = self._cache[cache_key]
-            log.debug(f"Cache hit for {credential_said[:16]}...")
+            log.info(f"  cache_hit: status={cached.status.value}")
             return cached
 
         # Try OOBI resolution if URL provided
         if oobi_url:
+            log.info(f"  trying_oobi: {oobi_url[:50]}...")
             result = await self._query_via_oobi(credential_said, registry_said, oobi_url)
+            log.info(f"  oobi_result: status={result.status.value} error={result.error}")
             if result.status != CredentialStatus.ERROR:
                 self._cache[cache_key] = result
                 return result
 
         # Try known witnesses
-        for witness_url in self.witness_urls:
+        log.info(f"  trying_witnesses: count={len(self.witness_urls)}")
+        for i, witness_url in enumerate(self.witness_urls):
             result = await self._query_witness(credential_said, registry_said, witness_url)
+            log.info(f"  witness[{i}] {witness_url}: status={result.status.value}")
             if result.status != CredentialStatus.ERROR:
                 self._cache[cache_key] = result
                 return result
 
         # No TEL data found
+        log.info(f"  no_tel_data_found: returning UNKNOWN")
         return RevocationResult(
             status=CredentialStatus.UNKNOWN,
             credential_said=credential_said,
@@ -158,16 +164,19 @@ class TELClient:
             async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
                 for endpoint in endpoints:
                     url = urljoin(base_url, endpoint)
-                    log.debug(f"Querying TEL: {url}")
+                    log.info(f"    oobi_query: {url}")
 
                     try:
                         resp = await client.get(url)
+                        log.info(f"    oobi_response: status={resp.status_code} len={len(resp.text)}")
                         if resp.status_code == 200:
-                            return self._parse_tel_response(
+                            result = self._parse_tel_response(
                                 credential_said, registry_said, resp.text, "oobi"
                             )
+                            log.info(f"    oobi_parsed: status={result.status.value}")
+                            return result
                     except httpx.RequestError as e:
-                        log.debug(f"Request failed: {e}")
+                        log.info(f"    oobi_error: {type(e).__name__}: {e}")
                         continue
 
             return RevocationResult(
@@ -203,15 +212,19 @@ class TELClient:
             async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
                 # Standard witness TEL endpoint
                 url = f"{witness_url}/tels/{registry_said or credential_said}"
+                log.info(f"    witness_query: {url}")
                 resp = await client.get(url)
+                log.info(f"    witness_response: status={resp.status_code} len={len(resp.text)}")
 
                 if resp.status_code == 200:
-                    return self._parse_tel_response(
+                    result = self._parse_tel_response(
                         credential_said, registry_said, resp.text, "witness"
                     )
+                    log.info(f"    witness_parsed: status={result.status.value}")
+                    return result
 
         except Exception as e:
-            log.debug(f"Witness query failed: {e}")
+            log.info(f"    witness_error: {type(e).__name__}: {e}")
 
         return RevocationResult(
             status=CredentialStatus.ERROR,

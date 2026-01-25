@@ -1,4 +1,4 @@
-import json, logging, sys
+import json, logging, os, sys
 from datetime import datetime, timezone
 
 class JsonFormatter(logging.Formatter):
@@ -20,5 +20,7 @@ def configure_logging():
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
-    root.setLevel(logging.INFO)
+    # Allow DEBUG level via environment variable (default: INFO)
+    log_level = os.getenv("VVP_LOG_LEVEL", "INFO").upper()
+    root.setLevel(getattr(logging, log_level, logging.INFO))
     root.handlers = [handler]

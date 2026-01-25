@@ -150,9 +150,9 @@ class TestErrorCode:
     """Tests for ErrorCode registry per §4.2A"""
 
     def test_error_code_count(self):
-        """18 error codes per §4.2A"""
+        """18 error codes per §4.2A + 1 revocation extension (Phase 9)"""
         codes = [attr for attr in dir(ErrorCode) if not attr.startswith("_")]
-        assert len(codes) == 18
+        assert len(codes) == 19  # 18 spec codes + CREDENTIAL_REVOKED
 
     def test_all_error_codes_have_recoverability(self):
         """Every error code must have recoverability defined"""

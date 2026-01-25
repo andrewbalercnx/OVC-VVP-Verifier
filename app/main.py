@@ -50,6 +50,62 @@ def version():
     return {"git_sha": os.getenv("GIT_SHA", "unknown")}
 
 
+@app.get("/admin")
+def admin():
+    """Return all configurable items for operator visibility.
+
+    Gated by ADMIN_ENDPOINT_ENABLED (default: True for dev, False for prod).
+    """
+    from app.core.config import (
+        MAX_IAT_DRIFT_SECONDS,
+        ALLOWED_ALGORITHMS,
+        CLOCK_SKEW_SECONDS,
+        MAX_TOKEN_AGE_SECONDS,
+        MAX_PASSPORT_VALIDITY_SECONDS,
+        ALLOW_PASSPORT_EXP_OMISSION,
+        DOSSIER_FETCH_TIMEOUT_SECONDS,
+        DOSSIER_MAX_SIZE_BYTES,
+        DOSSIER_MAX_REDIRECTS,
+        TIER2_KEL_RESOLUTION_ENABLED,
+        ADMIN_ENDPOINT_ENABLED,
+    )
+    from app.vvp.keri.tel_client import TELClient
+
+    if not ADMIN_ENDPOINT_ENABLED:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Admin endpoint disabled"}
+        )
+
+    return {
+        "normative": {
+            "max_iat_drift_seconds": MAX_IAT_DRIFT_SECONDS,
+            "allowed_algorithms": list(ALLOWED_ALGORITHMS),
+        },
+        "configurable": {
+            "clock_skew_seconds": CLOCK_SKEW_SECONDS,
+            "max_token_age_seconds": MAX_TOKEN_AGE_SECONDS,
+            "max_passport_validity_seconds": MAX_PASSPORT_VALIDITY_SECONDS,
+            "allow_passport_exp_omission": ALLOW_PASSPORT_EXP_OMISSION,
+        },
+        "policy": {
+            "dossier_fetch_timeout_seconds": DOSSIER_FETCH_TIMEOUT_SECONDS,
+            "dossier_max_size_bytes": DOSSIER_MAX_SIZE_BYTES,
+            "dossier_max_redirects": DOSSIER_MAX_REDIRECTS,
+        },
+        "features": {
+            "tier2_kel_resolution_enabled": TIER2_KEL_RESOLUTION_ENABLED,
+            "admin_endpoint_enabled": ADMIN_ENDPOINT_ENABLED,
+        },
+        "witnesses": {
+            "default_witness_urls": TELClient.DEFAULT_WITNESSES,
+        },
+        "environment": {
+            "log_level": os.getenv("VVP_LOG_LEVEL", "INFO"),
+        }
+    }
+
+
 class ProxyFetchRequest(BaseModel):
     url: str
 

@@ -72,7 +72,7 @@ class ErrorDetail(BaseModel):
 
 
 class ErrorCode:
-    """Error code registry per spec §4.2A (18 codes)"""
+    """Error code registry per spec §4.2A (18 codes) + revocation extension"""
     # Protocol layer
     VVP_IDENTITY_MISSING = "VVP_IDENTITY_MISSING"
     VVP_IDENTITY_INVALID = "VVP_IDENTITY_INVALID"
@@ -98,6 +98,9 @@ class ErrorCode:
     KERI_RESOLUTION_FAILED = "KERI_RESOLUTION_FAILED"
     KERI_STATE_INVALID = "KERI_STATE_INVALID"
 
+    # Revocation layer (Phase 9 extension)
+    CREDENTIAL_REVOKED = "CREDENTIAL_REVOKED"
+
     # Verifier layer
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -121,6 +124,7 @@ ERROR_RECOVERABILITY: Dict[str, bool] = {
     ErrorCode.ACDC_PROOF_MISSING: False,
     ErrorCode.KERI_RESOLUTION_FAILED: True,  # Recoverable
     ErrorCode.KERI_STATE_INVALID: False,
+    ErrorCode.CREDENTIAL_REVOKED: False,     # Non-recoverable
     ErrorCode.INTERNAL_ERROR: True,          # Recoverable
 }
 

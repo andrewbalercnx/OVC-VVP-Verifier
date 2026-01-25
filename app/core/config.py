@@ -6,7 +6,10 @@ Constants are organized into:
 - NORMATIVE: Fixed by spec, cannot be changed without spec revision
 - CONFIGURABLE: Defaults per spec, may be overridden by deployment policy
 - POLICY: Implementation choices where spec requires enforcement but doesn't specify values
+- OPERATIONAL: Deployment-specific settings (env vars)
 """
+
+import os
 
 # =============================================================================
 # NORMATIVE CONSTANTS (fixed by spec)
@@ -79,3 +82,12 @@ DOSSIER_MAX_REDIRECTS: int = 3
 #
 # Set to True to enable Tier 2 key state resolution.
 TIER2_KEL_RESOLUTION_ENABLED: bool = True
+
+# =============================================================================
+# OPERATIONAL SETTINGS (deployment-specific, via environment variables)
+# =============================================================================
+
+# Admin endpoint visibility
+# Default: True for dev, set to False in production deployments
+# Controls whether /admin endpoint returns configuration data
+ADMIN_ENDPOINT_ENABLED: bool = os.getenv("ADMIN_ENDPOINT_ENABLED", "true").lower() == "true"

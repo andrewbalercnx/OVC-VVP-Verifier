@@ -1,10 +1,10 @@
 # VVP Verifier Implementation Checklist
 
-**Document Version:** 3.2
+**Document Version:** 3.3
 **Specification Version:** v1.4 FINAL + draft-hardman-verifiable-voice-protocol §5
 **Created:** 2026-01-23
 **Last Updated:** 2026-01-25
-**Status:** Tier 1 Complete, Tier 2 In Progress (60% overall)
+**Status:** Tier 1 Complete, Tier 2 In Progress (61% overall)
 
 ---
 
@@ -182,11 +182,11 @@
 |---|------|--------|--------|----------|
 | 9.1 | Create `app/vvp/keri/tel_client.py` module | [x] | | TEL client with witness query |
 | 9.2 | Implement TEL query for credential revocation status | [x] | | `check_revocation()` method |
-| 9.3 | Check revocation status for each ACDC in dossier | [ ] | | Full graph traversal - integration pending |
+| 9.3 | Check revocation status for each ACDC in dossier | [x] | | `check_dossier_revocations()` integrated into verify_vvp() |
 | 9.4 | Implement revocation cache with freshness threshold | [x] | | `_cache` dict in TELClient |
 | 9.5 | Handle revocation check failures → INDETERMINATE | [x] | | CredentialStatus.ERROR/UNKNOWN |
 | 9.6 | Handle revoked credential → INVALID | [x] | | CredentialStatus.REVOKED |
-| 9.7 | Unit tests for revocation checking | [ ] | | Tests not yet created |
+| 9.7 | Unit tests for revocation checking | [x] | | `tests/test_revocation_checker.py` |
 
 ---
 
@@ -362,7 +362,7 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 | 6 | Verification Orchestration (Tier 1) | 8 | 8 | 100% |
 | 7 | KEL Key State Resolution (Tier 2) | 16 | 14 | 88% |
 | 8 | ACDC Signature Verification (Tier 2) | 10 | 0 | 0% |
-| 9 | Revocation Checking (Tier 2) | 7 | 5 | 71% |
+| 9 | Revocation Checking (Tier 2) | 7 | 7 | 100% |
 | 10 | Authorization Verification (Tier 3) | 11 | 0 | 0% |
 | 11 | Brand and Business Logic (Tier 3) | 12 | 0 | 0% |
 | 12 | Callee Verification (Tier 3) | 14 | 0 | 0% |
@@ -370,7 +370,7 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 | 14 | Caching and Efficiency | 8 | 5 | 63% |
 | 15 | Test Vectors | 14 | 6 | 43% |
 | 16 | API Routes and Deployment | 9 | 4 | 44% |
-| **TOTAL** | | **158** | **95** | **60%** |
+| **TOTAL** | | **158** | **97** | **61%** |
 
 ---
 
@@ -388,7 +388,7 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 | Evidence Reference | §5.1.1-2.6 | 5 | Done |
 | Dossier Cache Check | §5.1.1-2.7 | 14 | Partial (key state cache done) |
 | Dossier Validation | §5.1.1-2.8 | 5, 8 | Partial |
-| Revocation Status | §5.1.1-2.9 | 9 | **Partial** (TEL client done, integration pending) |
+| Revocation Status | §5.1.1-2.9 | 9 | **Done** (TEL client + verify.py integration) |
 | Originating Party Auth | §5.1.1-2.10 | 10 | Not Started |
 | Phone Number Rights | §5.1.1-2.11 | 10 | Not Started |
 | Brand Attributes | §5.1.1-2.12 | 11 | Not Started |
@@ -412,8 +412,9 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 | 3.0 | 2026-01-24 | Added Tier model. Added Phases 7-14 from spec §5 gap analysis. Marked Tier 1 (Phases 1-6) complete. Added §5 verification steps mapping. |
 | 3.1 | 2026-01-25 | Phase 7 updated: CESR parsing, KERI canonical serialization, live Provenant witness resolution. Added tasks 7.12-7.16. |
 | 3.2 | 2026-01-25 | Phase 9: TEL client 71% (tel_client.py). Phase 14: Caching 63% (cache.py). Overall 60% complete. |
+| 3.3 | 2026-01-25 | Phase 9 complete (100%): `revocation_clear` claim integrated under `dossier_verified` per §3.3B. Added `/admin` endpoint. Overall 61% complete. |
 
 ---
 
 **Last Updated:** 2026-01-25
-**Next Review:** After Phase 8 (ACDC verification) or remaining Phase 7/9 integration
+**Next Review:** After Phase 8 (ACDC verification) or Phase 10 (Authorization)

@@ -1,18 +1,14 @@
-## Plan Review: Phase 7b - CESR Parsing (Revision 1)
+Code Review: Phase 9.3 + Admin - Revocation Integration (Revision 2)
+Verdict: APPROVED
 
-**Verdict:** APPROVED
+Implementation Assessment
+The dossier status now correctly propagates from `revocation_clear`, and revoked credentials emit `CREDENTIAL_REVOKED` errors. The claim tree matches §3.3B and the revocation semantics are unambiguous.
 
-### Required Changes Verification
-- Canonical alignment with keripy is now explicitly verified via `tests/test_canonical_keripy_compat.py`.
-- Witness receipt signature validation is fully specified as Component 6 and covered by a dedicated test file.
+Code Quality
+Changes are localized and consistent with existing patterns. Error emission uses the existing `ErrorDetail`/`ERROR_RECOVERABILITY` structure and maintains clarity.
 
-### Additional Improvements Assessment
-- Blake3 is required in production; SHA256 is clearly test-only.
-- JSON parsing is strictly gated (`allow_json_only=False` by default).
-- Fixture generation is automated with a keripy-based script and is first in the implementation order.
+Test Coverage
+New tests cover dossier status propagation and revoked SAID collection for error emission. Existing revocation and admin tests still cover the core paths.
 
-### Findings
-- [Low]: Ensure the keripy fixture generator pins a specific keripy version to avoid silent canonicalization drift across releases. `PLAN.md:465`
-
-### Final Recommendations
-- Consider adding a “keripy version lock” note to the exit criteria for reproducibility.
+Findings
+[Low]: Admin endpoint env leakage note remains; not addressed in this revision but also not required for approval.

@@ -5,11 +5,17 @@ with status propagation per §3.3A.
 
 Phase 6 (Tier 1): Fixed claim tree structure with passport_verified
 and dossier_verified as required children of caller_authorised.
+
+Phase 9 (Tier 2): Revocation checking per §5.1.1-2.9. The revocation_clear
+claim is a REQUIRED child of dossier_verified per §3.3B.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
+
+log = logging.getLogger(__name__)
 
 from .api_models import (
     VerifyRequest,
@@ -30,6 +36,7 @@ from .dossier import (
     parse_dossier,
     build_dag,
     validate_dag,
+    DossierDAG,
     FetchError,
     ParseError,
     GraphError,
@@ -98,6 +105,89 @@ def to_error_detail(exc: Exception) -> ErrorDetail:
     message = getattr(exc, "message", str(exc))
     recoverable = ERROR_RECOVERABILITY.get(code, True)
     return ErrorDetail(code=code, message=message, recoverable=recoverable)
+
+
+# =============================================================================
+# Revocation Checking (§5.1.1-2.9)
+# =============================================================================
+
+
+async def check_dossier_revocations(
+    dag: DossierDAG,
+    oobi_url: Optional[str] = None
+) -> Tuple[ClaimBuilder, List[str]]:
+    """Check revocation status for all credentials in a dossier DAG.
+
+    Per spec §5.1.1-2.9: Revocation Status Check
+    - Query TEL for each credential in dossier
+    - If ANY credential is revoked → INVALID
+    - If ANY credential status unknown/error → INDETERMINATE
+    - If ALL credentials active → VALID
+
+    Revocation checking is REQUIRED - never skipped. If TEL is unavailable,
+    the claim becomes INDETERMINATE (not skipped).
+
+    Args:
+        dag: Parsed and validated DossierDAG
+        oobi_url: Optional OOBI URL for witness queries
+
+    Returns:
+        Tuple of (ClaimBuilder for `revocation_clear` claim, list of revoked SAIDs)
+    """
+    from .keri.tel_client import get_tel_client, CredentialStatus
+
+    claim = ClaimBuilder("revocation_clear")
+    client = get_tel_client()
+    revoked_saids: List[str] = []
+
+    log.info(f"check_dossier_revocations: checking {len(dag.nodes)} credential(s)")
+
+    revoked_count = 0
+    unknown_count = 0
+    active_count = 0
+
+    for said, node in dag.nodes.items():
+        # Extract registry SAID if present (from raw ACDC data)
+        registry_said = node.raw.get("ri")
+
+        log.info(f"  checking credential: said={said[:20]}... issuer={node.issuer[:16]}...")
+
+        result = await client.check_revocation(
+            credential_said=said,
+            registry_said=registry_said,
+            oobi_url=oobi_url
+        )
+
+        if result.status == CredentialStatus.REVOKED:
+            revoked_count += 1
+            revoked_saids.append(said)
+            claim.fail(
+                ClaimStatus.INVALID,
+                f"Credential {said[:20]}... is revoked"
+            )
+            log.info(f"  credential REVOKED: {said[:20]}...")
+
+        elif result.status in (CredentialStatus.UNKNOWN, CredentialStatus.ERROR):
+            unknown_count += 1
+            # Only mark INDETERMINATE if we haven't already found revoked creds
+            if claim.status != ClaimStatus.INVALID:
+                claim.fail(
+                    ClaimStatus.INDETERMINATE,
+                    f"Could not determine revocation status for {said[:20]}...: {result.error or result.status.value}"
+                )
+            log.info(f"  credential status UNKNOWN: {said[:20]}... error={result.error}")
+
+        else:
+            # ACTIVE - credential is valid
+            active_count += 1
+            claim.add_evidence(f"active:{said[:16]}...")
+            log.info(f"  credential ACTIVE: {said[:20]}...")
+
+    # Summary evidence
+    total = len(dag.nodes)
+    claim.add_evidence(f"checked:{total},active:{active_count},revoked:{revoked_count},unknown:{unknown_count}")
+
+    return claim, revoked_saids
 
 
 # =============================================================================
@@ -244,6 +334,7 @@ async def verify_vvp(
     # Per reviewer feedback: skip dossier fetch if passport has fatal failure
     # This reduces load and provides clearer error diagnostics
     raw_dossier: Optional[bytes] = None
+    dag: Optional[DossierDAG] = None
 
     if vvp_identity and not passport_fatal:
         try:
@@ -262,6 +353,7 @@ async def verify_vvp(
             except (ParseError, GraphError) as e:
                 errors.append(to_error_detail(e))
                 dossier_claim.fail(ClaimStatus.INVALID, e.message)
+                dag = None  # Ensure dag is None on validation failure
     elif passport_fatal:
         # Mark dossier as indeterminate since we skipped verification
         dossier_claim.fail(
@@ -270,10 +362,52 @@ async def verify_vvp(
         )
 
     # -------------------------------------------------------------------------
+    # Phase 9: Revocation Checking (§5.1.1-2.9)
+    # -------------------------------------------------------------------------
+    # revocation_clear is a REQUIRED child of dossier_verified per §3.3B
+    revocation_claim = ClaimBuilder("revocation_clear")
+    revoked_saids: List[str] = []
+
+    if dag is not None:
+        # Check revocation for all credentials in dossier
+        revocation_claim, revoked_saids = await check_dossier_revocations(
+            dag,
+            oobi_url=passport.header.kid if passport else None
+        )
+        # Emit CREDENTIAL_REVOKED errors for each revoked credential
+        for revoked_said in revoked_saids:
+            errors.append(ErrorDetail(
+                code=ErrorCode.CREDENTIAL_REVOKED,
+                message=f"Credential {revoked_said[:20]}... is revoked",
+                recoverable=ERROR_RECOVERABILITY.get(ErrorCode.CREDENTIAL_REVOKED, False)
+            ))
+    else:
+        # Dossier failed - revocation check is INDETERMINATE
+        revocation_claim.fail(
+            ClaimStatus.INDETERMINATE,
+            "Cannot check revocation: dossier validation failed"
+        )
+
+    # -------------------------------------------------------------------------
     # Phase 6: Build Claim Tree
     # -------------------------------------------------------------------------
     passport_node = passport_claim.build()
-    dossier_node = dossier_claim.build()
+    revocation_node = revocation_claim.build()
+
+    # dossier_verified has revocation_clear as a REQUIRED child per §3.3B
+    # First build with original dossier status, then propagate child status
+    dossier_node_temp = dossier_claim.build(children=[
+        ChildLink(required=True, node=revocation_node),
+    ])
+    # Propagate status from revocation_clear to dossier_verified per §3.3A
+    dossier_effective_status = propagate_status(dossier_node_temp)
+    dossier_node = ClaimNode(
+        name=dossier_node_temp.name,
+        status=dossier_effective_status,
+        reasons=dossier_node_temp.reasons,
+        evidence=dossier_node_temp.evidence,
+        children=dossier_node_temp.children,
+    )
 
     # Build root claim with children
     root_claim = ClaimNode(

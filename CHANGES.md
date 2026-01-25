@@ -1,5 +1,45 @@
 # VVP Verifier Change Log
 
+## Phase 9.3: Revocation Integration & Admin Endpoint
+
+**Date:** 2026-01-25
+**Commit:** `pending`
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/vvp/verify.py` | Modified | Added `check_dossier_revocations()`, integrated `revocation_clear` under `dossier_verified` per §3.3B |
+| `app/vvp/api_models.py` | Modified | Added `CREDENTIAL_REVOKED` error code |
+| `app/main.py` | Modified | Added `/admin` endpoint for configuration visibility |
+| `app/core/config.py` | Modified | Added `ADMIN_ENDPOINT_ENABLED` flag |
+| `app/vvp/keri/tel_client.py` | Modified | Added INFO-level logging throughout |
+| `app/logging_config.py` | Modified | Added `VVP_LOG_LEVEL` env var support |
+| `tests/test_revocation_checker.py` | Created | Revocation checking tests (11 tests) |
+| `tests/test_admin.py` | Created | Admin endpoint tests (9 tests) |
+| `tests/test_models.py` | Modified | Updated error code count for CREDENTIAL_REVOKED |
+| `tests/vectors/runner.py` | Modified | Added TEL client mock for deterministic tests |
+| `app/Documentation/VVP_Implementation_Checklist.md` | Modified | Updated to v3.3, Phase 9 100% complete |
+
+### Summary
+
+Integrated revocation checking into the main verification flow per spec §5.1.1-2.9.
+
+**Key Changes:**
+- `revocation_clear` claim is now a REQUIRED child of `dossier_verified` per §3.3B
+- `dossier_verified` status propagates from `revocation_clear` per §3.3A
+- `CREDENTIAL_REVOKED` errors emitted for each revoked credential
+- `/admin` endpoint exposes all configuration values (gated by `ADMIN_ENDPOINT_ENABLED`)
+- INFO-level logging added to TEL client for debugging
+- 480 tests passing (11 new revocation tests, 9 new admin tests)
+
+**Spec Compliance:**
+- §5.1.1-2.9: Revocation status checking for all ACDCs in dossier
+- §3.3B: `revocation_clear` placed under `dossier_verified`
+- §3.3A: Status propagation (INVALID > INDETERMINATE > VALID)
+
+---
+
 ## CESR Parsing & Provenant Witness Integration
 
 **Date:** 2026-01-25

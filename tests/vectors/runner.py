@@ -89,6 +89,28 @@ class VectorRunner:
             patch("app.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client)
         )
 
+        # 3. Mock TEL client to return ACTIVE for all credentials by default
+        # This ensures vector tests are deterministic without real witness queries
+        from app.vvp.keri.tel_client import CredentialStatus, RevocationResult
+
+        async def mock_check_revocation(credential_said, registry_said=None, oobi_url=None):
+            return RevocationResult(
+                status=CredentialStatus.ACTIVE,
+                credential_said=credential_said,
+                registry_said=registry_said,
+                issuance_event=None,
+                revocation_event=None,
+                error=None,
+                source="mock"
+            )
+
+        mock_tel_client = MagicMock()
+        mock_tel_client.check_revocation = mock_check_revocation
+
+        stack.enter_context(
+            patch("app.vvp.keri.tel_client.get_tel_client", return_value=mock_tel_client)
+        )
+
         return stack
 
     def verify_result(self, response) -> None:
