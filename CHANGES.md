@@ -3,7 +3,7 @@
 ## Sprint 16: Delegation Authorization (Case B)
 
 **Date:** 2026-01-25
-**Commit:** (pending)
+**Commit:** `6e5387d`
 
 ### Files Changed
 
