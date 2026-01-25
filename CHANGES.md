@@ -3,7 +3,7 @@
 ## Phase 9.3: Revocation Integration & Admin Endpoint
 
 **Date:** 2026-01-25
-**Commit:** `pending`
+**Commit:** `c08c0bb`
 
 ### Files Changed
 
