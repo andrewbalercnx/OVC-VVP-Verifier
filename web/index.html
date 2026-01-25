@@ -7,7 +7,7 @@
     <h2>Parse PASSporT JWT</h2>
     <p>Paste a VVP PASSporT JWT to decode and view its contents.</p>
     <label>PASSporT JWT</label><br/>
-    <textarea id="jwt" style="width:100%;height:120px" placeholder="eyJhbGciOiJFZERTQSI..."></textarea><br/><br/>
+    <textarea id="jwt" style="width:100%;height:120px" placeholder="eyJhbGciOiJFZERTQSI...">eyJhbGciOiJFZERTQSIsInR5cCI6InBhc3Nwb3J0IiwicHB0IjoidnZwIiwia2lkIjoiaHR0cDovL3dpdG5lc3M1LnN0YWdlLnByb3ZlbmFudC5uZXQ6NTYzMS9vb2JpL0VHYXk1dWZCcUFhbmJoRmFfcWUtS01GVVBKSG44SjBNRmJhOTZ5eVdSckxGL3dpdG5lc3MifQ.eyJvcmlnIjp7InRuIjpbIjQ0Nzg4NDY2NjIwMCJdfSwiZGVzdCI6eyJ0biI6WyI0NDc3Njk3MTAyODUiXX0sImlhdCI6MTc2OTE4MzMwMiwiY2FyZCI6WyJDQVRFR09SSUVTOiIsIkxPR087SEFTSD1zaGEyNTYtNDBiYWM2ODZhM2YwYjQ4MjUzZGU1NWIzNGY1NTJjODA3MGJhZjIyZjgxMjU1YWFjNDQ5NzIxYzg3OWM3MTZhNDtWQUxVRT1VUkk6aHR0cHM6Ly9vcmlnaW4tY2VsbC1mcmFua2Z1cnQuczMuZXUtY2VudHJhbC0xLmFtYXpvbmF3cy5jb20vYnJhbmQtYXNzZXRzL3JpY2gtY29ubmV4aW9ucy9sb2dvLnBuZyIsIk5PVEU7TEVJOjk4NDUwMERFRTc1MzdBMDdZNjE1IiwiT1JHOlJpY2ggQ29ubmV4aW9ucyJdLCJjYWxsX3JlYXNvbiI6bnVsbCwiZ29hbCI6bnVsbCwiZXZkIjoiaHR0cHM6Ly9vcmlnaW4uZGVtby5wcm92ZW5hbnQubmV0L3YxL2FnZW50L3B1YmxpYy9FSGxWWFVKLWRZS3F0UGR2enRkQ0ZKRWJreXI2elgyZFgxMmh3ZEU5eDhleS9kb3NzaWVyLmNlc3IiLCJvcmlnSWQiOiIiLCJleHAiOjE3NjkxODM2MDIsInJlcXVlc3RfaWQiOiIifQ.OvoaiAwt1dgPb6gLkK7ufWoL2qzdtmudyyiL38oqB0wfaicGSG4B_QFtHY2vS2w-PYZ6LhN9dWXpsOHtpKAXCw</textarea><br/><br/>
     <button id="parseJwtBtn">Parse JWT</button>
 
     <h2>Parsed PASSporT</h2>
@@ -37,6 +37,8 @@
       let currentEvdUrl = null;
       let currentAcdcs = [];
       let currentOobiUrl = null;
+      let currentKidUrl = null;  // kid field from JWT header - witness OOBI URL
+      let currentDossierStream = null;  // Raw CESR dossier for inline TEL parsing
 
       // Base64url decode helper
       function base64urlDecode(str) {
@@ -77,6 +79,13 @@
 
           output.textContent = JSON.stringify(result, null, 2);
 
+          // Store kid from header - this is the witness OOBI URL for TEL queries
+          // Per KERI/Provenant: kid format is like http://witness5.stage.provenant.net:5631/oobi/{AID}/witness
+          if (header.kid) {
+            currentKidUrl = header.kid;
+            console.log("Extracted kid (witness OOBI):", currentKidUrl);
+          }
+
           // Show dossier section if evd URL exists
           if (payload.evd) {
             currentEvdUrl = payload.evd;
@@ -94,6 +103,114 @@
           document.getElementById("dossierSection").style.display = "none";
           return false;
         }
+      }
+
+      // Find issuer details from dossier ACDCs
+      // Looks for organization name, LEI, and other identity attributes
+      function findIssuerDetails(issuerAid, allAcdcs) {
+        const details = {
+          aid: issuerAid,
+          name: null,
+          lei: null,
+          role: null,
+          credentials: []  // ACDCs where this AID appears as issuer
+        };
+
+        if (!issuerAid || !allAcdcs || allAcdcs.length === 0) {
+          return details;
+        }
+
+        for (const acdc of allAcdcs) {
+          // Check if this ACDC has attributes about the issuer
+          // This could be an identity credential where the issuer is the subject
+          const attrs = acdc.a;
+          if (!attrs || typeof attrs !== 'object') continue;
+
+          // Check if this ACDC's issuee (subject) matches the issuer AID
+          // The 'i' field in attributes often indicates the subject AID
+          const subjectAid = attrs.i || attrs.issuee;
+
+          if (subjectAid === issuerAid || acdc.i === issuerAid) {
+            // Extract organization name from vCard
+            if (attrs.vcard && Array.isArray(attrs.vcard)) {
+              for (const line of attrs.vcard) {
+                if (line.startsWith('ORG:') && !details.name) {
+                  details.name = line.substring(4);
+                }
+                if (line.includes('LEI:') && !details.lei) {
+                  const lei = line.match(/LEI:([A-Z0-9]+)/);
+                  if (lei) details.lei = lei[1];
+                }
+              }
+            }
+
+            // Extract from direct attributes
+            if (attrs.legalName && !details.name) {
+              details.name = attrs.legalName;
+            }
+            if (attrs.organizationName && !details.name) {
+              details.name = attrs.organizationName;
+            }
+            if (attrs.role && !details.role) {
+              details.role = attrs.role;
+            }
+            if (attrs.lids && attrs.lids.length > 0 && !details.lei) {
+              details.lei = attrs.lids[0];
+            }
+            if (attrs.LEI && !details.lei) {
+              details.lei = attrs.LEI;
+            }
+          }
+
+          // Track which credentials this issuer has issued
+          if (acdc.i === issuerAid) {
+            details.credentials.push({
+              said: acdc.d,
+              schema: acdc.s
+            });
+          }
+        }
+
+        return details;
+      }
+
+      // Format issuer display with details
+      function formatIssuerDisplay(issuerAid, allAcdcs) {
+        const details = findIssuerDetails(issuerAid, allAcdcs);
+        const shortAid = issuerAid ? issuerAid.substring(0, 24) + '...' : 'Unknown';
+
+        let html = '<div class="issuer-details" style="display:flex;flex-direction:column;gap:2px;">';
+
+        // Organization name (if found)
+        if (details.name) {
+          html += `<span style="font-weight:bold;color:#2c5282;">${details.name}</span>`;
+        }
+
+        // Role (if found)
+        if (details.role) {
+          html += `<span style="font-size:0.85em;color:#666;font-style:italic;">${details.role}</span>`;
+        }
+
+        // LEI (if found)
+        if (details.lei) {
+          html += `<span style="font-size:0.8em;color:#666;">LEI: ${details.lei}</span>`;
+        }
+
+        // AID with expand/copy functionality
+        html += `<details style="margin-top:2px;">`;
+        html += `<summary style="cursor:pointer;font-family:monospace;font-size:0.85em;color:#555;">${shortAid}</summary>`;
+        html += `<div style="margin-top:4px;padding:4px;background:#f0f0f0;border-radius:2px;">`;
+        html += `<code style="font-size:0.75em;word-break:break-all;display:block;margin-bottom:4px;">${issuerAid}</code>`;
+        html += `<button onclick="navigator.clipboard.writeText('${issuerAid}');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy AID',1500)" style="font-size:0.7em;padding:2px 6px;cursor:pointer;">Copy AID</button>`;
+        html += `</div></details>`;
+
+        // Credential count (if issuer has issued multiple)
+        if (details.credentials.length > 1) {
+          html += `<span style="font-size:0.75em;color:#888;">Issued ${details.credentials.length} credentials in this dossier</span>`;
+        }
+
+        html += '</div>';
+        return html;
       }
 
       // Extract key claims from attributes for summary
@@ -151,7 +268,7 @@
       }
 
       // Format ACDC claims for display
-      function formatACDC(acdc, index, revocationStatus) {
+      function formatACDC(acdc, index, revocationStatus, allAcdcs) {
         // Determine border/background color based on revocation status
         let borderColor = '#ccc';
         let bgColor = '#fafafa';
@@ -194,9 +311,9 @@
 
         html += `<table style="width:100%;border-collapse:collapse;font-size:0.9em;">`;
 
-        // Issuer (i field)
+        // Issuer (i field) - with expanded details
         if (acdc.i) {
-          html += `<tr><td style="padding:4px;border-bottom:1px solid #eee;width:100px;"><strong>Issuer</strong></td><td style="padding:4px;border-bottom:1px solid #eee;font-family:monospace;font-size:0.85em;word-break:break-all;">${acdc.i.substring(0, 24)}...</td></tr>`;
+          html += `<tr><td style="padding:4px;border-bottom:1px solid #eee;width:100px;vertical-align:top;"><strong>Issuer</strong></td><td style="padding:4px;border-bottom:1px solid #eee;">${formatIssuerDisplay(acdc.i, allAcdcs || [])}</td></tr>`;
         }
 
         // Schema (s field)
@@ -480,7 +597,7 @@
           html += `<p><strong>Found ${acdcs.length} ACDC(s) in dossier:</strong></p>`;
           for (let i = 0; i < acdcs.length; i++) {
             const revStatus = getRevocationStatus(acdcs[i], revocationMap);
-            html += formatACDC(acdcs[i], i, revStatus);
+            html += formatACDC(acdcs[i], i, revStatus, acdcs);
           }
         }
 
@@ -550,6 +667,8 @@
             return;
           }
 
+          // Store raw dossier for inline TEL parsing (Phase 9.4)
+          currentDossierStream = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
           displayDossier(result.data, result.content_type);
 
         } catch (e) {
@@ -578,7 +697,9 @@
               body: JSON.stringify({
                 credential_said: acdc.d,
                 registry_said: acdc.ri || null,
-                oobi_url: currentOobiUrl
+                oobi_url: currentOobiUrl,
+                kid_url: currentKidUrl,  // Witness OOBI from JWT kid field
+                dossier_stream: currentDossierStream  // Pass raw dossier for inline TEL
               })
             });
 

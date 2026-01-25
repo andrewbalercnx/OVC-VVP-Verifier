@@ -68,6 +68,32 @@ class VVPHandler(SimpleHTTPRequestHandler):
         # Serve mock dossier
         if self.path == "/mock-dossier":
             self._send_json(MOCK_DOSSIER)
+        elif self.path == "/admin":
+            self._send_json({
+                "server": "VVP Parser UI Server",
+                "version": "1.0.0",
+                "endpoints": {
+                    "GET /": "Serve index.html",
+                    "GET /mock-dossier": "Return mock dossier data",
+                    "GET /admin": "This endpoint",
+                    "POST /proxy-fetch": "Proxy fetch external URLs",
+                    "POST /check-revocation": "Check credential revocation status"
+                },
+                "tel_resolution": {
+                    "step_1": "Inline TEL from dossier stream",
+                    "step_2": "Witness derived from kid URL (PREFERRED - kid is witness OOBI per Provenant spec)",
+                    "step_3": "Fallback to Provenant stage witnesses (last resort)"
+                },
+                "note": "The kid field in PASSporT header contains the witness OOBI URL - this is the primary method for TEL resolution",
+                "fallback_witnesses": [
+                    "http://witness1.stage.provenant.net:5631",
+                    "http://witness2.stage.provenant.net:5631",
+                    "http://witness3.stage.provenant.net:5631",
+                    "http://witness4.stage.provenant.net:5631",
+                    "http://witness5.stage.provenant.net:5631",
+                    "http://witness6.stage.provenant.net:5631"
+                ]
+            })
         else:
             super().do_GET()
 
@@ -123,6 +149,8 @@ class VVPHandler(SimpleHTTPRequestHandler):
                 cred_said = req_body.get("credential_said", "")
                 registry_said = req_body.get("registry_said")
                 oobi_url = req_body.get("oobi_url")
+                kid_url = req_body.get("kid_url")  # Witness OOBI from JWT kid field
+                dossier_stream = req_body.get("dossier_stream")  # Raw CESR stream
 
                 if not cred_said:
                     self._send_json({"success": False, "error": "No credential_said provided"})
@@ -132,10 +160,14 @@ class VVPHandler(SimpleHTTPRequestHandler):
                 print(f"[TEL] Credential SAID: {cred_said[:24]}...")
                 if registry_said:
                     print(f"[TEL] Registry SAID: {registry_said[:24]}...")
+                if kid_url:
+                    print(f"[TEL] kid URL (witness OOBI): {kid_url}")
                 if oobi_url:
                     print(f"[TEL] OOBI URL: {oobi_url[:60]}...")
+                if dossier_stream:
+                    print(f"[TEL] Dossier stream provided: {len(dossier_stream)} chars")
 
-                result = self._check_revocation_status(cred_said, registry_said, oobi_url)
+                result = self._check_revocation_status(cred_said, registry_said, oobi_url, dossier_stream, kid_url)
                 print(f"[TEL] Final result: {result['status']}")
                 self._send_json(result)
 
@@ -145,21 +177,99 @@ class VVPHandler(SimpleHTTPRequestHandler):
         else:
             self.send_error(404, "Not found")
 
-    def _check_revocation_status(self, cred_said, registry_said, oobi_url):
+    def _extract_witness_base_url(self, oobi_url):
+        """
+        Extract witness base URL from an OOBI URL.
+
+        OOBI URLs follow the pattern:
+            http://witness5.stage.provenant.net:5631/oobi/{AID}/witness
+
+        This extracts: http://witness5.stage.provenant.net:5631
+        """
+        if not oobi_url:
+            return None
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(oobi_url)
+            return f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            return None
+
+    def _check_revocation_status(self, cred_said, registry_said, oobi_url, dossier_stream=None, kid_url=None):
         """
         Query KERI infrastructure for credential revocation status.
 
-        Tries multiple approaches:
-        1. OOBI URL if provided (extracts witness endpoint)
-        2. Known witness endpoints
-        3. Returns UNKNOWN if no TEL data found
+        Tries multiple approaches (Phase 9.4 resolution order):
+        1. Inline TEL from dossier stream (if provided)
+        2. Witness derived from kid URL (witness OOBI from PASSporT header)
+        3. Registry OOBI derived from issuer OOBI
+        4. Known witness endpoints (fallback)
+        5. Returns UNKNOWN if no TEL data found
         """
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
 
+        # Step 1: Try inline TEL from dossier stream first (Phase 9.4)
+        if dossier_stream:
+            print(f"[TEL] Step 1: Checking inline TEL in dossier stream...")
+
+            # Handle JSON-wrapped dossier format (e.g., {"details": "..."})
+            raw_stream = dossier_stream
+            try:
+                parsed = json.loads(dossier_stream)
+                if isinstance(parsed, dict) and "details" in parsed:
+                    # Dossier is wrapped in JSON - extract and unescape the details field
+                    details = parsed["details"]
+                    if isinstance(details, str):
+                        raw_stream = details
+                        print(f"[TEL] Unwrapped JSON-escaped dossier from 'details' field")
+            except json.JSONDecodeError:
+                pass  # Not JSON-wrapped, use as-is
+
+            # Debug: show sample of dossier and key patterns
+            print(f"[TEL] Dossier sample: {raw_stream[:200]}...")
+            keri_count = raw_stream.count('"v":"KERI')
+            iss_count = raw_stream.count('"t":"iss')
+            bis_count = raw_stream.count('"t":"bis')
+            print(f"[TEL] Pattern counts: KERI={keri_count}, iss={iss_count}, bis={bis_count}")
+            events = self._extract_tel_events(raw_stream)
+            if events:
+                print(f"[TEL] Found {len(events)} inline TEL events")
+                # Filter for this credential
+                cred_events = [e for e in events if e.get("i") == cred_said]
+                if not cred_events and registry_said:
+                    cred_events = [e for e in events if e.get("ri") == registry_said]
+                if cred_events:
+                    print(f"[TEL] Found {len(cred_events)} events for credential")
+                    result = self._parse_tel_events(cred_events, cred_said, registry_said, "inline_dossier")
+                    if result["status"] != "UNKNOWN":
+                        return result
+
         # Build list of endpoints to try
         endpoints_to_try = []
+
+        # Step 2: Extract witness base URL from kid (Phase 9.4 - preferred method)
+        # The kid field in PASSporT header is the witness OOBI URL like:
+        #   http://witness5.stage.provenant.net:5631/oobi/{AID}/witness
+        kid_witness_base = None
+        if kid_url:
+            kid_witness_base = self._extract_witness_base_url(kid_url)
+            if kid_witness_base:
+                print(f"[TEL] Step 2: Extracted witness base from kid: {kid_witness_base}")
+                # Query this witness for TEL data
+                if registry_said:
+                    endpoints_to_try.append(f"{kid_witness_base}/tels/{registry_said}")
+                endpoints_to_try.append(f"{kid_witness_base}/tels/{cred_said}")
+
+        # Step 3: Try registry OOBI derived from issuer OOBI (Phase 9.4)
+        if oobi_url and registry_said:
+            from urllib.parse import urlparse
+            parsed = urlparse(oobi_url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            registry_oobi = f"{base_url}/oobi/{registry_said}"
+            print(f"[TEL] Step 3: Trying registry OOBI: {registry_oobi}")
+            endpoints_to_try.append(registry_oobi)
 
         # If OOBI URL provided, extract base and try TEL endpoints
         if oobi_url:
@@ -172,25 +282,21 @@ class VVPHandler(SimpleHTTPRequestHandler):
                 f"{base_url}/oobi/{cred_said}/tels",
             ])
 
-        # GLEIF KERIA testnet witnesses
-        known_witnesses = [
-            "https://wit1.testnet.gleif.org:5641",
-            "https://wit2.testnet.gleif.org:5642",
-            "https://wit3.testnet.gleif.org:5643",
-        ]
+        # Step 4: Fallback to Provenant stage witnesses (only if kid-derived witness didn't work)
+        # Note: GLEIF testnet and Provenant dev witnesses have been removed as non-functional
+        if not kid_witness_base:
+            print(f"[TEL] Step 4: No kid URL provided, trying fallback Provenant stage witnesses")
+            provenant_stage_witnesses = [
+                "http://witness1.stage.provenant.net:5631",
+                "http://witness2.stage.provenant.net:5631",
+                "http://witness3.stage.provenant.net:5631",
+                "http://witness4.stage.provenant.net:5631",
+                "http://witness5.stage.provenant.net:5631",
+                "http://witness6.stage.provenant.net:5631",
+            ]
 
-        # Provenant dev witnesses
-        provenant_witnesses = [
-            "http://witness1.dev.provenant.net:5631",
-            "http://witness2.dev.provenant.net:5631",
-            "http://witness3.dev.provenant.net:5631",
-        ]
-
-        for witness in known_witnesses:
-            endpoints_to_try.append(f"{witness}/tels/{registry_said or cred_said}")
-
-        for witness in provenant_witnesses:
-            endpoints_to_try.append(f"{witness}/tels/{registry_said or cred_said}")
+            for witness in provenant_stage_witnesses:
+                endpoints_to_try.append(f"{witness}/tels/{registry_said or cred_said}")
 
         # Try each endpoint
         for url in endpoints_to_try:
@@ -224,10 +330,8 @@ class VVPHandler(SimpleHTTPRequestHandler):
             "error": "No TEL data found from any configured witness"
         }
 
-    def _parse_tel_response(self, data, cred_said, registry_said, source):
-        """Parse TEL response and determine revocation status."""
-        events = self._extract_tel_events(data)
-
+    def _parse_tel_events(self, events, cred_said, registry_said, source):
+        """Parse a list of TEL events and determine revocation status."""
         if not events:
             return {
                 "success": True,
@@ -237,21 +341,14 @@ class VVPHandler(SimpleHTTPRequestHandler):
                 "source": source
             }
 
-        # Find events for this credential
-        cred_events = [e for e in events if e.get("i") == cred_said]
-        if not cred_events and registry_said:
-            cred_events = [e for e in events if e.get("ri") == registry_said]
-        if not cred_events:
-            cred_events = events
-
         # Sort by sequence
-        cred_events.sort(key=lambda e: int(e.get("s", 0)))
+        events.sort(key=lambda e: int(e.get("s", 0)))
 
         # Find issuance and revocation
         issuance = None
         revocation = None
 
-        for event in cred_events:
+        for event in events:
             t = event.get("t")
             if t in ("iss", "bis"):
                 issuance = event
@@ -286,6 +383,28 @@ class VVPHandler(SimpleHTTPRequestHandler):
             }
 
         return result
+
+    def _parse_tel_response(self, data, cred_said, registry_said, source):
+        """Parse TEL response and determine revocation status."""
+        events = self._extract_tel_events(data)
+
+        if not events:
+            return {
+                "success": True,
+                "status": "UNKNOWN",
+                "credential_said": cred_said,
+                "registry_said": registry_said,
+                "source": source
+            }
+
+        # Find events for this credential
+        cred_events = [e for e in events if e.get("i") == cred_said]
+        if not cred_events and registry_said:
+            cred_events = [e for e in events if e.get("ri") == registry_said]
+        if not cred_events:
+            cred_events = events
+
+        return self._parse_tel_events(cred_events, cred_said, registry_said, source)
 
     def _extract_tel_events(self, data):
         """Extract TEL events from response (JSON or CESR)."""

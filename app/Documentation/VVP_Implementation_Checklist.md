@@ -1,10 +1,10 @@
 # VVP Verifier Implementation Checklist
 
-**Document Version:** 3.3
+**Document Version:** 3.6
 **Specification Version:** v1.4 FINAL + draft-hardman-verifiable-voice-protocol §5
 **Created:** 2026-01-23
 **Last Updated:** 2026-01-25
-**Status:** Tier 1 Complete, Tier 2 In Progress (61% overall)
+**Status:** Tier 1 Complete, Tier 2 In Progress (54% overall)
 
 ---
 
@@ -24,6 +24,34 @@
 | **Tier 1** | Direct verification: parse, validate structure, verify embedded keys | Complete |
 | **Tier 2** | Full KERI: KEL resolution, historical key state, witness validation | In Progress |
 | **Tier 3** | Authorization: TNAlloc, delegation, brand credentials, business logic | Not Started |
+
+---
+
+## Scope Exclusions and Policy Deviations
+
+### Out of Scope: SIP/SDP Layer Requirements
+
+The following VVP spec requirements are **out of scope** for this verification API. They apply to SIP endpoints, not the verification service:
+
+- DTLS fingerprint in SIP INVITE (§3.1/§4.2)
+- VVP line in SIP 200 OK response (§3.1/§4.2)
+- SDP media negotiation requirements
+
+**Rationale:** The VVP Verifier is a cryptographic verification service that validates PASSporTs, dossiers, and KERI credentials. SIP/SDP layer requirements are the responsibility of the telephony endpoints that generate and consume these artifacts.
+
+### Policy Deviation: exp Maximum Age (300s vs 60s)
+
+**Spec Reference:** STIR/RFC 8224 specifies PASSporT expiry MUST NOT exceed 60 seconds.
+
+**VVP Policy:** This implementation uses a **300 second** maximum token age (configurable).
+
+**Justification:**
+1. VVP extends STIR PASSporT with richer evidence (dossiers, KERI credentials) that may require longer verification windows.
+2. The VVP specification (draft-hardman-verifiable-voice-protocol §4.2) does not explicitly override the STIR 60s limit, but the added complexity of KERI resolution and dossier validation justifies a longer window.
+3. The v1.4 FINAL internal specification (§4.1A, §5.2B) documents 300s as the configurable default.
+4. Operators may configure a stricter 60s policy if required for STIR compliance.
+
+**Configuration:** `app/core/config.py:MAX_PASSPORT_VALIDITY_SECONDS = 300`
 
 ---
 
@@ -76,6 +104,9 @@
 | 3.11 | Validate `kid` binding between PASSporT and VVP-Identity | [x] | | Per §5.2 |
 | 3.12 | Validate `iat` drift ≤ 5 seconds between PASSporT and VVP-Identity | [x] | | Per §5.2A - NORMATIVE |
 | 3.13 | Unit tests for PASSporT parsing | [x] | | |
+| 3.14 | Validate `orig.tn` contains exactly ONE phone number | [ ] | | Per VVP §4.2 - **MUST** |
+| 3.15 | Validate `typ` MUST be "passport" | [ ] | | Per VVP §4.2 / RFC8225 - **MUST** |
+| 3.16 | Validate `orig`/`dest` conform to SHAKEN E.164 format | [ ] | | Per VVP §4.2 / RFC8225 - **MUST** |
 
 ---
 
@@ -152,6 +183,7 @@
 | 7.14 | Live witness resolution (Provenant staging) | [x] | | Tested with witness5.stage.provenant.net |
 | 7.15 | Delegation validation (`dip`, `drt` events) | [ ] | | Raises DelegationNotSupportedError |
 | 7.16 | Witness receipt signature validation | [ ] | | Currently presence-only check |
+| 7.17 | Validate `kid` OOBI content is a KEL | [ ] | | Per VVP §4.2 - **MUST** |
 
 ---
 
@@ -171,6 +203,10 @@
 | 8.8 | Verify correct relationships among artifacts | [ ] | | Per §5.1.1-2.8.3 |
 | 8.9 | Handle ACDC variants: compact, partial, aggregate | [ ] | | Per §1.4/§6.1B |
 | 8.10 | Unit tests for ACDC verification | [ ] | | |
+| 8.11 | Validate vetting credential has JL to qualifying credential | [ ] | | Per VVP §6.3.5 - **MUST** |
+| 8.12 | Verify credentials are NOT bearer tokens (have issuee binding) | [ ] | | Per VVP §6.3.5 - **MUST NOT** |
+| 8.13 | Validate all stable evidence is ACDC format | [ ] | | Per VVP §7.3 - **MUST** |
+| 8.14 | Verifier **MUST** accept root of trust as valid authority | [ ] | | Per VVP §5.1-7 - **MUST** |
 
 ---
 
@@ -207,6 +243,13 @@
 | 10.9 | Add `caller_authorized` claim to tree | [ ] | | New claim node |
 | 10.10 | Add `tn_rights_valid` claim to tree | [ ] | | New claim node |
 | 10.11 | Unit tests for authorization | [ ] | | |
+| 10.12 | Verify APE includes vetting credential for AP | [ ] | | Per VVP §6.3.3 - **MUST** |
+| 10.13 | If no delegation: verify AP AID = OP AID (identical) | [ ] | | Per VVP §5.1-9 - **MUST** |
+| 10.14 | If delegation: verify DE includes delegated signer credential | [ ] | | Per VVP §6.3.4 - **MUST** |
+| 10.15 | Verify TNAlloc includes JL to parent TNAlloc (except regulator) | [ ] | | Per VVP §6.3.6 - **MUST** |
+| 10.16 | Verify PSS signer matches OP AID (not OSP) | [ ] | | Per VVP §6.3.4 - **MUST** |
+| 10.17 | Verify OP is issuee of vetting OR delegated signer credential | [ ] | | Per VVP §5.1-9 - **MUST** |
+| 10.18 | Validate `kid` AID is single-sig; require DE when not legal entity AID | [ ] | | Per VVP §4.2 - **MUST** |
 
 ---
 
@@ -228,6 +271,11 @@
 | 11.10 | Add `brand_verified` claim to tree (OPTIONAL) | [ ] | | |
 | 11.11 | Add `business_logic_verified` claim to tree (OPTIONAL) | [ ] | | |
 | 11.12 | Unit tests for brand and business logic | [ ] | | |
+| 11.13 | If `card` present: verify brand attributes justified by dossier | [ ] | | Per VVP §4.2 - **MUST** |
+| 11.14 | If `goal` present: verify dossier proves OP authorized for goal | [ ] | | Per VVP §4.2 - **MUST** |
+| 11.15 | Brand credential **MUST** include JL to vetting credential | [ ] | | Per VVP §6.3.7 - **MUST** |
+| 11.16 | If brand in APE + delegation: DE **MUST** have brand proxy credential | [ ] | | Per VVP §6.3.4 - **MUST** |
+| 11.17 | Validate `card` attributes conform to vCard format | [ ] | | Per VVP §4.2 - **MUST** |
 
 ---
 
@@ -251,6 +299,7 @@
 | 12.12 | Check goal overlap with caller (if applicable) | [ ] | | Per §5.2-2.14 |
 | 12.13 | Add POST /verify-callee endpoint | [ ] | | |
 | 12.14 | Unit tests for callee verification | [ ] | | |
+| 12.15 | Unknown claims in PASSporT MUST be ignored (not cause failure) | [ ] | | Per VVP §4.2 - **MUST** |
 
 ---
 
@@ -356,21 +405,21 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 |-------|-------------|-------|------|---|
 | 1 | Core Infrastructure | 8 | 8 | 100% |
 | 2 | VVP-Identity Header | 10 | 10 | 100% |
-| 3 | PASSporT JWT | 13 | 13 | 100% |
+| 3 | PASSporT JWT | 16 | 13 | 81% |
 | 4 | KERI Signature (Tier 1) | 7 | 7 | 100% |
 | 5 | Dossier Validation (Tier 1) | 15 | 15 | 100% |
 | 6 | Verification Orchestration (Tier 1) | 8 | 8 | 100% |
-| 7 | KEL Key State Resolution (Tier 2) | 16 | 14 | 88% |
-| 8 | ACDC Signature Verification (Tier 2) | 10 | 0 | 0% |
+| 7 | KEL Key State Resolution (Tier 2) | 17 | 14 | 82% |
+| 8 | ACDC Signature Verification (Tier 2) | 14 | 0 | 0% |
 | 9 | Revocation Checking (Tier 2) | 7 | 7 | 100% |
-| 10 | Authorization Verification (Tier 3) | 11 | 0 | 0% |
-| 11 | Brand and Business Logic (Tier 3) | 12 | 0 | 0% |
-| 12 | Callee Verification (Tier 3) | 14 | 0 | 0% |
+| 10 | Authorization Verification (Tier 3) | 18 | 0 | 0% |
+| 11 | Brand and Business Logic (Tier 3) | 17 | 0 | 0% |
+| 12 | Callee Verification (Tier 3) | 15 | 0 | 0% |
 | 13 | SIP Contextual Alignment | 6 | 0 | 0% |
 | 14 | Caching and Efficiency | 8 | 5 | 63% |
 | 15 | Test Vectors | 14 | 6 | 43% |
 | 16 | API Routes and Deployment | 9 | 4 | 44% |
-| **TOTAL** | | **158** | **97** | **61%** |
+| **TOTAL** | | **179** | **97** | **54%** |
 
 ---
 
@@ -413,6 +462,9 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 | 3.1 | 2026-01-25 | Phase 7 updated: CESR parsing, KERI canonical serialization, live Provenant witness resolution. Added tasks 7.12-7.16. |
 | 3.2 | 2026-01-25 | Phase 9: TEL client 71% (tel_client.py). Phase 14: Caching 63% (cache.py). Overall 60% complete. |
 | 3.3 | 2026-01-25 | Phase 9 complete (100%): `revocation_clear` claim integrated under `dossier_verified` per §3.3B. Added `/admin` endpoint. Overall 61% complete. |
+| 3.4 | 2026-01-25 | VVP spec gap analysis: Added 15 missing MUST requirements from draft-hardman-verifiable-voice-protocol. Phase 3: +1 (orig single TN). Phase 8: +4 (JL validation, bearer token check, ACDC format, root of trust). Phase 10: +6 (APE/DE validation, PSS signer). Phase 11: +4 (card/goal justification, brand JL). Overall 56% complete. |
+| 3.5 | 2026-01-25 | Reviewer feedback: Added 4 more missing MUSTs. Phase 3: +1 (typ="passport"). Phase 7: +1 (kid OOBI must be KEL). Phase 10: +1 (kid AID single-sig). Phase 11: +1 (vCard conformance). Note: exp max 300s is correct per VVP spec §4.2 (reviewer incorrectly cited 60s from STIR/RFC 8224). |
+| 3.6 | 2026-01-25 | Reviewer re-review: Added 2 more items. Phase 3: +1 (SHAKEN E.164 format). Phase 12: +1 (unknown claims ignored). Added "Scope Exclusions and Policy Deviations" section documenting SIP out-of-scope and exp 300s policy with justification. Total 179 items (54% complete). |
 
 ---
 

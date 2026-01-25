@@ -65,17 +65,39 @@ class TELClient:
     - /credentials/{cred-said}       - Credential + TEL state
     """
 
-    # Provenant OVC staging witnesses (primary)
-    # See: http://witness{4,5,6}.stage.provenant.net:5631/oobi/{AID}/witness
+    # Fallback witnesses - used ONLY when kid doesn't provide witness URL
+    # PRIMARY method: Derive witness from PASSporT kid field (witness OOBI URL)
+    # GLEIF testnet witnesses removed - not functional for OVC project
     DEFAULT_WITNESSES = [
+        # Provenant OVC stage witnesses (last resort fallback)
+        "http://witness1.stage.provenant.net:5631",
+        "http://witness2.stage.provenant.net:5631",
+        "http://witness3.stage.provenant.net:5631",
         "http://witness4.stage.provenant.net:5631",
         "http://witness5.stage.provenant.net:5631",
         "http://witness6.stage.provenant.net:5631",
-        # GLEIF KERIA testnet witnesses (fallback)
-        "https://wit1.testnet.gleif.org:5641",
-        "https://wit2.testnet.gleif.org:5642",
-        "https://wit3.testnet.gleif.org:5643",
     ]
+
+    @staticmethod
+    def extract_witness_base_url(oobi_url: str) -> Optional[str]:
+        """
+        Extract witness base URL from an OOBI URL.
+
+        OOBI URLs follow the pattern:
+            http://witness5.stage.provenant.net:5631/oobi/{AID}/witness
+
+        Returns: http://witness5.stage.provenant.net:5631
+
+        This allows deriving the witness endpoint from the PASSporT kid field,
+        which should contain a witness OOBI URL per KERI/Provenant specs.
+        """
+        if not oobi_url:
+            return None
+        try:
+            parsed = urlparse(oobi_url)
+            return f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            return None
 
     def __init__(
         self,
