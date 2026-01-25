@@ -148,7 +148,12 @@ async def resolve_key_state(
         oobi_url = _construct_oobi_url(kid)
 
     # Fetch and validate KEL via OOBI per §4.2
-    oobi_result, events = await _fetch_and_validate_oobi(oobi_url, aid)
+    # Use strict validation in production mode, lenient in test mode
+    oobi_result, events = await _fetch_and_validate_oobi(
+        oobi_url,
+        aid,
+        strict_validation=not _allow_test_mode
+    )
 
     # Find key state at reference time T
     key_state = _find_key_state_at_time(
@@ -168,7 +173,8 @@ async def resolve_key_state(
 async def _fetch_and_validate_oobi(
     oobi_url: str,
     aid: str,
-    timeout: float = 5.0
+    timeout: float = 5.0,
+    strict_validation: bool = True
 ) -> tuple[OOBIResult, List[KELEvent]]:
     """Fetch OOBI and validate it contains a valid KEL.
 
@@ -180,6 +186,8 @@ async def _fetch_and_validate_oobi(
         oobi_url: OOBI URL to fetch.
         aid: Expected AID.
         timeout: Request timeout in seconds.
+        strict_validation: If True, use canonical KERI validation (production).
+            If False, allow lenient validation (test fixtures).
 
     Returns:
         Tuple of (OOBIResult, parsed events).
@@ -187,6 +195,7 @@ async def _fetch_and_validate_oobi(
     Raises:
         ResolutionFailedError: If fetch fails or KEL is invalid.
         KELChainInvalidError: If chain validation fails.
+        OOBIContentInvalidError: If content structure is invalid.
     """
     from .exceptions import OOBIContentInvalidError
 
@@ -194,7 +203,7 @@ async def _fetch_and_validate_oobi(
     oobi_result = await dereference_oobi(oobi_url, timeout=timeout)
 
     if not oobi_result.kel_data:
-        raise ResolutionFailedError(f"OOBI response contains no KEL data for {aid}")
+        raise OOBIContentInvalidError(f"OOBI response contains no KEL data for {aid}")
 
     # Parse KEL events
     events = parse_kel_stream(
@@ -204,23 +213,24 @@ async def _fetch_and_validate_oobi(
     )
 
     if not events:
-        raise ResolutionFailedError(f"Empty KEL for AID {aid}")
+        raise OOBIContentInvalidError(f"Empty KEL for AID {aid}")
 
     # Validate first event is inception (per §4.2)
     from .kel_parser import EventType
     first_event = events[0]
     if first_event.event_type not in {EventType.ICP, EventType.DIP}:
-        raise ResolutionFailedError(
+        raise OOBIContentInvalidError(
             f"OOBI KEL must start with inception event, found: {first_event.event_type.value}"
         )
 
     # Validate KEL chain (signatures and continuity)
-    # Note: use_canonical=False for backward compatibility with test fixtures.
-    # Production systems should use use_canonical=True for real KERI events.
+    # Per §4.2: OOBI MUST resolve to valid KEL
+    # In strict mode (production), use canonical KERI validation
+    # In lenient mode (test), allow placeholder SAIDs and non-canonical serialization
     validate_kel_chain(
         events,
-        validate_saids=False,  # Placeholder SAIDs allowed in test mode
-        use_canonical=False,   # False for test fixtures; True for production
+        validate_saids=strict_validation,  # Strict mode validates SAIDs
+        use_canonical=strict_validation,   # Strict mode uses canonical serialization
         validate_witnesses=False  # Witness validation handled in _find_key_state_at_time
     )
 

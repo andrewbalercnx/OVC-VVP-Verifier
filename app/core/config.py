@@ -64,6 +64,15 @@ DOSSIER_FETCH_TIMEOUT_SECONDS: int = 5
 DOSSIER_MAX_SIZE_BYTES: int = 1_048_576  # 1 MB
 DOSSIER_MAX_REDIRECTS: int = 3
 
+# Schema SAID validation strictness (§6.3.3-6)
+# Per spec, schema rules are MUSTs and should reject unknown schema SAIDs.
+# True (default): Reject unknown schema SAIDs per spec compliance
+# False: Log warnings but allow (documented policy deviation)
+#
+# Setting to False is a POLICY DEVIATION that should be documented.
+# Use only for testing with non-production credentials.
+SCHEMA_VALIDATION_STRICT: bool = os.getenv("SCHEMA_VALIDATION_STRICT", "true").lower() == "true"
+
 # =============================================================================
 # EXPERIMENTAL / TEST-ONLY FEATURES
 # =============================================================================

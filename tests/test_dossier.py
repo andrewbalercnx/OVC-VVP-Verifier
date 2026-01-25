@@ -244,16 +244,18 @@ class TestDossierParser:
 
     def test_parse_single_acdc(self):
         """Parse single ACDC object."""
-        nodes = parse_dossier(json.dumps(VALID_ACDC).encode())
+        nodes, sigs = parse_dossier(json.dumps(VALID_ACDC).encode())
         assert len(nodes) == 1
         assert nodes[0].said == "SAID_ROOT_123"
+        assert sigs == {}  # JSON format has no signatures
 
     def test_parse_acdc_array(self):
         """Parse array of ACDC objects."""
-        nodes = parse_dossier(json.dumps(VALID_DAG).encode())
+        nodes, sigs = parse_dossier(json.dumps(VALID_DAG).encode())
         assert len(nodes) == 2
         saids = {n.said for n in nodes}
         assert saids == {"SAID_ROOT", "SAID_CHILD"}
+        assert sigs == {}  # JSON format has no signatures
 
     def test_parse_invalid_json_raises(self):
         """Invalid JSON raises ParseError."""
@@ -276,7 +278,7 @@ class TestDossierParser:
 
     def test_parse_preserves_raw(self):
         """Parsed node retains original dict in raw field."""
-        nodes = parse_dossier(json.dumps(VALID_ACDC).encode())
+        nodes, _ = parse_dossier(json.dumps(VALID_ACDC).encode())
         assert nodes[0].raw == VALID_ACDC
 
 
@@ -351,7 +353,7 @@ class TestBuildDAG:
 
     def test_build_dag_from_nodes(self):
         """Build DAG from list of nodes."""
-        nodes = parse_dossier(json.dumps(VALID_DAG).encode())
+        nodes, _ = parse_dossier(json.dumps(VALID_DAG).encode())
         dag = build_dag(nodes)
         assert len(dag) == 2
         assert "SAID_ROOT" in dag
@@ -359,7 +361,7 @@ class TestBuildDAG:
 
     def test_build_dag_single_node(self):
         """Build DAG from single node."""
-        nodes = parse_dossier(json.dumps(VALID_ACDC).encode())
+        nodes, _ = parse_dossier(json.dumps(VALID_ACDC).encode())
         dag = build_dag(nodes)
         assert len(dag) == 1
 
@@ -367,7 +369,7 @@ class TestBuildDAG:
         """Duplicate SAID raises GraphError."""
         acdc1 = {"d": "SAME_SAID", "i": "I1", "s": "S1"}
         acdc2 = {"d": "SAME_SAID", "i": "I2", "s": "S2"}
-        nodes = parse_dossier(json.dumps([acdc1, acdc2]).encode())
+        nodes, _ = parse_dossier(json.dumps([acdc1, acdc2]).encode())
         with pytest.raises(GraphError) as exc:
             build_dag(nodes)
         assert "Duplicate" in str(exc.value)
@@ -384,14 +386,14 @@ class TestCycleDetection:
 
     def test_no_cycle_in_valid_dag(self):
         """Valid DAG has no cycles."""
-        nodes = parse_dossier(json.dumps(VALID_DAG).encode())
+        nodes, _ = parse_dossier(json.dumps(VALID_DAG).encode())
         dag = build_dag(nodes)
         cycle = detect_cycle(dag)
         assert cycle is None
 
     def test_detect_two_node_cycle(self):
         """Detect cycle between two nodes."""
-        nodes = parse_dossier(json.dumps(CYCLIC_DAG).encode())
+        nodes, _ = parse_dossier(json.dumps(CYCLIC_DAG).encode())
         dag = build_dag(nodes)
         cycle = detect_cycle(dag)
         assert cycle is not None
@@ -400,7 +402,7 @@ class TestCycleDetection:
 
     def test_detect_three_node_cycle(self):
         """Detect cycle among three nodes."""
-        nodes = parse_dossier(json.dumps(THREE_NODE_CYCLE).encode())
+        nodes, _ = parse_dossier(json.dumps(THREE_NODE_CYCLE).encode())
         dag = build_dag(nodes)
         cycle = detect_cycle(dag)
         assert cycle is not None
@@ -408,7 +410,7 @@ class TestCycleDetection:
 
     def test_no_cycle_single_node(self):
         """Single node without self-reference has no cycle."""
-        nodes = parse_dossier(json.dumps(VALID_ACDC).encode())
+        nodes, _ = parse_dossier(json.dumps(VALID_ACDC).encode())
         dag = build_dag(nodes)
         cycle = detect_cycle(dag)
         assert cycle is None
@@ -421,7 +423,7 @@ class TestCycleDetection:
             "s": "S",
             "e": {"ref": {"n": "NON_EXISTENT"}},
         }
-        nodes = parse_dossier(json.dumps(acdc).encode())
+        nodes, _ = parse_dossier(json.dumps(acdc).encode())
         dag = build_dag(nodes)
         cycle = detect_cycle(dag)
         assert cycle is None
@@ -437,14 +439,14 @@ class TestFindRoot:
 
     def test_find_root_valid_dag(self):
         """Find root in valid two-node DAG."""
-        nodes = parse_dossier(json.dumps(VALID_DAG).encode())
+        nodes, _ = parse_dossier(json.dumps(VALID_DAG).encode())
         dag = build_dag(nodes)
         root = find_root(dag)
         assert root == "SAID_ROOT"
 
     def test_find_root_single_node(self):
         """Single node is the root."""
-        nodes = parse_dossier(json.dumps(VALID_ACDC).encode())
+        nodes, _ = parse_dossier(json.dumps(VALID_ACDC).encode())
         dag = build_dag(nodes)
         root = find_root(dag)
         assert root == "SAID_ROOT_123"
@@ -455,7 +457,7 @@ class TestFindRoot:
             {"d": "SAID_A", "i": "B1", "s": "S1"},
             {"d": "SAID_B", "i": "B2", "s": "S2"},
         ]
-        nodes = parse_dossier(json.dumps(data).encode())
+        nodes, _ = parse_dossier(json.dumps(data).encode())
         dag = build_dag(nodes)
         with pytest.raises(GraphError) as exc:
             find_root(dag)
@@ -464,7 +466,7 @@ class TestFindRoot:
     def test_no_root_raises(self):
         """All nodes having incoming edges raises GraphError."""
         # This would require a cycle; test with validate_dag instead
-        nodes = parse_dossier(json.dumps(CYCLIC_DAG).encode())
+        nodes, _ = parse_dossier(json.dumps(CYCLIC_DAG).encode())
         dag = build_dag(nodes)
         # In a pure cycle, technically both have incoming edges
         # but detect_cycle should catch this first
@@ -480,21 +482,21 @@ class TestDAGValidator:
 
     def test_validate_valid_dag(self):
         """Valid DAG passes validation."""
-        nodes = parse_dossier(json.dumps(VALID_DAG).encode())
+        nodes, _ = parse_dossier(json.dumps(VALID_DAG).encode())
         dag = build_dag(nodes)
         validate_dag(dag)  # Should not raise
         assert dag.root_said == "SAID_ROOT"
 
     def test_validate_single_node(self):
         """Single node DAG is valid."""
-        nodes = parse_dossier(json.dumps(VALID_ACDC).encode())
+        nodes, _ = parse_dossier(json.dumps(VALID_ACDC).encode())
         dag = build_dag(nodes)
         validate_dag(dag)
         assert dag.root_said == "SAID_ROOT_123"
 
     def test_validate_detects_cycle(self):
         """Validation fails on cyclic graph."""
-        nodes = parse_dossier(json.dumps(CYCLIC_DAG).encode())
+        nodes, _ = parse_dossier(json.dumps(CYCLIC_DAG).encode())
         dag = build_dag(nodes)
         with pytest.raises(GraphError) as exc:
             validate_dag(dag)
@@ -507,7 +509,7 @@ class TestDAGValidator:
             {"d": "SAID_A", "i": "B1", "s": "S1"},
             {"d": "SAID_B", "i": "B2", "s": "S2"},
         ]
-        nodes = parse_dossier(json.dumps(data).encode())
+        nodes, _ = parse_dossier(json.dumps(data).encode())
         dag = build_dag(nodes)
         with pytest.raises(GraphError) as exc:
             validate_dag(dag)
@@ -528,7 +530,7 @@ class TestDAGValidator:
             {"d": "CHILD1", "i": "I", "s": "S", "e": {"c2": {"n": "CHILD2"}}},
             {"d": "CHILD2", "i": "I", "s": "S"},
         ]
-        nodes = parse_dossier(json.dumps(data).encode())
+        nodes, _ = parse_dossier(json.dumps(data).encode())
         dag = build_dag(nodes)
         validate_dag(dag)
         assert dag.root_said == "ROOT"
@@ -739,7 +741,7 @@ class TestDossierIntegration:
     def test_parse_and_validate_pipeline(self):
         """Full pipeline: parse JSON -> build DAG -> validate."""
         raw = json.dumps(VALID_DAG).encode()
-        nodes = parse_dossier(raw)
+        nodes, sigs = parse_dossier(raw)
         dag = build_dag(nodes)
         validate_dag(dag)
 
@@ -747,6 +749,7 @@ class TestDossierIntegration:
         assert dag.root_said == "SAID_ROOT"
         assert dag.get("SAID_ROOT") is not None
         assert dag.get("SAID_CHILD") is not None
+        assert sigs == {}  # JSON format has no signatures
 
     def test_complex_dag_structure(self):
         """Parse and validate more complex DAG."""
@@ -771,9 +774,115 @@ class TestDossierIntegration:
         ]
 
         raw = json.dumps(data).encode()
-        nodes = parse_dossier(raw)
+        nodes, _ = parse_dossier(raw)
         dag = build_dag(nodes)
         validate_dag(dag)
 
         assert len(dag) == 4
         assert dag.root_said == "ROOT"
+
+
+# =============================================================================
+# Phase 11: CESR Signature Extraction Tests
+# =============================================================================
+
+
+class TestCESRSignatureExtraction:
+    """Tests for CESR signature extraction from dossier."""
+
+    def test_json_dossier_returns_empty_signatures(self):
+        """Plain JSON dossier returns empty signatures dict."""
+        raw = json.dumps(VALID_ACDC).encode()
+        nodes, signatures = parse_dossier(raw)
+
+        assert len(nodes) == 1
+        assert signatures == {}
+
+    def test_json_array_returns_empty_signatures(self):
+        """JSON array dossier returns empty signatures dict."""
+        raw = json.dumps(VALID_DAG).encode()
+        nodes, signatures = parse_dossier(raw)
+
+        assert len(nodes) == 2
+        assert signatures == {}
+
+    def test_cesr_detection_version_marker(self):
+        """CESR stream with version marker is detected."""
+        from app.vvp.dossier.parser import _is_cesr_stream
+
+        # CESR version marker
+        assert _is_cesr_stream(b"-_AAAKERI10JSON00011c_") is True
+
+    def test_cesr_detection_count_code(self):
+        """CESR stream with count code is detected."""
+        from app.vvp.dossier.parser import _is_cesr_stream
+
+        # Count code at start
+        assert _is_cesr_stream(b"-AAB...") is True
+
+    def test_cesr_detection_json_only(self):
+        """Plain JSON is not detected as CESR."""
+        from app.vvp.dossier.parser import _is_cesr_stream
+
+        # Plain JSON
+        assert _is_cesr_stream(b'{"d": "test"}') is False
+
+    def test_cesr_detection_json_with_attachment(self):
+        """JSON followed by count code is detected as CESR."""
+        from app.vvp.dossier.parser import _is_cesr_stream
+
+        # JSON with CESR attachment
+        cesr_with_attachment = b'{"d": "test"}-AAB'
+        assert _is_cesr_stream(cesr_with_attachment) is True
+
+    def test_cesr_detection_empty(self):
+        """Empty data is not CESR."""
+        from app.vvp.dossier.parser import _is_cesr_stream
+
+        assert _is_cesr_stream(b"") is False
+
+    def test_parse_dossier_returns_tuple(self):
+        """parse_dossier always returns (nodes, signatures) tuple."""
+        raw = json.dumps(VALID_ACDC).encode()
+        result = parse_dossier(raw)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert isinstance(result[0], list)
+        assert isinstance(result[1], dict)
+
+    def test_cesr_signature_extraction_mocked(self):
+        """Test CESR signature extraction with mocked cesr module.
+
+        This validates the signature extraction logic without requiring
+        libsodium/pysodium by mocking the cesr module.
+        """
+        from unittest.mock import MagicMock, patch
+        import types
+
+        # Create mock CESRMessage with controller signature
+        mock_message = MagicMock()
+        mock_message.event_dict = {
+            "d": "ESAID_TEST_123",
+            "i": "EISSUER_AID_456",
+            "s": "ESCHEMA_789",
+            "a": {"name": "Test Credential"},
+        }
+        mock_message.controller_sigs = [b"signature_bytes_64_chars_padded_to_match_ed25519_length_here___"]
+
+        # Create mock cesr module
+        mock_cesr = types.ModuleType("mock_cesr")
+        mock_cesr.parse_cesr_stream = MagicMock(return_value=[mock_message])
+
+        # Create CESR-like data (JSON with attachment marker)
+        cesr_data = b'{"d":"ESAID_TEST_123","i":"EISSUER_AID_456","s":"ESCHEMA_789"}-AAB0AA...'
+
+        with patch.dict("sys.modules", {"app.vvp.keri.cesr": mock_cesr}):
+            with patch("app.vvp.dossier.parser._is_cesr_stream", return_value=True):
+                nodes, signatures = parse_dossier(cesr_data)
+
+        # Verify signature was extracted
+        assert len(nodes) == 1
+        assert nodes[0].said == "ESAID_TEST_123"
+        assert "ESAID_TEST_123" in signatures
+        assert signatures["ESAID_TEST_123"] == b"signature_bytes_64_chars_padded_to_match_ed25519_length_here___"

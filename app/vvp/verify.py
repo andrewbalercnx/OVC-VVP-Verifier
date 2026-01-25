@@ -13,7 +13,7 @@ claim is a REQUIRED child of dossier_verified per §3.3B.
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
@@ -31,7 +31,12 @@ from .api_models import (
 )
 from .header import parse_vvp_identity, VVPIdentity
 from .passport import parse_passport, validate_passport_binding, Passport
-from .keri import verify_passport_signature, SignatureInvalidError, ResolutionFailedError
+from .keri import (
+    verify_passport_signature,
+    verify_passport_signature_tier2,
+    SignatureInvalidError,
+    ResolutionFailedError,
+)
 from .dossier import (
     fetch_dossier,
     parse_dossier,
@@ -106,6 +111,122 @@ def to_error_detail(exc: Exception) -> ErrorDetail:
     message = getattr(exc, "message", str(exc))
     recoverable = ERROR_RECOVERABILITY.get(code, True)
     return ErrorDetail(code=code, message=message, recoverable=recoverable)
+
+
+# =============================================================================
+# Model Conversion Helpers (Phase 11)
+# =============================================================================
+
+
+def _convert_dag_to_acdcs(dag: DossierDAG) -> Dict[str, "ACDC"]:
+    """Convert DossierDAG nodes to ACDC format for chain validation.
+
+    The dossier module uses ACDCNode while the acdc module uses ACDC.
+    This function bridges the two models.
+
+    Args:
+        dag: DossierDAG with ACDCNode objects
+
+    Returns:
+        Dict mapping SAID to ACDC objects
+    """
+    from app.vvp.acdc import ACDC
+
+    result = {}
+    for said, node in dag.nodes.items():
+        result[said] = ACDC(
+            version=node.raw.get("v", ""),
+            said=said,
+            issuer_aid=node.issuer,
+            schema_said=node.raw.get("s", ""),
+            attributes=node.raw.get("a"),
+            edges=node.edges,
+            rules=node.raw.get("r"),
+            raw=node.raw,
+        )
+    return result
+
+
+def _extract_aid_from_kid(kid: str) -> str:
+    """Extract AID from kid (which may be bare AID or OOBI URL).
+
+    Per §4.2, kid SHOULD be an OOBI URL. This function extracts the AID
+    from either format for use in chain validation.
+
+    Args:
+        kid: PASSporT kid field (bare AID or OOBI URL)
+
+    Returns:
+        The extracted AID
+
+    Raises:
+        ResolutionFailedError: If AID cannot be extracted from OOBI URL
+    """
+    if kid.startswith(("http://", "https://")):
+        # Extract AID from OOBI URL path
+        # Pattern: https://witness.example.com/oobi/{AID}[/witness/...]
+        from urllib.parse import urlparse
+
+        parsed = urlparse(kid)
+        path_parts = parsed.path.strip("/").split("/")
+
+        # Find AID after 'oobi' in path
+        for i, part in enumerate(path_parts):
+            if part == "oobi" and i + 1 < len(path_parts):
+                aid = path_parts[i + 1]
+                if aid and aid[0] in "BDEFGHJKLMNOPQRSTUVWXYZ":
+                    return aid
+
+        # If OOBI URL but no AID found, raise error
+        raise ResolutionFailedError(
+            f"Could not extract AID from OOBI URL: {kid[:50]}..."
+        )
+
+    # Bare AID - return as-is
+    # Note: Per §4.2, bare AIDs should trigger INVALID, but we return them
+    # here so the caller can decide how to handle (e.g., for chain validation)
+    return kid
+
+
+def _find_leaf_credentials(dag: DossierDAG, dossier_acdcs: Dict[str, "ACDC"]) -> List[str]:
+    """Find leaf credentials in the DAG (credentials not referenced by other edges).
+
+    Per §6.3.x, chain validation should start from the credential(s) relevant
+    to the authorization being verified, not necessarily the DAG structural root.
+    Leaf credentials are those that authorize specific actions (APE/DE/TNAlloc)
+    and are not referenced as edges by other credentials.
+
+    Args:
+        dag: DossierDAG with credential nodes
+        dossier_acdcs: Dict mapping SAID to ACDC objects
+
+    Returns:
+        List of SAIDs for leaf credentials. If no leaves found, returns [dag.root_said].
+    """
+    # Collect all SAIDs referenced as edges by other credentials
+    referenced_saids: Set[str] = set()
+    for said, node in dag.nodes.items():
+        for edge_name, edge_ref in node.edges.items():
+            # Skip metadata fields
+            if edge_name in ('d', 'n'):
+                continue
+
+            # Extract referenced SAID from edge
+            if isinstance(edge_ref, str):
+                referenced_saids.add(edge_ref)
+            elif isinstance(edge_ref, dict):
+                ref_said = edge_ref.get('n') or edge_ref.get('d')
+                if ref_said:
+                    referenced_saids.add(ref_said)
+
+    # Leaf credentials are those NOT referenced by other credentials
+    leaf_saids = [said for said in dag.nodes.keys() if said not in referenced_saids]
+
+    # If no leaves found (cycle or single node), fall back to root
+    if not leaf_saids:
+        return [dag.root_said] if dag.root_said else []
+
+    return leaf_saids
 
 
 # =============================================================================
@@ -418,20 +539,43 @@ async def verify_vvp(
             passport_fatal = True
 
     # -------------------------------------------------------------------------
-    # Phase 4: KERI Signature Verification
+    # Phase 4: KERI Signature Verification (§4.2, §5.1)
     # -------------------------------------------------------------------------
+    # Per §4.2, kid MUST be an OOBI URL. Bare AIDs are non-compliant and
+    # result in INVALID status. When kid is an OOBI URL, we use Tier 2
+    # verification with historical key state resolution.
     if passport and not passport_fatal:
+        kid = passport.header.kid
+        is_oobi_kid = kid.startswith(("http://", "https://"))
+
         try:
-            verify_passport_signature(passport)
-            passport_claim.add_evidence("signature_valid")
+            if is_oobi_kid:
+                # Tier 2: Use historical key state resolution via OOBI
+                await verify_passport_signature_tier2(
+                    passport,
+                    oobi_url=kid,
+                    _allow_test_mode=False
+                )
+                passport_claim.add_evidence("signature_valid,tier2")
+            else:
+                # §4.2: kid MUST be an OOBI URL - bare AIDs are non-compliant
+                # Mark as INVALID rather than silently falling back to Tier 1
+                raise ResolutionFailedError(
+                    f"kid must be an OOBI URL per §4.2, got bare AID: {kid[:20]}..."
+                )
         except SignatureInvalidError as e:
             errors.append(to_error_detail(e))
             passport_claim.fail(ClaimStatus.INVALID, e.message)
             passport_fatal = True
         except ResolutionFailedError as e:
             errors.append(to_error_detail(e))
-            passport_claim.fail(ClaimStatus.INDETERMINATE, e.message)
-            # Note: INDETERMINATE is recoverable, so not setting passport_fatal
+            # Distinguish between spec violation (bare AID) and network issues
+            if "must be an OOBI" in str(e):
+                passport_claim.fail(ClaimStatus.INVALID, e.message)
+                passport_fatal = True
+            else:
+                passport_claim.fail(ClaimStatus.INDETERMINATE, e.message)
+                # Note: INDETERMINATE is recoverable, so not setting passport_fatal
 
     # -------------------------------------------------------------------------
     # Phase 5: Dossier Fetch and Validation
@@ -440,6 +584,7 @@ async def verify_vvp(
     # This reduces load and provides clearer error diagnostics
     raw_dossier: Optional[bytes] = None
     dag: Optional[DossierDAG] = None
+    acdc_signatures: Dict[str, bytes] = {}  # SAID -> signature bytes from CESR
 
     if vvp_identity and not passport_fatal:
         try:
@@ -451,10 +596,12 @@ async def verify_vvp(
 
         if raw_dossier is not None:
             try:
-                nodes = parse_dossier(raw_dossier)
+                nodes, acdc_signatures = parse_dossier(raw_dossier)
                 dag = build_dag(nodes)
                 validate_dag(dag)
                 dossier_claim.add_evidence(f"dag_valid,root={dag.root_said}")
+                if acdc_signatures:
+                    dossier_claim.add_evidence(f"cesr_sigs={len(acdc_signatures)}")
             except (ParseError, GraphError) as e:
                 errors.append(to_error_detail(e))
                 dossier_claim.fail(ClaimStatus.INVALID, e.message)
@@ -464,6 +611,137 @@ async def verify_vvp(
         dossier_claim.fail(
             ClaimStatus.INDETERMINATE,
             "Skipped due to passport verification failure",
+        )
+
+    # -------------------------------------------------------------------------
+    # Phase 5.5: ACDC Chain Verification (§6.3.x)
+    # -------------------------------------------------------------------------
+    # chain_verified is a REQUIRED child of dossier_verified per §3.3B
+    # This validates credential type rules (APE/DE/TNAlloc) and chain trust
+    # Per §5A Step 8: dossier cryptographic verification MUST be performed
+    # even when PASSporT is absent (we just can't validate DE signer binding)
+    chain_claim = ClaimBuilder("chain_verified")
+
+    if dag is not None:
+        from app.core.config import TRUSTED_ROOT_AIDS, SCHEMA_VALIDATION_STRICT
+        from app.vvp.acdc import (
+            validate_credential_chain,
+            ACDCChainInvalid,
+            verify_acdc_signature,
+            ACDCSignatureInvalid,
+        )
+        from app.vvp.keri import resolve_key_state
+
+        # Convert DossierDAG nodes to ACDC format
+        dossier_acdcs = _convert_dag_to_acdcs(dag)
+
+        # Get PSS signer AID from passport kid for DE validation (if passport available)
+        # Per §6.3.4, PSS signer must match delegate in DE credential
+        pss_signer_aid = None
+        if passport:
+            try:
+                pss_signer_aid = _extract_aid_from_kid(passport.header.kid)
+            except ResolutionFailedError:
+                pass  # Chain validation can proceed without
+
+        # Find leaf credentials to validate (not just the DAG root)
+        # Per §6.3.x, validate from APE/DE/TNAlloc credentials that are leaves
+        leaf_saids = _find_leaf_credentials(dag, dossier_acdcs)
+        chain_claim.add_evidence(f"leaves={len(leaf_saids)}")
+
+        # Validate chain from each leaf credential
+        # At least one must successfully validate to a trusted root
+        any_chain_valid = False
+        chain_errors: List[str] = []
+
+        for leaf_said in leaf_saids:
+            leaf_acdc = dossier_acdcs.get(leaf_said)
+            if not leaf_acdc:
+                chain_errors.append(f"Leaf {leaf_said[:16]}... not in dossier")
+                continue
+
+            try:
+                # §6.3.3-6: Schema validation strictness controlled by config
+                result = await validate_credential_chain(
+                    acdc=leaf_acdc,
+                    trusted_roots=TRUSTED_ROOT_AIDS,
+                    dossier_acdcs=dossier_acdcs,
+                    pss_signer_aid=pss_signer_aid,
+                    validate_schemas=SCHEMA_VALIDATION_STRICT
+                )
+                chain_claim.add_evidence(f"chain_valid:{leaf_said[:12]}...,root={result.root_aid[:12]}...")
+                any_chain_valid = True
+            except ACDCChainInvalid as e:
+                chain_errors.append(f"{leaf_said[:16]}...: {str(e)}")
+
+        if not any_chain_valid:
+            # No leaf credential validated to a trusted root
+            error_msg = f"No credential chain reaches trusted root: {'; '.join(chain_errors[:3])}"
+            errors.append(ErrorDetail(
+                code=ErrorCode.DOSSIER_GRAPH_INVALID,  # Use existing error code
+                message=error_msg,
+                recoverable=False
+            ))
+            chain_claim.fail(ClaimStatus.INVALID, error_msg)
+
+        # Verify ACDC signatures (for CESR format dossiers)
+        # Per §5A Step 8: cryptographic verification MUST be performed
+        if acdc_signatures and chain_claim.status == ClaimStatus.VALID:
+            from datetime import datetime, timezone
+            reference_time = datetime.now(timezone.utc)
+
+            for said, signature in acdc_signatures.items():
+                acdc = dossier_acdcs.get(said)
+                if not acdc:
+                    continue
+
+                try:
+                    # Resolve issuer key state with strict validation
+                    # Per §4.2, OOBI MUST resolve to valid KEL in production
+                    key_state = await resolve_key_state(
+                        kid=acdc.issuer_aid,
+                        reference_time=reference_time,
+                        _allow_test_mode=False  # Strict validation in production
+                    )
+
+                    # Verify signature against ALL issuer keys (not just index 0)
+                    # At least one key must validate the signature
+                    signature_valid = False
+                    for signing_key in key_state.signing_keys:
+                        try:
+                            verify_acdc_signature(acdc, signature, signing_key)
+                            signature_valid = True
+                            break
+                        except ACDCSignatureInvalid:
+                            continue
+
+                    if not signature_valid:
+                        raise ACDCSignatureInvalid(
+                            f"No issuer key validates signature for {said[:20]}..."
+                        )
+
+                    chain_claim.add_evidence(f"sig_valid:{said[:16]}...")
+
+                except ACDCSignatureInvalid as e:
+                    errors.append(ErrorDetail(
+                        code=ErrorCode.ACDC_PROOF_MISSING,
+                        message=str(e),
+                        recoverable=False
+                    ))
+                    chain_claim.fail(ClaimStatus.INVALID, f"ACDC signature invalid: {e}")
+                    break
+                except ResolutionFailedError as e:
+                    # Key resolution failed - mark as INDETERMINATE
+                    log.warning(f"Could not resolve issuer key for {said[:20]}...: {e}")
+                    chain_claim.fail(
+                        ClaimStatus.INDETERMINATE,
+                        f"Could not resolve issuer key: {e}"
+                    )
+                    break
+    else:
+        chain_claim.fail(
+            ClaimStatus.INDETERMINATE,
+            "Cannot validate chain: dossier validation failed"
         )
 
     # -------------------------------------------------------------------------
@@ -499,11 +777,13 @@ async def verify_vvp(
     # Phase 6: Build Claim Tree
     # -------------------------------------------------------------------------
     passport_node = passport_claim.build()
+    chain_node = chain_claim.build()
     revocation_node = revocation_claim.build()
 
-    # dossier_verified has revocation_clear as a REQUIRED child per §3.3B
+    # dossier_verified has chain_verified and revocation_clear as REQUIRED children per §3.3B
     # First build with original dossier status, then propagate child status
     dossier_node_temp = dossier_claim.build(children=[
+        ChildLink(required=True, node=chain_node),
         ChildLink(required=True, node=revocation_node),
     ])
     # Propagate status from revocation_clear to dossier_verified per §3.3A

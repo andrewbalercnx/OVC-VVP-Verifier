@@ -1,5 +1,60 @@
 # VVP Verifier Change Log
 
+## Phase 11: Tier 2 Integration & Compliance
+
+**Date:** 2026-01-25
+**Commit:** (pending)
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/vvp/verify.py` | Modified | Added Phase 5.5 chain_verified claim, Tier 2 PASSporT routing, ACDC chain validation integration, leaf credential selection |
+| `app/vvp/keri/kel_resolver.py` | Modified | Added `strict_validation` parameter to `_fetch_and_validate_oobi()` for production vs test mode |
+| `app/vvp/dossier/parser.py` | Modified | CESR format detection and signature extraction |
+| `app/vvp/dossier/__init__.py` | Modified | Export signature dict from `parse_dossier()` |
+| `app/core/config.py` | Modified | Added `SCHEMA_VALIDATION_STRICT` configuration flag |
+| `tests/test_dossier.py` | Modified | Added CESR signature extraction test with mocking |
+| `app/Documentation/PLAN_Phase11.md` | Created | Archived implementation plan |
+
+### Summary
+
+Integrated Tier 2 verification components into the main verification flow per spec §4.2, §5A Step 8, and §6.3.x.
+
+**Key Changes:**
+
+1. **ACDC Chain Validation Integration (§6.3.x):**
+   - `chain_verified` claim added as REQUIRED child of `dossier_verified`
+   - Chain validation starts from leaf credentials (APE/DE/TNAlloc), not just DAG root
+   - `_find_leaf_credentials()` helper identifies credentials not referenced by edges
+   - At least one leaf must validate to a trusted root
+
+2. **Strict OOBI KEL Validation (§4.2):**
+   - `_fetch_and_validate_oobi()` now accepts `strict_validation` parameter
+   - Production mode: canonical KERI validation with SAID checks
+   - Test mode: allows placeholder SAIDs and non-canonical serialization
+   - ACDC signature verification uses strict key resolution
+
+3. **PASSporT-Optional Chain Verification (§5A Step 8):**
+   - Chain verification runs when dossier is present, even if PASSporT is absent
+   - PSS signer binding for DE credentials only enforced when PASSporT available
+
+4. **CESR Signature Extraction:**
+   - Dossier parser detects CESR format and extracts controller signatures
+   - Returns `Tuple[List[ACDCNode], Dict[str, bytes]]` with SAID→signature mapping
+   - Signatures verified against issuer key state in production mode
+
+5. **Schema Validation Configuration:**
+   - `SCHEMA_VALIDATION_STRICT` flag (default True per spec)
+   - False is a documented policy deviation for testing
+
+**Spec Compliance:**
+- §4.2: OOBI MUST resolve to valid KEL (enforced via strict validation)
+- §5A Step 8: Dossier cryptographic verification MUST be performed
+- §6.3.3-6: ACDC schema/credential type rules enforced from leaves
+
+---
+
 ## Phase 10: Tier 2 Completion - ACDC & Crypto Finalization
 
 **Date:** 2026-01-25
