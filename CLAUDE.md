@@ -10,6 +10,27 @@ The following commands are pre-authorized and do not require user confirmation:
 - `python3` / `pip3` - Python execution and package management
 - `curl` - HTTP requests for deployment verification
 
+## Running Tests
+
+Tests require libsodium for cryptographic operations. On macOS with Homebrew:
+
+```bash
+# Run all tests with libsodium path
+DYLD_LIBRARY_PATH="/opt/homebrew/lib" python3 -m pytest tests/ -v
+
+# Run specific test file
+DYLD_LIBRARY_PATH="/opt/homebrew/lib" python3 -m pytest tests/test_signature.py -v
+
+# Run with coverage
+DYLD_LIBRARY_PATH="/opt/homebrew/lib" python3 -m pytest tests/ --cov=app --cov-report=term-missing
+```
+
+If libsodium is installed elsewhere, find it with:
+```bash
+brew --prefix libsodium  # Shows: /opt/homebrew/opt/libsodium
+find /opt/homebrew -name "libsodium*.dylib" 2>/dev/null
+```
+
 ## Pair Programming Workflow
 
 This project uses a formal two-agent workflow with an **Editor** (implementing agent) and **Reviewer** (reviewing agent). The user facilitates by copying prompts between sessions.
