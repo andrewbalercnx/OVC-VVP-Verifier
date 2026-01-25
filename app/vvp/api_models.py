@@ -101,6 +101,10 @@ class ErrorCode:
     # Revocation layer (Phase 9 extension)
     CREDENTIAL_REVOKED = "CREDENTIAL_REVOKED"
 
+    # Authorization layer (Sprint 15)
+    AUTHORIZATION_FAILED = "AUTHORIZATION_FAILED"
+    TN_RIGHTS_INVALID = "TN_RIGHTS_INVALID"
+
     # Verifier layer
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -125,6 +129,8 @@ ERROR_RECOVERABILITY: Dict[str, bool] = {
     ErrorCode.KERI_RESOLUTION_FAILED: True,  # Recoverable
     ErrorCode.KERI_STATE_INVALID: False,
     ErrorCode.CREDENTIAL_REVOKED: False,     # Non-recoverable
+    ErrorCode.AUTHORIZATION_FAILED: False,   # Non-recoverable (Sprint 15)
+    ErrorCode.TN_RIGHTS_INVALID: False,      # Non-recoverable (Sprint 15)
     ErrorCode.INTERNAL_ERROR: True,          # Recoverable
 }
 

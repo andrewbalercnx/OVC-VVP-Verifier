@@ -47,6 +47,29 @@
               "skipped"
             ]
           }
+        },
+        {
+          "required": true,
+          "node": {
+            "name": "authorization_valid",
+            "status": "INDETERMINATE",
+            "children": [
+              {
+                "required": true,
+                "node": {
+                  "name": "party_authorized",
+                  "status": "INDETERMINATE"
+                }
+              },
+              {
+                "required": true,
+                "node": {
+                  "name": "tn_rights_valid",
+                  "status": "INDETERMINATE"
+                }
+              }
+            ]
+          }
         }
       ]
     },

@@ -287,6 +287,26 @@ Required Changes (if not APPROVED)
 1. Fix `_base64url_decode()` padding logic.
 2. Align JSON endpoints with shared helper functions or explicitly document why they differ.
 
+## Plan Review: Sprint 14 - Tier 2 Completion
+
+**Verdict:** CHANGES_REQUESTED
+
+### Spec Compliance
+The plan addresses §6.3.x validation gaps, but two items conflict with MUST requirements. §6.3.x schema validation is mandatory, so defaulting strict validation to False is non‑compliant. §1.4 requires support for valid ACDC variants; deferring 8.9 needs a documented policy deviation and runtime behavior (e.g., INVALID/INDETERMINATE) for those inputs.
+
+### Design Assessment
+Edge semantics and TNAlloc subset parsing are reasonable, but the TN range algorithm needs explicit normalization and error handling for malformed E.164 patterns and mixed list/range inputs. Schema SAID population should be sourced from a maintained registry rather than hardcoded placeholders.
+
+### Findings
+- [High]: `strict_schema_validation` default False conflicts with §6.3.x MUSTs. Default must be True for compliance; a False option can be documented as a policy deviation only. `~/.claude/plans/peaceful-giggling-rabin.md`.
+- [High]: Deferring 8.9 (ACDC variants) conflicts with §1.4 MUST. If deferring, define explicit non‑compliance behavior (e.g., return INVALID with a specific error) and document as deviation. `~/.claude/plans/peaceful-giggling-rabin.md`.
+- [Medium]: TNAlloc subset algorithm needs explicit validation for invalid E.164 inputs and overlapping ranges. Add normalization rules and error handling in `tn_utils.py`.
+- [Low]: Schema SAID population references “pending governance” without a source of truth; include a plan to source from a versioned registry file.
+
+### Required Changes (if CHANGES_REQUESTED)
+1. Set schema validation strict by default (or document policy deviation with explicit behavior).
+2. Define handling for unsupported ACDC variants in Tier 2 if 8.9 remains deferred.
+
 ## Code Review: Phase 13B - Separation of Concerns Refactoring
 Verdict: APPROVED
 
@@ -325,3 +345,93 @@ Required Changes (if not APPROVED)
 1. Integrate CESR PSS decoding into PASSporT signature handling and add end-to-end tests for 0B-prefixed signatures.
 2. Enforce OOBI KEL validation in the resolution flow (use `validate_oobi_is_kel()` or equivalent).
 3. Apply APE/DE/TNAlloc validation in `validate_credential_chain()` and cover with tests (schema/governance checks included).
+
+## Plan Review: Sprint 14 Revision 1 - Tier 2 Completion
+
+**Verdict:** CHANGES_REQUESTED
+
+### Issue Resolution
+- [High] Schema validation strict default: FIXED
+- [High] ACDC variants explicit handling: NOT FIXED
+- [Medium] TNAlloc E.164 validation: FIXED
+- [Low] Schema registry versioning: FIXED
+
+### Additional Findings
+- [High]: The plan introduces `ACDC_PARSE_FAILED` for compact/partial ACDCs, but this error code does not exist in the current registry (the project has `DOSSIER_PARSE_FAILED` and `DOSSIER_GRAPH_INVALID`). Either map to an existing code or explicitly add a new error code with spec justification; otherwise implementation will not compile or will silently diverge. `~/.claude/plans/peaceful-giggling-rabin.md`.
+- [Medium]: The TNAlloc parser claims to support a "start-end" range string (e.g., "+15550000000-+15559999999"), but the proposed `parse_tn_allocation()` implementation does not parse hyphenated ranges. Either add range parsing or remove it from the supported formats and tests to avoid a spec/implementation mismatch. `~/.claude/plans/peaceful-giggling-rabin.md`.
+
+### Required Changes (if CHANGES_REQUESTED)
+1. Replace `ACDC_PARSE_FAILED` with an existing error code (`DOSSIER_PARSE_FAILED` or similar) or formally add a new code to the registry and update mappings/tests accordingly.
+2. Implement string range parsing in `parse_tn_allocation()` or narrow the supported input formats to match the actual parser and tests.
+
+## Plan Review: Sprint 14 Revision 2
+
+**Verdict:** APPROVED
+
+### Issue Resolution
+- [High] ACDC variants error code: FIXED
+- [Medium] Hyphenated range parsing: FIXED
+
+### Additional Findings
+None.
+
+## Code Review: Sprint 14 - Tier 2 Completion
+
+**Verdict:** CHANGES_REQUESTED
+
+### Implementation Assessment
+Schema SAID registry, TN allocation parsing, and ACDC variant detection are implemented as planned. However, edge relationship semantic validation is defined but never enforced in the credential chain validation flow, so §6.3.3/§6.3.4 requirements are not actually applied during verification.
+
+### Code Quality
+The new modules are clean and readable, with useful docstrings. `tn_utils.py` handles multiple input formats with clear errors. The edge rule structure is sensible, but it needs to be wired into the chain validation path to be effective.
+
+### Test Coverage
+Unit tests cover schema validation, TN range parsing, and variant detection well. There are tests for `validate_edge_semantics`, but there is no integration path that exercises it during chain validation, so the tests don’t prove spec compliance in the real flow.
+
+### Findings
+- [High]: Edge relationship semantics are not enforced in the chain validation flow. `validate_edge_semantics()` is never called from `validate_credential_chain()`, so §6.3.3/§6.3.4/§6.3.6 constraints are not applied during dossier verification. `app/vvp/acdc/verifier.py`.
+- [Medium]: `validate_edge_semantics()` treats a required edge with a missing dossier target as a warning, not an error, so an APE/DE can pass even when the vetting/delegation target is absent. If this is intended, it should be documented as a policy deviation; otherwise, raise `ACDCChainInvalid` when the target is missing. `app/vvp/acdc/verifier.py`.
+
+### Required Changes (if not APPROVED)
+1. Invoke `validate_edge_semantics()` during chain validation (per-credential during `walk_chain`) and fail on required-edge violations.
+2. Decide and document behavior for required edges with missing targets; update validation and tests to match the intended rule.
+
+## Code Review: Sprint 14 Revision 1
+
+**Verdict:** APPROVED
+
+### Issue Resolution
+- [High] Edge semantics enforcement: FIXED
+- [Medium] Missing targets as error: FIXED
+
+### Additional Findings
+None.
+
+## Code Review: Sprint 15 - Authorization Verification
+
+Verdict: CHANGES_REQUESTED
+
+Implementation Assessment
+Core Step 10/11 logic is present and integrated into the claim tree. However, TN rights validation currently ignores which party is accountable, so any TNAlloc in the dossier can satisfy Step 11, which is not equivalent to “accountable party has TN rights.” This can yield false positives.
+
+Code Quality
+The new module is clean and well-scoped, and the ClaimBuilder pattern is consistent with existing verification flow. Error mapping to `AUTHORIZATION_FAILED`/`TN_RIGHTS_INVALID` is clear.
+
+Test Coverage
+Tests cover happy paths, missing credentials, invalid TN formats, and Case B deferral. There is no test that binds TN rights to the accountable party or rejects TNAlloc credentials for a different issuee.
+
+Findings
+- [High]: `verify_tn_rights()` validates coverage against any TNAlloc in the dossier without verifying the TNAlloc is issued to (or otherwise bound to) the accountable party identified in Step 10. This does not satisfy §5A Step 11’s “accountable party has TN rights” requirement and allows false positives when unrelated TNAlloc credentials are present. `app/vvp/authorization.py`.
+
+Required Changes (if not APPROVED)
+1. Bind TN rights to the accountable party (e.g., require TNAlloc issuee == signer/APE/DE party AID) and add tests for mismatched issuee/holder cases.
+
+## Code Review: Sprint 15 Revision 1 - TN Rights Binding Fix
+
+Verdict: APPROVED
+
+Issue Resolution
+[High] TN rights binding to accountable party: FIXED
+
+Additional Findings
+None.

@@ -8,6 +8,10 @@ and dossier_verified as required children of caller_authorised.
 
 Phase 9 (Tier 2): Revocation checking per §5.1.1-2.9. The revocation_clear
 claim is a REQUIRED child of dossier_verified per §3.3B.
+
+Sprint 15 (Tier 3): Authorization validation per §5A Steps 10-11.
+The authorization_valid claim has party_authorized and tn_rights_valid
+as REQUIRED children. Case A (no delegation) implemented; Case B deferred.
 """
 
 import logging
@@ -48,6 +52,7 @@ from .dossier import (
     GraphError,
 )
 from .exceptions import VVPIdentityError, PassportError
+from .authorization import AuthorizationContext, validate_authorization
 
 
 # =============================================================================
@@ -774,6 +779,79 @@ async def verify_vvp(
         )
 
     # -------------------------------------------------------------------------
+    # Sprint 15: Authorization Validation (§5A Steps 10-11)
+    # -------------------------------------------------------------------------
+    # authorization_valid is a REQUIRED child of caller_authorised per §3.3B
+    # It has party_authorized and tn_rights_valid as REQUIRED children
+    authorization_claim = ClaimBuilder("authorization_valid")
+    party_claim = ClaimBuilder("party_authorized")
+    tn_rights_claim = ClaimBuilder("tn_rights_valid")
+
+    if dag is not None and passport is not None and not passport_fatal:
+        # Extract orig.tn from passport
+        orig_tn = None
+        if passport.payload.orig and isinstance(passport.payload.orig, dict):
+            orig_tn = passport.payload.orig.get("tn")
+
+        if orig_tn:
+            # Extract signer AID from kid
+            try:
+                pss_signer_aid_for_auth = _extract_aid_from_kid(passport.header.kid)
+
+                # Build authorization context
+                auth_context = AuthorizationContext(
+                    pss_signer_aid=pss_signer_aid_for_auth,
+                    orig_tn=orig_tn,
+                    dossier_acdcs=dossier_acdcs,
+                )
+
+                # Validate authorization
+                auth_party_claim, auth_tn_claim = validate_authorization(auth_context)
+
+                # Convert AuthorizationClaimBuilder to verify.py ClaimBuilder
+                party_claim.status = auth_party_claim.status
+                party_claim.reasons = auth_party_claim.reasons
+                party_claim.evidence = auth_party_claim.evidence
+
+                tn_rights_claim.status = auth_tn_claim.status
+                tn_rights_claim.reasons = auth_tn_claim.reasons
+                tn_rights_claim.evidence = auth_tn_claim.evidence
+
+                # Add errors for authorization failures
+                if auth_party_claim.status == ClaimStatus.INVALID:
+                    errors.append(ErrorDetail(
+                        code=ErrorCode.AUTHORIZATION_FAILED,
+                        message=auth_party_claim.reasons[0] if auth_party_claim.reasons else "Party authorization failed",
+                        recoverable=ERROR_RECOVERABILITY.get(ErrorCode.AUTHORIZATION_FAILED, False),
+                    ))
+                if auth_tn_claim.status == ClaimStatus.INVALID:
+                    errors.append(ErrorDetail(
+                        code=ErrorCode.TN_RIGHTS_INVALID,
+                        message=auth_tn_claim.reasons[0] if auth_tn_claim.reasons else "TN rights validation failed",
+                        recoverable=ERROR_RECOVERABILITY.get(ErrorCode.TN_RIGHTS_INVALID, False),
+                    ))
+
+            except ResolutionFailedError as e:
+                party_claim.fail(ClaimStatus.INDETERMINATE, f"Cannot extract signer AID: {e}")
+                tn_rights_claim.fail(ClaimStatus.INDETERMINATE, "Cannot validate: signer AID extraction failed")
+        else:
+            party_claim.fail(ClaimStatus.INVALID, "PASSporT missing orig.tn")
+            tn_rights_claim.fail(ClaimStatus.INDETERMINATE, "Cannot validate TN rights without orig.tn")
+            errors.append(ErrorDetail(
+                code=ErrorCode.AUTHORIZATION_FAILED,
+                message="PASSporT missing orig.tn field",
+                recoverable=False,
+            ))
+    else:
+        # Dependencies failed
+        if dag is None:
+            party_claim.fail(ClaimStatus.INDETERMINATE, "Cannot validate: dossier failed")
+            tn_rights_claim.fail(ClaimStatus.INDETERMINATE, "Cannot validate: dossier failed")
+        else:
+            party_claim.fail(ClaimStatus.INDETERMINATE, "Cannot validate: passport failed")
+            tn_rights_claim.fail(ClaimStatus.INDETERMINATE, "Cannot validate: passport failed")
+
+    # -------------------------------------------------------------------------
     # Phase 6: Build Claim Tree
     # -------------------------------------------------------------------------
     passport_node = passport_claim.build()
@@ -796,6 +874,24 @@ async def verify_vvp(
         children=dossier_node_temp.children,
     )
 
+    # Build authorization_valid with party_authorized and tn_rights_valid as REQUIRED children
+    # Per §3.3B, authorization_valid is a REQUIRED child of caller_authorised
+    party_node = party_claim.build()
+    tn_rights_node = tn_rights_claim.build()
+    authorization_node_temp = authorization_claim.build(children=[
+        ChildLink(required=True, node=party_node),
+        ChildLink(required=True, node=tn_rights_node),
+    ])
+    # Propagate status from children to authorization_valid per §3.3A
+    authorization_effective_status = propagate_status(authorization_node_temp)
+    authorization_node = ClaimNode(
+        name=authorization_node_temp.name,
+        status=authorization_effective_status,
+        reasons=authorization_node_temp.reasons,
+        evidence=authorization_node_temp.evidence,
+        children=authorization_node_temp.children,
+    )
+
     # Build root claim with children
     root_claim = ClaimNode(
         name="caller_authorised",
@@ -805,6 +901,7 @@ async def verify_vvp(
         children=[
             ChildLink(required=True, node=passport_node),
             ChildLink(required=True, node=dossier_node),
+            ChildLink(required=True, node=authorization_node),
         ],
     )
 
@@ -821,6 +918,7 @@ async def verify_vvp(
         children=[
             ChildLink(required=True, node=passport_node),
             ChildLink(required=True, node=dossier_node),
+            ChildLink(required=True, node=authorization_node),
         ],
     )
 

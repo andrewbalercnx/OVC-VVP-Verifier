@@ -23,10 +23,10 @@
     "max_token_age": 300
   },
   "expected": {
-    "overall_status": "VALID",
+    "overall_status": "INVALID",
     "root_claim": {
       "name": "caller_authorised",
-      "status": "VALID",
+      "status": "INVALID",
       "children": [
         {
           "required": true,
@@ -48,9 +48,36 @@
               "dag_valid"
             ]
           }
+        },
+        {
+          "required": true,
+          "node": {
+            "name": "authorization_valid",
+            "status": "INVALID",
+            "children": [
+              {
+                "required": true,
+                "node": {
+                  "name": "party_authorized",
+                  "status": "INVALID",
+                  "reasons_contain": ["No APE credential"]
+                }
+              },
+              {
+                "required": true,
+                "node": {
+                  "name": "tn_rights_valid",
+                  "status": "INDETERMINATE",
+                  "reasons_contain": ["Cannot validate TN rights without accountable party"]
+                }
+              }
+            ]
+          }
         }
       ]
     },
-    "errors": null
+    "errors": [
+      {"code": "AUTHORIZATION_FAILED", "recoverable": false}
+    ]
   }
 }

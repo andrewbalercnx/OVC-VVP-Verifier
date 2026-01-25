@@ -490,9 +490,15 @@ class TestVerifyVVPIntegration:
             patch("app.vvp.verify._find_leaf_credentials") as mock_find_leaves,
             patch("app.vvp.verify._convert_dag_to_acdcs") as mock_convert,
             patch("app.vvp.acdc.validate_credential_chain") as mock_chain,
+            patch("app.vvp.verify.validate_authorization") as mock_auth,
         ):
             mock_vvp.return_value = MagicMock(evd="http://example.com/dossier")
-            mock_passport.return_value = MagicMock(header=MagicMock(kid="http://witness.example.com/oobi/EAbc123456789012345/witness/EXyz"))
+            # Mock passport with proper orig.tn for authorization
+            signer_aid = "EAbc123456789012345"
+            mock_passport.return_value = MagicMock(
+                header=MagicMock(kid=f"http://witness.example.com/oobi/{signer_aid}/witness/EXyz"),
+                payload=MagicMock(orig={"tn": "+15551234567"})
+            )
             mock_binding.return_value = None
             mock_sig.return_value = None
             mock_fetch.return_value = b'[]'
@@ -510,14 +516,20 @@ class TestVerifyVVPIntegration:
             mock_result = MagicMock()
             mock_result.root_aid = "EGLEIF0000000000"
             mock_chain.return_value = mock_result
+            # Mock authorization to return VALID claims
+            from app.vvp.authorization import AuthorizationClaimBuilder
+            mock_party = AuthorizationClaimBuilder("party_authorized")
+            mock_tn = AuthorizationClaimBuilder("tn_rights_valid")
+            mock_auth.return_value = (mock_party, mock_tn)
 
             req = VerifyRequest(passport_jwt="test", context=valid_context)
             req_id, resp = await verify_vvp(req, "valid-header")
 
             assert resp.overall_status == ClaimStatus.VALID
             assert resp.claims[0].status == ClaimStatus.VALID
-            assert resp.claims[0].children[0].node.status == ClaimStatus.VALID
-            assert resp.claims[0].children[1].node.status == ClaimStatus.VALID
+            assert resp.claims[0].children[0].node.status == ClaimStatus.VALID  # passport_verified
+            assert resp.claims[0].children[1].node.status == ClaimStatus.VALID  # dossier_verified
+            assert resp.claims[0].children[2].node.status == ClaimStatus.VALID  # authorization_valid
             assert resp.errors is None
 
     @pytest.mark.asyncio
@@ -551,15 +563,23 @@ class TestVerifyVVPIntegration:
             assert len(resp.claims) == 1
             root = resp.claims[0]
             assert root.name == "caller_authorised"
-            assert len(root.children) == 2
+            assert len(root.children) == 3  # passport_verified, dossier_verified, authorization_valid
 
-            # Both children should be REQUIRED
+            # All children should be REQUIRED
             assert root.children[0].required is True
             assert root.children[1].required is True
+            assert root.children[2].required is True
 
             # Child names
             assert root.children[0].node.name == "passport_verified"
             assert root.children[1].node.name == "dossier_verified"
+            assert root.children[2].node.name == "authorization_valid"
+
+            # authorization_valid should have 2 REQUIRED children
+            auth_node = root.children[2].node
+            assert len(auth_node.children) == 2
+            assert auth_node.children[0].node.name == "party_authorized"
+            assert auth_node.children[1].node.name == "tn_rights_valid"
 
     @pytest.mark.asyncio
     async def test_evidence_accumulation(self, valid_context):
