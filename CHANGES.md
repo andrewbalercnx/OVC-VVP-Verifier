@@ -3,7 +3,7 @@
 ## Sprint 17: APE Vetting Edge & Schema Validation
 
 **Date:** 2026-01-25
-**Commit:** `pending`
+**Commit:** `54f507b`
 
 ### Files Changed
 
