@@ -1,5 +1,59 @@
 # VVP Verifier Change Log
 
+## Sprint 12: Tier 2 Completion - PASSporT & ACDC Validation
+
+**Date:** 2026-01-25
+**Commit:** `7b72747`
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/vvp/passport.py` | Modified | E.164 phone validation, typ header validation |
+| `app/vvp/acdc/verifier.py` | Modified | Added `validate_issuee_binding()` for bearer token check |
+| `app/vvp/acdc/__init__.py` | Modified | Export new validation functions |
+| `app/vvp/keri/kel_resolver.py` | Modified | Enable witness validation in strict mode |
+| `tests/test_passport.py` | Modified | Added E.164 and typ validation tests |
+| `tests/test_acdc.py` | Modified | Added issuee binding tests |
+| `tests/test_signature.py` | Modified | Fixed fixtures for E.164 validation |
+| `tests/test_kel_resolver.py` | Modified | Fixed witness validation test |
+| `app/Documentation/VVP_Implementation_Checklist.md` | Modified | Updated to 68% complete |
+
+### Summary
+
+Completed remaining Tier 2 validation requirements per VVP spec §4.2, §6.3.5, and §7.3.
+
+**Key Changes:**
+
+1. **E.164 Phone Number Validation (§4.2):**
+   - `orig.tn` must be single string (not array) in E.164 format
+   - `dest.tn` must be array of E.164 phone numbers
+   - Pattern: `+[1-9][0-9]{1,14}` per ITU-T E.164
+
+2. **typ Header Validation (RFC8225):**
+   - If `typ` header present, must be "passport"
+   - Missing typ is allowed (optional field)
+
+3. **Issuee Binding Validation (§6.3.5):**
+   - Credentials must not be bearer tokens
+   - Non-root credentials must have issuee field (`i`, `issuee`, or `holder`)
+   - Root credentials (from trusted AIDs) may omit issuee
+
+4. **Witness Signature Validation (§7.3):**
+   - `validate_witnesses=strict_validation` in KEL resolution
+   - Strict mode validates witness receipt signatures
+   - Non-strict mode allows for testing without full witness setup
+
+### Checklist Items Completed
+
+- 3.14: `orig.tn` single phone number validation
+- 3.15: `typ` header validation
+- 3.16: E.164 format validation
+- 7.16: Witness receipt signature validation
+- 8.12: Issuee binding validation
+
+---
+
 ## Phase 11: Tier 2 Integration & Compliance
 
 **Date:** 2026-01-25
