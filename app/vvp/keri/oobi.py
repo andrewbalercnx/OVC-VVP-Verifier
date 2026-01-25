@@ -29,11 +29,14 @@ class OOBIResult:
         aid: The AID (Autonomic Identifier) resolved.
         kel_data: Raw KEL data (CESR or JSON encoded).
         witnesses: List of witness URLs/AIDs discovered.
+        content_type: Content-Type from OOBI response. Used for routing
+            to the appropriate parser (CESR vs JSON).
         error: Error message if resolution partially failed.
     """
     aid: str
     kel_data: bytes
     witnesses: List[str]
+    content_type: str = JSON_CONTENT_TYPE
     error: Optional[str] = None
 
 
@@ -107,10 +110,20 @@ async def dereference_oobi(
             # Extract witnesses from response if available
             witnesses = _extract_witnesses(kel_data, aid)
 
+            # Determine content type for routing
+            detected_content_type = JSON_CONTENT_TYPE  # Default
+            if CESR_CONTENT_TYPE.lower() in content_type:
+                detected_content_type = CESR_CONTENT_TYPE
+            elif "application/octet-stream" in content_type:
+                # Might be CESR binary - check for CESR markers
+                if kel_data and kel_data[0:1] in (b"-", b"0", b"1", b"4", b"5", b"6"):
+                    detected_content_type = CESR_CONTENT_TYPE
+
             return OOBIResult(
                 aid=aid,
                 kel_data=kel_data,
-                witnesses=witnesses
+                witnesses=witnesses,
+                content_type=detected_content_type
             )
 
     except httpx.TimeoutException:

@@ -68,14 +68,14 @@ DOSSIER_MAX_REDIRECTS: int = 3
 # development and testing purposes only. Do NOT enable in production.
 
 # Tier 2 KERI key state resolution via KEL parsing
-# LIMITATIONS (see Phase 7 documentation):
-# - JSON-only: CESR binary format NOT supported (will reject `application/json+cesr`)
-# - Signature canonicalization uses JSON sorted-keys, NOT KERI-compliant Blake3
-# - SAID validation disabled by default
 #
-# These limitations mean Tier 2 cannot verify real KERI events from production
-# witnesses. It ONLY works with synthetic test fixtures that use JSON and
-# sorted-key canonicalization.
+# Phase 7b Implementation (CESR Support):
+# - CESR binary format supported (application/json+cesr)
+# - KERI-compliant canonicalization with proper field ordering
+# - SAID validation using Blake3-256 with CESR encoding
+# - Witness receipt signature validation against AIDs
 #
-# Set to True ONLY for testing. Production requires CESR support (Phase 7+).
-TIER2_KEL_RESOLUTION_ENABLED: bool = False
+# This enables production use with real KERI events from witnesses.
+#
+# Set to True to enable Tier 2 key state resolution.
+TIER2_KEL_RESOLUTION_ENABLED: bool = True

@@ -150,8 +150,8 @@ async def resolve_key_state(
     # Fetch KEL via OOBI
     oobi_result = await dereference_oobi(oobi_url)
 
-    # Parse KEL events
-    events = parse_kel_stream(oobi_result.kel_data)
+    # Parse KEL events (pass content_type for format detection)
+    events = parse_kel_stream(oobi_result.kel_data, content_type=oobi_result.content_type)
 
     if not events:
         raise ResolutionFailedError(f"Empty KEL for AID {aid}")

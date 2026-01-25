@@ -3,6 +3,8 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+import httpx
 
 from app.logging_config import configure_logging
 from app.vvp.api_models import VerifyRequest
@@ -46,3 +48,92 @@ async def verify(req: VerifyRequest, request: Request):
 def version():
     # GIT_SHA is injected at deploy time by GitHub Actions
     return {"git_sha": os.getenv("GIT_SHA", "unknown")}
+
+
+class ProxyFetchRequest(BaseModel):
+    url: str
+
+
+class RevocationCheckRequest(BaseModel):
+    credential_said: str
+    registry_said: str | None = None
+    oobi_url: str | None = None
+
+
+@app.post("/check-revocation")
+async def check_revocation(req: RevocationCheckRequest):
+    """
+    Check revocation status for a credential by querying KERI witnesses/watchers.
+
+    This queries the TEL (Transaction Event Log) to determine if a credential
+    has been revoked. It tries:
+    1. OOBI URL if provided
+    2. Known witness endpoints
+    3. Returns UNKNOWN if no TEL data found
+    """
+    from app.vvp.keri.tel_client import get_tel_client, CredentialStatus
+
+    try:
+        client = get_tel_client()
+        result = await client.check_revocation(
+            credential_said=req.credential_said,
+            registry_said=req.registry_said,
+            oobi_url=req.oobi_url
+        )
+
+        response = {
+            "success": True,
+            "status": result.status.value,
+            "credential_said": result.credential_said,
+            "registry_said": result.registry_said,
+            "source": result.source,
+        }
+
+        if result.issuance_event:
+            response["issuance"] = {
+                "datetime": result.issuance_event.datetime,
+                "sequence": result.issuance_event.sequence,
+                "type": result.issuance_event.event_type,
+            }
+
+        if result.revocation_event:
+            response["revocation"] = {
+                "datetime": result.revocation_event.datetime,
+                "sequence": result.revocation_event.sequence,
+                "type": result.revocation_event.event_type,
+            }
+
+        if result.error:
+            response["error"] = result.error
+
+        return response
+
+    except Exception as e:
+        log.error(f"Revocation check failed: {e}")
+        return {
+            "success": False,
+            "status": "ERROR",
+            "error": str(e)
+        }
+
+
+@app.post("/proxy-fetch")
+async def proxy_fetch(req: ProxyFetchRequest):
+    """Proxy endpoint to fetch dossiers (avoids CORS issues in browser)."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(req.url)
+            content_type = resp.headers.get("content-type", "")
+
+            # Try to parse as JSON
+            if "json" in content_type or req.url.endswith(".json"):
+                return {"success": True, "data": resp.json(), "content_type": content_type}
+            else:
+                # Return raw text for CESR or other formats
+                return {"success": True, "data": resp.text, "content_type": content_type}
+    except httpx.TimeoutException:
+        return {"success": False, "error": "Timeout fetching URL"}
+    except httpx.RequestError as e:
+        return {"success": False, "error": f"Request failed: {str(e)}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}

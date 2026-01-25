@@ -1,0 +1,24 @@
+{
+  "description": "Signing keys used for fixtures",
+  "note": "These are deterministic test keys - NEVER use in production",
+  "keys": [
+    {
+      "index": 0,
+      "qb64": "DER2RcVO4AlODS6zPZgYuMexC0TRhYQEYCuhWio2tCZY",
+      "public_key_hex": "447645c54ee0094e0d2eb33d9818b8c7b10b44d1858404602ba15a2a36b42658",
+      "secret_key_hex": "cd6e97bd7ba98ddd52e66a2447f3ea1f96d57c264a982bd77510ff633a5467bd447645c54ee0094e0d2eb33d9818b8c7b10b44d1858404602ba15a2a36b42658"
+    },
+    {
+      "index": 1,
+      "qb64": "DFsVGmBiLZ-VyzZ5QrBBp4s-3QAb3W9tHrzYR7brBUtv",
+      "public_key_hex": "5b151a60622d9f95cb367942b041a78b3edd001bdd6f6d1ebcd847b6eb054b6f",
+      "secret_key_hex": "a4b912b3a96789e8ed7ac089c6a75ee9b2c6b7089c54b4f50d812ad3b43303e25b151a60622d9f95cb367942b041a78b3edd001bdd6f6d1ebcd847b6eb054b6f"
+    },
+    {
+      "index": 2,
+      "qb64": "DL8qLteOf3WnNKdC0u-Gc61WXeXQD0--sdfplJAi-uAM",
+      "public_key_hex": "bf2a2ed78e7f75a734a742d2ef8673ad565de5d00f4fbeb1d7e9949022fae00c",
+      "secret_key_hex": "ab7d235e85b3f0d56c612d4a335459de948e407059398bb12862af5701aae395bf2a2ed78e7f75a734a742d2ef8673ad565de5d00f4fbeb1d7e9949022fae00c"
+    }
+  ]
+}

@@ -3,25 +3,676 @@
   <head><meta charset="utf-8"/><title>VVP Verifier</title></head>
   <body style="font-family:system-ui; margin:2rem; max-width:900px">
     <h1>VVP Verifier</h1>
-    <p>Paste a SIP Identity header or PASSporT JWT and click Verify.</p>
-    <label>Identity header</label><br/>
-    <textarea id="identity" style="width:100%;height:120px"></textarea><br/><br/>
+
+    <h2>Parse PASSporT JWT</h2>
+    <p>Paste a VVP PASSporT JWT to decode and view its contents.</p>
     <label>PASSporT JWT</label><br/>
-    <textarea id="jwt" style="width:100%;height:120px"></textarea><br/><br/>
-    <button id="btn">Verify</button>
-    <h2>Response</h2>
-    <pre id="out" style="background:#f6f6f6;padding:1rem;overflow:auto"></pre>
+    <textarea id="jwt" style="width:100%;height:120px" placeholder="eyJhbGciOiJFZERTQSI..."></textarea><br/><br/>
+    <button id="parseJwtBtn">Parse JWT</button>
+
+    <h2>Parsed PASSporT</h2>
+    <div id="parsedOutput" style="background:#f6f6f6;padding:1rem;overflow:auto;white-space:pre-wrap;font-family:monospace;min-height:100px"></div>
+
+    <div id="dossierSection" style="display:none; margin-top:1rem;">
+      <h2>Dossier (Evidence)</h2>
+      <p>Evidence URL: <code id="evdUrl" style="word-break:break-all;"></code></p>
+      <button id="fetchDossierBtn">Fetch Dossier</button>
+      <button id="mockDossierBtn" style="margin-left:0.5rem;">Use Mock Dossier</button>
+      <button id="checkRevocationBtn" style="margin-left:0.5rem;background:#6c757d;color:white;border:none;padding:5px 10px;cursor:pointer;" disabled>Check Live Revocation</button>
+      <div id="dossierOutput" style="background:#f6f6f6;padding:1rem;overflow:auto;white-space:pre-wrap;font-family:monospace;min-height:100px;margin-top:1rem;"></div>
+    </div>
+
+    <hr style="margin:2rem 0"/>
+
+    <details>
+      <summary><strong>Parse from SIP INVITE</strong></summary>
+      <p style="margin-top:1rem;">Paste a raw SIP INVITE message to extract the Identity header.</p>
+      <label>Raw SIP INVITE</label><br/>
+      <textarea id="sipInvite" style="width:100%;height:200px" placeholder="INVITE sip:..."></textarea><br/><br/>
+      <button id="parseSipBtn">Parse SIP INVITE</button>
+    </details>
+
     <script>
-      document.getElementById("btn").addEventListener("click", async () => {
-        const identityHeader = document.getElementById("identity").value.trim() || null;
-        const passportJwt = document.getElementById("jwt").value.trim() || null;
-        const res = await fetch("/verify", {
-          method:"POST",
-          headers:{ "Content-Type":"application/json" },
-          body: JSON.stringify({ identityHeader, passportJwt })
-        });
-        document.getElementById("out").textContent = JSON.stringify(await res.json(), null, 2);
+      // Store current evd URL and fetched ACDCs
+      let currentEvdUrl = null;
+      let currentAcdcs = [];
+      let currentOobiUrl = null;
+
+      // Base64url decode helper
+      function base64urlDecode(str) {
+        let padded = str.replace(/-/g, '+').replace(/_/g, '/');
+        while (padded.length % 4) padded += '=';
+        return atob(padded);
+      }
+
+      // Parse and display a JWT
+      function parseAndDisplayJwt(jwt) {
+        const output = document.getElementById("parsedOutput");
+
+        try {
+          // Strip ;ppt=vvp suffix if present
+          if (jwt.includes(';')) {
+            jwt = jwt.split(';')[0];
+          }
+          jwt = jwt.trim();
+
+          // Split JWT into parts
+          const parts = jwt.split('.');
+          if (parts.length !== 3) {
+            output.textContent = "Error: Invalid JWT format (expected 3 parts, got " + parts.length + ")";
+            document.getElementById("dossierSection").style.display = "none";
+            return false;
+          }
+
+          // Decode header and payload
+          const header = JSON.parse(base64urlDecode(parts[0]));
+          const payload = JSON.parse(base64urlDecode(parts[1]));
+
+          // Format output
+          const result = {
+            header: header,
+            payload: payload,
+            signature: parts[2] + " (base64url-encoded, " + parts[2].length + " chars)"
+          };
+
+          output.textContent = JSON.stringify(result, null, 2);
+
+          // Show dossier section if evd URL exists
+          if (payload.evd) {
+            currentEvdUrl = payload.evd;
+            document.getElementById("evdUrl").textContent = currentEvdUrl;
+            document.getElementById("dossierSection").style.display = "block";
+            document.getElementById("dossierOutput").innerHTML = "<em>Click 'Fetch Dossier' to retrieve claims</em>";
+          } else {
+            document.getElementById("dossierSection").style.display = "none";
+          }
+
+          return true;
+
+        } catch (e) {
+          output.textContent = "Error parsing: " + e.message;
+          document.getElementById("dossierSection").style.display = "none";
+          return false;
+        }
+      }
+
+      // Extract key claims from attributes for summary
+      function extractKeyClaims(attrs) {
+        if (!attrs || typeof attrs !== 'object') return [];
+        const claims = [];
+
+        // Phone numbers
+        if (attrs.numbers) {
+          const range = attrs.numbers.rangeStart === attrs.numbers.rangeEnd
+            ? attrs.numbers.rangeStart
+            : `${attrs.numbers.rangeStart} - ${attrs.numbers.rangeEnd}`;
+          claims.push({ label: 'Phone Number', value: range, icon: '📞' });
+        }
+
+        // Role
+        if (attrs.role) {
+          claims.push({ label: 'Role', value: attrs.role, icon: '👤' });
+        }
+
+        // LEI
+        if (attrs.lids && attrs.lids.length > 0) {
+          claims.push({ label: 'LEI', value: attrs.lids.join(', '), icon: '🏢' });
+        }
+
+        // vCard parsing
+        if (attrs.vcard && Array.isArray(attrs.vcard)) {
+          for (const line of attrs.vcard) {
+            if (line.startsWith('ORG:')) {
+              claims.push({ label: 'Organization', value: line.substring(4), icon: '🏢' });
+            }
+            if (line.includes('LEI:')) {
+              const lei = line.match(/LEI:([A-Z0-9]+)/);
+              if (lei) claims.push({ label: 'LEI', value: lei[1], icon: '📋' });
+            }
+            if (line.includes('LOGO;')) {
+              const url = line.match(/VALUE=URI:(.+)$/);
+              if (url) claims.push({ label: 'Logo', value: url[1], icon: '🖼️', isUrl: true });
+            }
+          }
+        }
+
+        // Dates
+        if (attrs.startDate || attrs.endDate) {
+          const range = `${attrs.startDate || '?'} to ${attrs.endDate || '?'}`;
+          claims.push({ label: 'Valid Period', value: range, icon: '📅' });
+        }
+
+        // Geographic constraints
+        if (attrs.c_pgeo) {
+          claims.push({ label: 'Permitted Geo', value: attrs.c_pgeo.join(', '), icon: '🌍' });
+        }
+
+        return claims;
+      }
+
+      // Format ACDC claims for display
+      function formatACDC(acdc, index, revocationStatus) {
+        // Determine border/background color based on revocation status
+        let borderColor = '#ccc';
+        let bgColor = '#fafafa';
+        let statusBadge = '';
+
+        if (revocationStatus) {
+          if (revocationStatus.status === 'revoked') {
+            borderColor = '#dc3545';
+            bgColor = '#fff5f5';
+            statusBadge = `<span style="background:#dc3545;color:white;padding:2px 8px;border-radius:12px;font-size:0.75em;margin-left:8px;">🚫 REVOKED</span>`;
+          } else if (revocationStatus.status === 'issued') {
+            borderColor = '#28a745';
+            bgColor = '#f5fff5';
+            statusBadge = `<span style="background:#28a745;color:white;padding:2px 8px;border-radius:12px;font-size:0.75em;margin-left:8px;">✓ ACTIVE</span>`;
+          }
+        } else {
+          // No TEL data - show warning
+          statusBadge = `<span style="background:#ffc107;color:#000;padding:2px 8px;border-radius:12px;font-size:0.75em;margin-left:8px;">⚠ TEL NOT FOUND</span>`;
+        }
+
+        let html = `<div style="border:2px solid ${borderColor};padding:1rem;margin-bottom:1rem;border-radius:4px;background:${bgColor};">`;
+
+        // Header with SAID and status badge
+        const shortSaid = acdc.d ? acdc.d.substring(0, 16) + '...' : 'Unknown';
+        html += `<h4 style="margin-top:0;margin-bottom:0.5rem;">ACDC #${index + 1} <span style="font-weight:normal;font-size:0.8em;color:#666;">(${shortSaid})</span>${statusBadge}</h4>`;
+
+        // Extract and show key claims prominently
+        const keyClaims = acdc.a ? extractKeyClaims(acdc.a) : [];
+        if (keyClaims.length > 0) {
+          html += `<div style="background:#e8f4e8;padding:0.5rem;border-radius:4px;margin-bottom:0.5rem;">`;
+          for (const claim of keyClaims) {
+            if (claim.isUrl) {
+              html += `<div style="margin:2px 0;"><strong>${claim.icon} ${claim.label}:</strong> <a href="${claim.value}" target="_blank" style="word-break:break-all;">${claim.value.substring(0, 60)}...</a></div>`;
+            } else {
+              html += `<div style="margin:2px 0;"><strong>${claim.icon} ${claim.label}:</strong> ${claim.value}</div>`;
+            }
+          }
+          html += `</div>`;
+        }
+
+        html += `<table style="width:100%;border-collapse:collapse;font-size:0.9em;">`;
+
+        // Issuer (i field)
+        if (acdc.i) {
+          html += `<tr><td style="padding:4px;border-bottom:1px solid #eee;width:100px;"><strong>Issuer</strong></td><td style="padding:4px;border-bottom:1px solid #eee;font-family:monospace;font-size:0.85em;word-break:break-all;">${acdc.i.substring(0, 24)}...</td></tr>`;
+        }
+
+        // Schema (s field)
+        if (acdc.s) {
+          html += `<tr><td style="padding:4px;border-bottom:1px solid #eee;"><strong>Schema</strong></td><td style="padding:4px;border-bottom:1px solid #eee;font-family:monospace;font-size:0.85em;word-break:break-all;">${acdc.s.substring(0, 24)}...</td></tr>`;
+        }
+
+        // Registry identifier (ri field) - for TEL lookup
+        if (acdc.ri) {
+          html += `<tr><td style="padding:4px;border-bottom:1px solid #eee;"><strong>Registry</strong></td><td style="padding:4px;border-bottom:1px solid #eee;font-family:monospace;font-size:0.85em;word-break:break-all;">${acdc.ri.substring(0, 24)}...</td></tr>`;
+        }
+
+        // Show revocation details if available
+        if (revocationStatus) {
+          if (revocationStatus.issuanceEvent) {
+            const issDate = revocationStatus.issuanceEvent.dt || 'Unknown';
+            html += `<tr><td style="padding:4px;border-bottom:1px solid #eee;"><strong>Issued</strong></td><td style="padding:4px;border-bottom:1px solid #eee;">${issDate}</td></tr>`;
+          }
+          if (revocationStatus.revocationEvent) {
+            const revDate = revocationStatus.revocationEvent.dt || 'Unknown';
+            html += `<tr><td style="padding:4px;border-bottom:1px solid #eee;color:#dc3545;"><strong>Revoked</strong></td><td style="padding:4px;border-bottom:1px solid #eee;color:#dc3545;">${revDate}</td></tr>`;
+          }
+        }
+
+        // Edges (e field) - show as chain links
+        if (acdc.e && typeof acdc.e === 'object') {
+          const edgeNames = Object.keys(acdc.e).filter(k => k !== 'd');
+          if (edgeNames.length > 0) {
+            html += `<tr><td style="padding:4px;border-bottom:1px solid #eee;vertical-align:top;"><strong>Links to</strong></td><td style="padding:4px;border-bottom:1px solid #eee;">`;
+            for (const name of edgeNames) {
+              const edge = acdc.e[name];
+              if (edge && edge.n) {
+                html += `<div style="margin:2px 0;">🔗 <em>${name}</em>: ${edge.n.substring(0, 20)}...</div>`;
+              }
+            }
+            html += `</td></tr>`;
+          }
+        }
+
+        // Collapsible details
+        html += `</table>`;
+        html += `<details style="margin-top:0.5rem;"><summary style="cursor:pointer;font-size:0.85em;color:#666;">Full Details</summary>`;
+        html += `<pre style="background:#fff;padding:0.5rem;overflow:auto;font-size:0.75em;max-height:200px;">${JSON.stringify(acdc, null, 2)}</pre>`;
+        html += `</details>`;
+
+        html += `</div>`;
+        return html;
+      }
+
+      // Parse JWT button
+      document.getElementById("parseJwtBtn").addEventListener("click", () => {
+        const jwt = document.getElementById("jwt").value;
+        parseAndDisplayJwt(jwt);
       });
+
+      // Parse SIP INVITE button
+      document.getElementById("parseSipBtn").addEventListener("click", () => {
+        const sipInvite = document.getElementById("sipInvite").value;
+        const output = document.getElementById("parsedOutput");
+
+        // Find Identity header (case-insensitive)
+        const lines = sipInvite.split(/\r?\n/);
+        let identityValue = null;
+
+        for (const line of lines) {
+          const match = line.match(/^Identity:\s*(.+)/i);
+          if (match) {
+            identityValue = match[1].trim();
+            break;
+          }
+        }
+
+        if (!identityValue) {
+          output.textContent = "Error: No Identity header found in SIP INVITE";
+          document.getElementById("dossierSection").style.display = "none";
+          return;
+        }
+
+        // Populate the JWT textarea and parse
+        document.getElementById("jwt").value = identityValue;
+        parseAndDisplayJwt(identityValue);
+      });
+
+      // Extract JSON objects from CESR stream by version prefix
+      function extractJsonFromCESR(rawText, versionPrefix) {
+        const objects = [];
+        let pos = 0;
+        while ((pos = rawText.indexOf(`{"v":"${versionPrefix}`, pos)) !== -1) {
+          try {
+            let depth = 0;
+            let start = pos;
+            let end = pos;
+
+            for (let i = pos; i < rawText.length; i++) {
+              if (rawText[i] === '{') depth++;
+              else if (rawText[i] === '}') {
+                depth--;
+                if (depth === 0) {
+                  end = i + 1;
+                  break;
+                }
+              }
+            }
+
+            const jsonStr = rawText.substring(start, end);
+            const obj = JSON.parse(jsonStr);
+            objects.push(obj);
+            pos = end;
+          } catch (e) {
+            pos++;
+          }
+        }
+        return objects;
+      }
+
+      // Extract ACDCs from CESR stream
+      function extractACDCsFromCESR(data) {
+        let rawText = typeof data === 'string' ? data :
+                      (data.details ? data.details : JSON.stringify(data));
+        return extractJsonFromCESR(rawText, 'ACDC');
+      }
+
+      // Extract TEL (Transaction Event Log) events from CESR stream
+      // TEL events track credential issuance and revocation
+      function extractTELFromCESR(data) {
+        let rawText = typeof data === 'string' ? data :
+                      (data.details ? data.details : JSON.stringify(data));
+
+        const telEvents = [];
+
+        // TEL events use KERI version strings with specific event types:
+        // - iss: issuance event
+        // - rev: revocation event
+        // - bis: backers issuance (delegated)
+        // - brv: backers revocation (delegated)
+        const keriEvents = extractJsonFromCESR(rawText, 'KERI');
+
+        for (const event of keriEvents) {
+          // TEL events have 't' field indicating type
+          if (event.t && ['iss', 'rev', 'bis', 'brv'].includes(event.t)) {
+            telEvents.push(event);
+          }
+        }
+
+        return telEvents;
+      }
+
+      // Build revocation status map from TEL events
+      // Returns: { credentialSAID: { status: 'issued'|'revoked', event: {...} } }
+      function buildRevocationMap(telEvents) {
+        const statusMap = {};
+
+        // Sort events by sequence number (s field) to process in order
+        const sorted = [...telEvents].sort((a, b) => {
+          const seqA = parseInt(a.s) || 0;
+          const seqB = parseInt(b.s) || 0;
+          return seqA - seqB;
+        });
+
+        for (const event of sorted) {
+          // TEL events reference the credential via:
+          // - 'i' field: registry identifier
+          // - 'ri' field: registry identifier (alternate)
+          // - The credential SAID is typically derived from context
+
+          // For issuance events (iss, bis): credential is being issued
+          // The 'i' field in iss event IS the credential SAID
+          if (event.t === 'iss' || event.t === 'bis') {
+            const credSaid = event.i;
+            if (credSaid) {
+              statusMap[credSaid] = {
+                status: 'issued',
+                issuanceEvent: event,
+                registry: event.ri || event.i
+              };
+            }
+          }
+
+          // For revocation events (rev, brv): credential is being revoked
+          // The 'i' field references the credential being revoked
+          if (event.t === 'rev' || event.t === 'brv') {
+            const credSaid = event.i;
+            if (credSaid && statusMap[credSaid]) {
+              statusMap[credSaid].status = 'revoked';
+              statusMap[credSaid].revocationEvent = event;
+            } else if (credSaid) {
+              // Revocation without prior issuance in stream
+              statusMap[credSaid] = {
+                status: 'revoked',
+                revocationEvent: event,
+                registry: event.ri
+              };
+            }
+          }
+        }
+
+        return statusMap;
+      }
+
+      // Get revocation status for an ACDC
+      function getRevocationStatus(acdc, revocationMap) {
+        // Check by ACDC SAID
+        if (acdc.d && revocationMap[acdc.d]) {
+          return revocationMap[acdc.d];
+        }
+
+        // Check by registry identifier if present
+        if (acdc.ri) {
+          // Look for any status entry matching this registry
+          for (const [said, status] of Object.entries(revocationMap)) {
+            if (status.registry === acdc.ri) {
+              return status;
+            }
+          }
+        }
+
+        return null; // No TEL data found
+      }
+
+      // Helper to display dossier data
+      function displayDossier(data, contentType) {
+        const output = document.getElementById("dossierOutput");
+
+        let acdcs = [];
+        let telEvents = [];
+        let revocationMap = {};
+
+        // Check if it's CESR format (has "details" key or is a string with KERI/ACDC data)
+        if (data.details || (typeof data === 'string' && data.includes('KERI10JSON'))) {
+          acdcs = extractACDCsFromCESR(data);
+          telEvents = extractTELFromCESR(data);
+          revocationMap = buildRevocationMap(telEvents);
+        } else if (Array.isArray(data)) {
+          acdcs = data;
+        } else if (data.d && data.i) {
+          // Single ACDC object
+          acdcs = [data];
+        }
+
+        // Deduplicate by SAID
+        const seen = new Set();
+        const uniqueAcdcs = [];
+        for (const acdc of acdcs) {
+          if (acdc.d && !seen.has(acdc.d)) {
+            seen.add(acdc.d);
+            uniqueAcdcs.push(acdc);
+          }
+        }
+        const duplicateCount = acdcs.length - uniqueAcdcs.length;
+        acdcs = uniqueAcdcs;
+
+        let html = `<p><strong>Content-Type:</strong> ${contentType || 'application/json'}</p>`;
+
+        // Show TEL summary
+        if (telEvents.length > 0) {
+          const issCount = telEvents.filter(e => e.t === 'iss' || e.t === 'bis').length;
+          const revCount = telEvents.filter(e => e.t === 'rev' || e.t === 'brv').length;
+          html += `<p style="background:#e8e8ff;padding:0.5rem;border-radius:4px;font-size:0.9em;">`;
+          html += `<strong>📋 TEL Events:</strong> ${telEvents.length} total (${issCount} issuance, ${revCount} revocation)`;
+          html += `</p>`;
+        } else if (acdcs.length > 0) {
+          html += `<p style="background:#fff3cd;padding:0.5rem;border-radius:4px;font-size:0.9em;">`;
+          html += `<strong>⚠️ No TEL events found in dossier.</strong> Revocation status cannot be verified. `;
+          html += `This may indicate the dossier is incomplete or TEL data is served separately.`;
+          html += `</p>`;
+        }
+
+        if (duplicateCount > 0) {
+          html += `<p style="color:#666;font-size:0.9em;">(${duplicateCount} duplicate ACDC(s) removed)</p>`;
+        }
+
+        if (acdcs.length === 0) {
+          html += `<p style="color:orange;">No ACDCs found in dossier. Raw data shown below.</p>`;
+          document.getElementById("checkRevocationBtn").disabled = true;
+        } else {
+          // Store ACDCs for live revocation check
+          currentAcdcs = acdcs;
+          currentOobiUrl = currentEvdUrl;
+          document.getElementById("checkRevocationBtn").disabled = false;
+
+          html += `<p><strong>Found ${acdcs.length} ACDC(s) in dossier:</strong></p>`;
+          for (let i = 0; i < acdcs.length; i++) {
+            const revStatus = getRevocationStatus(acdcs[i], revocationMap);
+            html += formatACDC(acdcs[i], i, revStatus);
+          }
+        }
+
+        // Show TEL events in collapsible section
+        if (telEvents.length > 0) {
+          html += `<details style="margin-top:1rem;"><summary style="cursor:pointer;"><strong>TEL Events (${telEvents.length})</strong></summary>`;
+          html += `<div style="background:#f0f0ff;padding:0.5rem;border-radius:4px;margin-top:0.5rem;">`;
+          for (const event of telEvents) {
+            const typeLabel = {
+              'iss': '✅ Issuance',
+              'rev': '🚫 Revocation',
+              'bis': '✅ Backers Issuance',
+              'brv': '🚫 Backers Revocation'
+            }[event.t] || event.t;
+            html += `<div style="margin:4px 0;padding:4px;background:#fff;border-radius:2px;font-size:0.85em;">`;
+            html += `<strong>${typeLabel}</strong> - SAID: ${event.i ? event.i.substring(0, 20) + '...' : 'N/A'}`;
+            if (event.dt) html += ` - Date: ${event.dt}`;
+            if (event.s !== undefined) html += ` - Seq: ${event.s}`;
+            html += `</div>`;
+          }
+          html += `</div></details>`;
+        }
+
+        // Show raw data
+        const rawDisplay = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+        html += `<details style="margin-top:1rem;"><summary>Raw Data</summary><pre style="background:#fff;padding:0.5rem;overflow:auto;max-height:400px;font-size:0.75em;">${rawDisplay.substring(0, 50000)}${rawDisplay.length > 50000 ? '...(truncated)' : ''}</pre></details>`;
+
+        output.innerHTML = html;
+      }
+
+      // Load mock dossier
+      document.getElementById("mockDossierBtn").addEventListener("click", async () => {
+        const output = document.getElementById("dossierOutput");
+        output.innerHTML = "<em>Loading mock dossier...</em>";
+
+        try {
+          const res = await fetch("/mock-dossier");
+          const data = await res.json();
+          displayDossier(data, "application/json (mock)");
+        } catch (e) {
+          output.innerHTML = `<span style="color:red;">Error loading mock: ${e.message}</span>`;
+        }
+      });
+
+      // Fetch and display dossier
+      document.getElementById("fetchDossierBtn").addEventListener("click", async () => {
+        const output = document.getElementById("dossierOutput");
+
+        if (!currentEvdUrl) {
+          output.innerHTML = "<em>No evd URL available</em>";
+          return;
+        }
+
+        output.innerHTML = "<em>Fetching dossier...</em>";
+
+        try {
+          const res = await fetch("/proxy-fetch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: currentEvdUrl })
+          });
+
+          const result = await res.json();
+
+          if (!result.success) {
+            output.innerHTML = `<span style="color:red;">Error: ${result.error}</span>`;
+            return;
+          }
+
+          displayDossier(result.data, result.content_type);
+
+        } catch (e) {
+          output.innerHTML = `<span style="color:orange;">Could not fetch dossier: ${e.message}</span><br><br>` +
+            `<strong>To fetch dossiers, run the server:</strong><br>` +
+            `<code>python3 web/server.py</code><br><br>` +
+            `<strong>Or fetch manually:</strong><br>` +
+            `<code>curl "${currentEvdUrl}"</code>`;
+        }
+      });
+
+      // Check live revocation status from KERI witnesses
+      document.getElementById("checkRevocationBtn").addEventListener("click", async () => {
+        const btn = document.getElementById("checkRevocationBtn");
+        const originalText = btn.textContent;
+        btn.textContent = "Checking...";
+        btn.disabled = true;
+
+        const results = [];
+
+        for (const acdc of currentAcdcs) {
+          try {
+            const res = await fetch("/check-revocation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                credential_said: acdc.d,
+                registry_said: acdc.ri || null,
+                oobi_url: currentOobiUrl
+              })
+            });
+
+            const result = await res.json();
+            results.push({
+              acdc: acdc,
+              result: result
+            });
+          } catch (e) {
+            results.push({
+              acdc: acdc,
+              result: { success: false, status: "ERROR", error: e.message }
+            });
+          }
+        }
+
+        // Display results
+        displayLiveRevocationResults(results);
+
+        btn.textContent = originalText;
+        btn.disabled = false;
+      });
+
+      // Display live revocation check results
+      function displayLiveRevocationResults(results) {
+        let html = `<div style="background:#f0f8ff;border:2px solid #0066cc;padding:1rem;border-radius:4px;margin-bottom:1rem;">`;
+        html += `<h4 style="margin-top:0;color:#0066cc;">🔍 Live Revocation Check Results</h4>`;
+        html += `<p style="font-size:0.85em;color:#666;">Queried KERI witnesses/watchers for real-time credential status</p>`;
+
+        let activeCount = 0;
+        let revokedCount = 0;
+        let unknownCount = 0;
+        let errorCount = 0;
+
+        for (const { acdc, result } of results) {
+          const shortSaid = acdc.d ? acdc.d.substring(0, 16) + '...' : 'Unknown';
+
+          let statusIcon, statusColor, statusText;
+          if (result.status === "ACTIVE") {
+            statusIcon = "✅";
+            statusColor = "#28a745";
+            statusText = "ACTIVE (Not Revoked)";
+            activeCount++;
+          } else if (result.status === "REVOKED") {
+            statusIcon = "🚫";
+            statusColor = "#dc3545";
+            statusText = "REVOKED";
+            revokedCount++;
+          } else if (result.status === "UNKNOWN") {
+            statusIcon = "❓";
+            statusColor = "#ffc107";
+            statusText = "UNKNOWN (No TEL data from witnesses)";
+            unknownCount++;
+          } else {
+            statusIcon = "⚠️";
+            statusColor = "#dc3545";
+            statusText = `ERROR: ${result.error || 'Unknown error'}`;
+            errorCount++;
+          }
+
+          html += `<div style="background:white;padding:0.5rem;margin:0.5rem 0;border-radius:4px;border-left:4px solid ${statusColor};">`;
+          html += `<strong>${statusIcon} ${shortSaid}</strong><br>`;
+          html += `<span style="color:${statusColor};font-weight:bold;">${statusText}</span>`;
+
+          if (result.source) {
+            html += `<br><span style="font-size:0.8em;color:#666;">Source: ${result.source}</span>`;
+          }
+
+          if (result.issuance) {
+            html += `<br><span style="font-size:0.8em;color:#28a745;">Issued: ${result.issuance.datetime || 'Unknown date'}</span>`;
+          }
+
+          if (result.revocation) {
+            html += `<br><span style="font-size:0.8em;color:#dc3545;">Revoked: ${result.revocation.datetime || 'Unknown date'}</span>`;
+          }
+
+          html += `</div>`;
+        }
+
+        // Summary
+        html += `<p style="margin-bottom:0;font-size:0.9em;border-top:1px solid #ccc;padding-top:0.5rem;margin-top:0.5rem;">`;
+        html += `<strong>Summary:</strong> `;
+        if (activeCount > 0) html += `<span style="color:#28a745;">${activeCount} active</span> `;
+        if (revokedCount > 0) html += `<span style="color:#dc3545;">${revokedCount} revoked</span> `;
+        if (unknownCount > 0) html += `<span style="color:#ffc107;">${unknownCount} unknown</span> `;
+        if (errorCount > 0) html += `<span style="color:#dc3545;">${errorCount} errors</span>`;
+        html += `</p>`;
+
+        html += `</div>`;
+
+        // Prepend to dossier output
+        const output = document.getElementById("dossierOutput");
+        output.innerHTML = html + output.innerHTML;
+      }
     </script>
   </body>
 </html>

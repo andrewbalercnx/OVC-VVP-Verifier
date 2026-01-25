@@ -1,0 +1,392 @@
+"""
+Lightweight TEL (Transaction Event Log) client for querying KERI witnesses/watchers.
+Does not require full keripy installation - uses direct HTTP queries.
+
+Per KERI spec, TEL events track credential lifecycle:
+- iss: issuance (simple)
+- rev: revocation (simple)
+- bis: backer-backed issuance
+- brv: backer-backed revocation
+"""
+
+import json
+import logging
+import re
+from dataclasses import dataclass
+from enum import Enum
+from typing import Optional, List, Dict, Any
+from urllib.parse import urljoin, urlparse
+
+import httpx
+
+log = logging.getLogger(__name__)
+
+
+class CredentialStatus(str, Enum):
+    """Credential revocation status."""
+    ACTIVE = "ACTIVE"         # Issued, not revoked
+    REVOKED = "REVOKED"       # Explicitly revoked
+    UNKNOWN = "UNKNOWN"       # No TEL data found
+    ERROR = "ERROR"           # Error querying status
+
+
+@dataclass
+class TELEvent:
+    """Parsed TEL event."""
+    event_type: str           # iss, rev, bis, brv
+    credential_said: str      # Credential identifier
+    registry_said: str        # Registry identifier
+    sequence: int             # Event sequence number
+    datetime: Optional[str]   # ISO8601 timestamp
+    digest: str               # Event digest
+    raw: Dict[str, Any]       # Full event data
+
+
+@dataclass
+class RevocationResult:
+    """Result of revocation status check."""
+    status: CredentialStatus
+    credential_said: str
+    registry_said: Optional[str]
+    issuance_event: Optional[TELEvent]
+    revocation_event: Optional[TELEvent]
+    error: Optional[str]
+    source: str  # 'witness', 'watcher', 'cache', 'dossier'
+
+
+class TELClient:
+    """
+    Client for querying KERI witnesses/watchers for TEL events.
+
+    KERI OOBI patterns for TEL queries:
+    - /oobi/{aid}/witness/{wit-aid}  - Witness key state
+    - /.well-known/keri/oobi/{aid}   - Well-known OOBI
+    - /tels/{registry-aid}           - TEL events for registry
+    - /credentials/{cred-said}       - Credential + TEL state
+    """
+
+    # Provenant OVC staging witnesses (primary)
+    # See: http://witness{4,5,6}.stage.provenant.net:5631/oobi/{AID}/witness
+    DEFAULT_WITNESSES = [
+        "http://witness4.stage.provenant.net:5631",
+        "http://witness5.stage.provenant.net:5631",
+        "http://witness6.stage.provenant.net:5631",
+        # GLEIF KERIA testnet witnesses (fallback)
+        "https://wit1.testnet.gleif.org:5641",
+        "https://wit2.testnet.gleif.org:5642",
+        "https://wit3.testnet.gleif.org:5643",
+    ]
+
+    def __init__(
+        self,
+        timeout: float = 10.0,
+        witness_urls: Optional[List[str]] = None
+    ):
+        self.timeout = timeout
+        self.witness_urls = witness_urls or self.DEFAULT_WITNESSES
+        self._cache: Dict[str, RevocationResult] = {}
+
+    async def check_revocation(
+        self,
+        credential_said: str,
+        registry_said: Optional[str] = None,
+        oobi_url: Optional[str] = None,
+    ) -> RevocationResult:
+        """
+        Check revocation status for a credential.
+
+        Args:
+            credential_said: SAID of the credential (ACDC 'd' field)
+            registry_said: SAID of the credential registry (ACDC 'ri' field)
+            oobi_url: OOBI URL to resolve witness/watcher
+
+        Returns:
+            RevocationResult with status and event details
+        """
+        cache_key = f"{credential_said}:{registry_said}"
+
+        # Check cache first
+        if cache_key in self._cache:
+            cached = self._cache[cache_key]
+            log.debug(f"Cache hit for {credential_said[:16]}...")
+            return cached
+
+        # Try OOBI resolution if URL provided
+        if oobi_url:
+            result = await self._query_via_oobi(credential_said, registry_said, oobi_url)
+            if result.status != CredentialStatus.ERROR:
+                self._cache[cache_key] = result
+                return result
+
+        # Try known witnesses
+        for witness_url in self.witness_urls:
+            result = await self._query_witness(credential_said, registry_said, witness_url)
+            if result.status != CredentialStatus.ERROR:
+                self._cache[cache_key] = result
+                return result
+
+        # No TEL data found
+        return RevocationResult(
+            status=CredentialStatus.UNKNOWN,
+            credential_said=credential_said,
+            registry_said=registry_said,
+            issuance_event=None,
+            revocation_event=None,
+            error="No TEL data found from any source",
+            source="none"
+        )
+
+    async def _query_via_oobi(
+        self,
+        credential_said: str,
+        registry_said: Optional[str],
+        oobi_url: str
+    ) -> RevocationResult:
+        """Query TEL via OOBI URL."""
+        try:
+            # Parse OOBI to extract witness endpoint
+            parsed = urlparse(oobi_url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+            # Try standard KERI API endpoints
+            endpoints = [
+                f"/tels/{registry_said or credential_said}",
+                f"/credentials/{credential_said}",
+                f"/oobi/{credential_said}/tels",
+            ]
+
+            async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
+                for endpoint in endpoints:
+                    url = urljoin(base_url, endpoint)
+                    log.debug(f"Querying TEL: {url}")
+
+                    try:
+                        resp = await client.get(url)
+                        if resp.status_code == 200:
+                            return self._parse_tel_response(
+                                credential_said, registry_said, resp.text, "oobi"
+                            )
+                    except httpx.RequestError as e:
+                        log.debug(f"Request failed: {e}")
+                        continue
+
+            return RevocationResult(
+                status=CredentialStatus.ERROR,
+                credential_said=credential_said,
+                registry_said=registry_said,
+                issuance_event=None,
+                revocation_event=None,
+                error=f"OOBI resolution failed for {oobi_url}",
+                source="oobi"
+            )
+
+        except Exception as e:
+            log.error(f"OOBI query error: {e}")
+            return RevocationResult(
+                status=CredentialStatus.ERROR,
+                credential_said=credential_said,
+                registry_said=registry_said,
+                issuance_event=None,
+                revocation_event=None,
+                error=str(e),
+                source="oobi"
+            )
+
+    async def _query_witness(
+        self,
+        credential_said: str,
+        registry_said: Optional[str],
+        witness_url: str
+    ) -> RevocationResult:
+        """Query a specific witness for TEL events."""
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
+                # Standard witness TEL endpoint
+                url = f"{witness_url}/tels/{registry_said or credential_said}"
+                resp = await client.get(url)
+
+                if resp.status_code == 200:
+                    return self._parse_tel_response(
+                        credential_said, registry_said, resp.text, "witness"
+                    )
+
+        except Exception as e:
+            log.debug(f"Witness query failed: {e}")
+
+        return RevocationResult(
+            status=CredentialStatus.ERROR,
+            credential_said=credential_said,
+            registry_said=registry_said,
+            issuance_event=None,
+            revocation_event=None,
+            error=f"Witness query failed: {witness_url}",
+            source="witness"
+        )
+
+    def _parse_tel_response(
+        self,
+        credential_said: str,
+        registry_said: Optional[str],
+        response_text: str,
+        source: str
+    ) -> RevocationResult:
+        """Parse TEL response and determine revocation status."""
+        events = self._extract_tel_events(response_text)
+
+        if not events:
+            return RevocationResult(
+                status=CredentialStatus.UNKNOWN,
+                credential_said=credential_said,
+                registry_said=registry_said,
+                issuance_event=None,
+                revocation_event=None,
+                error=None,
+                source=source
+            )
+
+        # Find events for this credential
+        cred_events = [e for e in events if e.credential_said == credential_said]
+        if not cred_events and registry_said:
+            # Try matching by registry
+            cred_events = [e for e in events if e.registry_said == registry_said]
+
+        if not cred_events:
+            cred_events = events  # Use all events if no specific match
+
+        # Sort by sequence number
+        cred_events.sort(key=lambda e: e.sequence)
+
+        # Find issuance and revocation events
+        issuance = None
+        revocation = None
+
+        for event in cred_events:
+            if event.event_type in ('iss', 'bis'):
+                issuance = event
+            elif event.event_type in ('rev', 'brv'):
+                revocation = event
+
+        # Determine status
+        if revocation:
+            status = CredentialStatus.REVOKED
+        elif issuance:
+            status = CredentialStatus.ACTIVE
+        else:
+            status = CredentialStatus.UNKNOWN
+
+        return RevocationResult(
+            status=status,
+            credential_said=credential_said,
+            registry_said=registry_said,
+            issuance_event=issuance,
+            revocation_event=revocation,
+            error=None,
+            source=source
+        )
+
+    def _extract_tel_events(self, data: str) -> List[TELEvent]:
+        """Extract TEL events from CESR stream or JSON response."""
+        events = []
+
+        # Try JSON first
+        try:
+            parsed = json.loads(data)
+            if isinstance(parsed, list):
+                for item in parsed:
+                    event = self._parse_tel_event(item)
+                    if event:
+                        events.append(event)
+            elif isinstance(parsed, dict):
+                event = self._parse_tel_event(parsed)
+                if event:
+                    events.append(event)
+            return events
+        except json.JSONDecodeError:
+            pass
+
+        # Parse CESR stream - find KERI JSON objects
+        pos = 0
+        while True:
+            # Find next KERI JSON object
+            match = data.find('{"v":"KERI', pos)
+            if match == -1:
+                break
+
+            try:
+                # Extract complete JSON object
+                depth = 0
+                start = match
+                end = match
+
+                for i in range(match, len(data)):
+                    if data[i] == '{':
+                        depth += 1
+                    elif data[i] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+
+                json_str = data[start:end]
+                obj = json.loads(json_str)
+
+                # Check if it's a TEL event
+                event = self._parse_tel_event(obj)
+                if event:
+                    events.append(event)
+
+                pos = end
+            except (json.JSONDecodeError, IndexError):
+                pos = match + 1
+
+        return events
+
+    def _parse_tel_event(self, obj: Dict[str, Any]) -> Optional[TELEvent]:
+        """Parse a single TEL event from JSON."""
+        if not isinstance(obj, dict):
+            return None
+
+        # TEL events have 't' field with iss/rev/bis/brv
+        event_type = obj.get('t')
+        if event_type not in ('iss', 'rev', 'bis', 'brv'):
+            return None
+
+        return TELEvent(
+            event_type=event_type,
+            credential_said=obj.get('i', ''),  # Credential/registry identifier
+            registry_said=obj.get('ri', ''),   # Registry identifier (if present)
+            sequence=int(obj.get('s', 0)),     # Sequence number
+            datetime=obj.get('dt'),            # ISO8601 datetime
+            digest=obj.get('d', ''),           # Event digest
+            raw=obj
+        )
+
+    def parse_dossier_tel(
+        self,
+        dossier_data: str,
+        credential_said: str,
+        registry_said: Optional[str] = None
+    ) -> RevocationResult:
+        """
+        Parse TEL events from a dossier CESR stream (no network request).
+        Use this when TEL events are included in the dossier response.
+        """
+        return self._parse_tel_response(
+            credential_said, registry_said, dossier_data, "dossier"
+        )
+
+    def clear_cache(self):
+        """Clear the revocation status cache."""
+        self._cache.clear()
+
+
+# Singleton instance
+_tel_client: Optional[TELClient] = None
+
+
+def get_tel_client() -> TELClient:
+    """Get or create the TEL client singleton."""
+    global _tel_client
+    if _tel_client is None:
+        _tel_client = TELClient()
+    return _tel_client

@@ -1,323 +1,547 @@
-# Phase 7: KERI Key State Resolution (Tier 2)
+# Phase 7b: CESR Parsing + KERI Canonicalization (Tier 2 Enablement)
 
 ## Problem Statement
 
-The current Tier 1 implementation extracts Ed25519 public keys directly from KERI AIDs and verifies PASSporT signatures against them. This approach has a critical limitation: it assumes the key embedded in the AID is currently valid and ignores key rotation or revocation events that may have occurred.
+Phase 7 implemented Tier 2 KEL resolution but with critical limitations:
+- JSON-only parsing (CESR binary format rejected)
+- JSON sorted-key canonicalization (not KERI-compliant)
+- SAID validation disabled by default
+- Witness receipt presence checked but signatures not validated
 
-VVP verification requires determining key state at a specific reference time T (the `iat` timestamp). Without this capability:
+These limitations mean Tier 2 cannot verify real KERI events from production witnesses. The `TIER2_KEL_RESOLUTION_ENABLED` flag is currently `False` by default, blocking production use.
 
-1. A rotated key could still verify signatures created after the rotation
-2. A revoked key could still pass verification
-3. Historical verification (per §5D) is impossible
-4. The verifier cannot distinguish between "key was valid at time T" and "key is valid now"
+This phase removes those limitations by implementing proper CESR parsing, KERI-compliant canonicalization, SAID validation, and witness receipt signature verification.
 
 ## Spec References
 
+From KERI specification and keripy reference implementation:
+- CESR count codes define framing for attachments (`-A`, `-B`, etc.)
+- Field ordering is fixed per event type (not alphabetical)
+- SAID uses Blake3-256 hash of canonical "most compact form"
+- Signatures are computed over canonical serialization
+- Witness receipts must be validated against witness AIDs
+
 From `VVP_Verifier_Specification_v1.5.md`:
-
-- **§5A Step 4** (Key State Retrieval): "Resolve issuer key state at reference time T (§5.1.1-2.4)"
-- **§5C.2** (Caching): "Key state cache: AID + timestamp → Minutes (rotation-sensitive)"
-- **§5D** (Historical Verification): "VVP passports can verify at arbitrary past moments using historical data"
-
-From VVP draft §5.1.1-2.4:
-- "The verifier MUST resolve the key state of the AID at reference time T"
-- "Key state resolution involves fetching the Key Event Log (KEL) from witnesses"
-- "The verifier MUST validate witness receipts to achieve confidence in key state"
+- §5A Step 4: Key state resolution requires validating KEL chain
+- §5D: Historical verification requires proper chain validation
 
 ## Current State
 
-**Tier 1 (`app/vvp/keri/`):**
-- `key_parser.py`: Parses KERI AID prefix codes (B/D) to extract 32-byte Ed25519 keys
-- `signature.py`: Verifies Ed25519 signatures using pysodium
-- `tel_client.py`: TEL client stub for revocation checking (Phase 9 scope)
+**Phase 7 implementation (`app/vvp/keri/`):**
+- `kel_parser.py`: JSON-only parsing, CESR detection raises error
+- `_compute_signing_input()`: Uses JSON sorted keys (test-only)
+- `compute_said()`: Uses JSON sorted keys (test-only)
+- `validate_kel_chain()`: Works but only with JSON test fixtures
+- Witness receipts: Presence/threshold checked, signatures NOT validated
 
-**Vendored `keripy/`:**
-- Full KERI Python implementation (not installed as pip package)
-- Includes KEL parsing, eventing, signing modules
-- Complex dependency tree (lmdb, falcon, hio, etc.)
-
-**Limitations:**
-- No OOBI dereferencing
-- No KEL parsing
-- No historical key state lookup
-- No witness validation
-- No key rotation detection
+**Limitation:** Cannot verify real KERI events from production OOBI endpoints.
 
 ## Proposed Solution
 
 ### Approach
 
-Implement a **lightweight KEL resolver** that fetches, parses, and **cryptographically validates** Key Event Logs without requiring the full keripy installation. This approach:
-
-1. Uses HTTP to fetch KEL data from OOBI endpoints
-2. Parses KEL events using a minimal event parser
-3. **Validates KEL event signatures and chain continuity** (each event signed by prior key state)
-4. Determines key state at time T by analyzing inception, rotation, and revocation events
-5. Validates witness receipts for establishment events (using event's `toad` threshold)
-6. Caches resolved key states keyed by establishment event digest
-
-**Why this approach:**
-- Avoids complex keripy dependencies (lmdb, falcon, hio)
-- Reduces Docker image size
-- Enables testing without full KERI infrastructure
-- Sufficient for VVP verification (read-only, no key management)
-- **Full cryptographic assurance through signature and chain validation**
+Implement CESR parsing and KERI canonicalization as modular components that integrate with the existing kel_parser.py infrastructure. This preserves the JSON test path while adding production-ready CESR support.
 
 ### Alternatives Considered
 
 | Alternative | Pros | Cons | Why Rejected |
 |-------------|------|------|--------------|
-| Full keripy integration | Complete KERI support | Heavy dependencies, complexity, Docker bloat | Overkill for read-only verification |
-| External KERI agent | Isolated, maintained | Network dependency, latency, single point of failure | Adds operational complexity |
-| Lightweight parser (chosen) | Simple, testable, no deps | Must maintain parser | Fits VVP read-only use case |
+| Full keripy integration | Complete implementation | Heavy dependencies, complexity | Already rejected in Phase 7 |
+| Partial keripy import | Reuse existing code | Import complexity, version coupling | Tight coupling to keripy internals |
+| Standalone CESR parser (chosen) | Minimal deps, clear ownership | Must implement parsing | Clean, testable, maintainable |
 
-### Detailed Design
+---
 
-#### Component 1: OOBI Dereferencer
+## Detailed Design
 
-- **Purpose**: Resolve OOBI URLs to fetch KEL data
-- **Location**: `app/vvp/keri/oobi.py`
-- **Interface**:
-  ```python
-  @dataclass
-  class OOBIResult:
-      aid: str
-      kel_data: bytes  # Raw CESR stream
-      witnesses: List[str]
-      error: Optional[str]
+### Component 1: CESR Count Code Parser
 
-  async def dereference_oobi(oobi_url: str, timeout: float = 5.0) -> OOBIResult
-  ```
-- **Behavior**:
-  - Fetch OOBI URL (follows redirects up to 3)
-  - Require `application/json+cesr` content type (primary format)
-  - Accept `application/json` only for testing (non-normative fallback)
-  - Extract raw KEL stream and witness list
-  - Raise `ResolutionFailedError` on network/parse failure
+**Purpose:** Parse CESR count codes to determine message framing and attachment types.
 
-#### Component 2: KEL Event Parser and Validator
+**Location:** `app/vvp/keri/cesr.py` (new file)
 
-- **Purpose**: Parse and cryptographically validate KERI events
-- **Location**: `app/vvp/keri/kel_parser.py`
-- **Interface**:
-  ```python
-  class EventType(Enum):
-      ICP = "icp"  # Inception
-      ROT = "rot"  # Rotation
-      IXN = "ixn"  # Interaction (ignored for key state)
-      DIP = "dip"  # Delegated inception
-      DRT = "drt"  # Delegated rotation
+**Interface:**
+```python
+from dataclasses import dataclass
+from enum import Enum
+from typing import List, Tuple
 
-  @dataclass
-  class KELEvent:
-      event_type: EventType
-      sequence: int
-      prior_digest: str         # Reference to prior event (chain continuity)
-      digest: str               # This event's digest (SAID)
-      signing_keys: List[bytes] # Current signing key(s) from 'k' field
-      next_keys_digest: Optional[str]  # Commitment to next keys ('n' field)
-      toad: int                 # Witness threshold from event
-      witnesses: List[str]      # Witness AIDs from event
-      timestamp: Optional[datetime]  # From witness receipts
-      signatures: List[bytes]   # Attached signatures
-      witness_receipts: List[WitnessReceipt]
-      raw: Dict[str, Any]
+class CountCode(Enum):
+    """CESR V1 count codes for KEL attachments."""
+    CONTROLLER_IDX_SIGS = "-A"    # Indexed controller signatures
+    WITNESS_IDX_SIGS = "-B"       # Indexed witness signatures
+    NON_TRANS_RECEIPT = "-C"      # Non-transferable receipt couples
+    TRANS_RECEIPT_QUAD = "-D"     # Transferable receipt quadruples
+    ATTACHMENT_GROUP = "-V"       # Attachment group
+    # Add others as needed
 
-  @dataclass
-  class WitnessReceipt:
-      witness_aid: str
-      signature: bytes
-      timestamp: Optional[datetime]
+@dataclass
+class CESRAttachment:
+    """Parsed CESR attachment."""
+    code: CountCode
+    count: int
+    data: bytes
 
-  def parse_kel_stream(kel_data: bytes) -> List[KELEvent]
-  def validate_kel_chain(events: List[KELEvent]) -> None  # Raises on failure
-  ```
-- **Behavior**:
-  - Parse CESR-encoded KEL stream (primary format)
-  - Extract establishment events (icp, rot, dip, drt) and interaction events
-  - **Validate chain continuity**: each event's `prior_digest` MUST match previous event's `digest`
-  - **Validate event signatures**: each event MUST be signed by keys from prior event (or self-signed for inception)
-  - Detect delegated events (dip/drt) and raise `DelegationNotSupportedError` until Phase 7b
-  - Raise `KELChainInvalidError` on chain/signature validation failure
+@dataclass
+class CESRMessage:
+    """Parsed CESR message with attachments."""
+    event_bytes: bytes           # Raw JSON event bytes
+    event_dict: dict            # Parsed event dictionary
+    controller_sigs: List[bytes]
+    witness_receipts: List[Tuple[str, bytes]]  # (witness_aid, signature)
+    raw: bytes                   # Original raw bytes for debugging
 
-#### Component 3: Key State Resolver
+def parse_cesr_stream(data: bytes) -> List[CESRMessage]:
+    """Parse a CESR stream into messages with attachments.
 
-- **Purpose**: Determine key state at reference time T with full validation
-- **Location**: `app/vvp/keri/kel_resolver.py`
-- **Interface**:
-  ```python
-  @dataclass
-  class KeyState:
-      aid: str
-      signing_keys: List[bytes]
-      sequence: int                    # Establishment event sequence
-      establishment_digest: str        # Digest of the establishment event
-      valid_from: Optional[datetime]   # Earliest witness timestamp
-      witnesses: List[str]
-      toad: int                        # Witness threshold
+    Args:
+        data: Raw CESR byte stream.
 
-  async def resolve_key_state(
-      kid: str,
-      reference_time: datetime,
-      oobi_url: Optional[str] = None,
-      min_witnesses: Optional[int] = None  # Uses event's toad if None
-  ) -> KeyState
-  ```
-- **Behavior**:
-  - Check cache first (keyed by AID + establishment event digest)
-  - Dereference OOBI to get KEL
-  - Parse and validate KEL chain (signatures + continuity)
-  - Walk KEL events chronologically
-  - **Find last establishment event at or before T** and return its keys
-  - If no establishment event exists at/before T → raise `KeyNotYetValidError`
-  - Validate witness receipts against event's `toad` threshold (or configurable minimum)
-  - Cache successful resolution by establishment event digest
-  - **Rotation before T is normal**: return the key that was valid at T, not an error
+    Returns:
+        List of CESRMessage objects.
 
-#### Component 4: Key State Cache
+    Raises:
+        ResolutionFailedError: If parsing fails.
+    """
+```
 
-- **Purpose**: Cache resolved key states to avoid repeated OOBI lookups
-- **Location**: `app/vvp/keri/cache.py`
-- **Interface**:
-  ```python
-  @dataclass
-  class CacheConfig:
-      ttl_seconds: int = 300  # 5 minutes default
-      max_entries: int = 1000
+**Behavior:**
+1. Detect CESR version string if present (`-_AAA` prefix)
+2. For each message in stream:
+   a. Parse JSON event (terminated by newline or attachment code)
+   b. Parse attached count codes and extract signatures/receipts
+3. Return structured CESRMessage objects
+4. Raise `ResolutionFailedError` on malformed input
 
-  class KeyStateCache:
-      def get(self, aid: str, establishment_digest: str) -> Optional[KeyState]
-      def get_for_time(self, aid: str, reference_time: datetime) -> Optional[KeyState]
-      def put(self, key_state: KeyState) -> None
-      def invalidate(self, aid: str) -> None
-  ```
-- **Behavior**:
-  - Primary key: `(AID, establishment_digest)` - stable across time queries
-  - Secondary index: `(AID, reference_time) → establishment_digest` for time-based lookups
-  - LRU eviction when max_entries exceeded
-  - TTL-based expiration
-  - Thread-safe for async access
+**Count Code Parsing Logic:**
+```
+- Read 2-4 character code prefix
+- Decode count from remaining characters (base64 integer)
+- Read `count` items of appropriate type based on code
+- Repeat until end of attachments
+```
 
-### Data Flow
+### Component 2: KERI Canonical Serializer
+
+**Purpose:** Serialize events in KERI field order (not alphabetical).
+
+**Location:** `app/vvp/keri/keri_canonical.py` (new file)
+
+**Interface:**
+```python
+from typing import Dict, Any
+
+# Field orderings per event type (from keripy/src/keri/core/serdering.py)
+FIELD_ORDER = {
+    "icp": ["v", "t", "d", "i", "s", "kt", "k", "nt", "n", "bt", "b", "c", "a"],
+    "rot": ["v", "t", "d", "i", "s", "p", "kt", "k", "nt", "n", "bt", "br", "ba", "a"],
+    "ixn": ["v", "t", "d", "i", "s", "p", "a"],
+    "dip": ["v", "t", "d", "i", "s", "kt", "k", "nt", "n", "bt", "b", "c", "a", "di"],
+    "drt": ["v", "t", "d", "i", "s", "p", "kt", "k", "nt", "n", "bt", "br", "ba", "a"],
+}
+
+def canonical_serialize(event: Dict[str, Any]) -> bytes:
+    """Serialize event in KERI canonical field order.
+
+    Args:
+        event: Event dictionary with 't' field indicating type.
+
+    Returns:
+        Canonical JSON bytes (no whitespace, ordered fields).
+
+    Raises:
+        ValueError: If event type unknown or missing required fields.
+    """
+
+def most_compact_form(event: Dict[str, Any], said_field: str = "d") -> bytes:
+    """Generate most compact form with placeholder SAID.
+
+    Used for SAID computation. Replaces the SAID field with a placeholder
+    of the correct length, then serializes canonically.
+
+    Args:
+        event: Event dictionary.
+        said_field: Field containing SAID (usually 'd').
+
+    Returns:
+        Canonical bytes with placeholder SAID.
+    """
+```
+
+**Behavior:**
+1. Look up field order from `FIELD_ORDER[event["t"]]`
+2. Serialize JSON with fields in specified order
+3. No whitespace (compact separators)
+4. UTF-8 encoding
+
+### Component 3: SAID Computation
+
+**Purpose:** Compute and validate Self-Addressing IDentifiers.
+
+**Location:** Update `app/vvp/keri/kel_parser.py` (extend existing `compute_said`)
+
+**Interface:**
+```python
+def compute_said_canonical(event: Dict[str, Any], algorithm: str = "blake3-256") -> str:
+    """Compute SAID using KERI canonical serialization.
+
+    Steps:
+    1. Create most compact form with placeholder
+    2. Hash with Blake3-256 (required in production)
+    3. Encode with derivation code prefix
+
+    Args:
+        event: Event dictionary.
+        algorithm: Hash algorithm (default blake3-256).
+
+    Returns:
+        SAID string with derivation code prefix (e.g., "E...").
+
+    Raises:
+        ImportError: If blake3 not available in production mode.
+    """
+
+def validate_event_said(event: Dict[str, Any], use_canonical: bool = True) -> None:
+    """Validate that event's 'd' field matches computed SAID.
+
+    Args:
+        event: Event dictionary.
+        use_canonical: If True, use KERI canonical serialization.
+                      If False, use JSON sorted-keys (test mode only).
+
+    Raises:
+        KELChainInvalidError: If SAID doesn't match.
+    """
+```
+
+**Blake3 Requirement:**
+- Blake3 is REQUIRED in production (not optional)
+- SHA256 fallback allowed ONLY when `_allow_test_mode=True`
+- Raise `ImportError` if blake3 unavailable and not in test mode
+
+### Component 4: Updated Chain Validation
+
+**Purpose:** Update `validate_kel_chain()` to use canonical serialization.
+
+**Location:** Update `app/vvp/keri/kel_parser.py`
+
+**Changes:**
+1. `_compute_signing_input()` → uses `canonical_serialize()` for CESR inputs
+2. `validate_kel_chain()` → requires SAID validation for CESR inputs
+3. Keep JSON sorted-keys path for backward compatibility with tests (guarded by flag)
+
+```python
+def _compute_signing_input(event: KELEvent, use_canonical: bool = False) -> bytes:
+    """Compute signing input for signature verification.
+
+    Args:
+        event: The KELEvent to compute signing input for.
+        use_canonical: If True, use KERI canonical serialization.
+                      If False, use JSON sorted-keys (test mode only).
+
+    Returns:
+        Bytes that were signed.
+    """
+```
+
+### Component 5: OOBI Content Type Routing
+
+**Purpose:** Route CESR vs JSON based on content-type header.
+
+**Location:** Update `app/vvp/keri/oobi.py` and `kel_parser.py`
+
+**Changes:**
+1. `dereference_oobi()` stores content-type in `OOBIResult`
+2. `parse_kel_stream()` accepts `content_type` parameter
+3. Route to CESR parser for `application/json+cesr`
+4. JSON parser ONLY allowed when `_allow_test_mode=True` (strictly non-production)
+
+```python
+@dataclass
+class OOBIResult:
+    aid: str
+    kel_data: bytes
+    witnesses: List[str]
+    content_type: str = "application/json"  # New field
+    error: Optional[str] = None
+
+def parse_kel_stream(
+    kel_data: bytes,
+    content_type: str = "application/json",
+    allow_json_only: bool = False  # Default changed to False
+) -> List[KELEvent]:
+    """Parse KEL stream based on content type.
+
+    Args:
+        kel_data: Raw KEL data.
+        content_type: Content-Type from OOBI response.
+        allow_json_only: Allow JSON when CESR expected (test mode only).
+
+    Returns:
+        List of parsed KELEvent objects.
+
+    Raises:
+        ResolutionFailedError: If JSON used without test mode flag.
+    """
+```
+
+### Component 6: Witness Receipt Signature Validation
+
+**Purpose:** Validate witness signatures against witness AIDs (not just presence/threshold).
+
+**Location:** Update `app/vvp/keri/kel_parser.py`
+
+**Interface:**
+```python
+@dataclass
+class WitnessReceipt:
+    witness_aid: str
+    signature: bytes
+    timestamp: Optional[datetime] = None
+    public_key: Optional[bytes] = None  # Resolved from witness AID
+
+def validate_witness_receipts(
+    event: KELEvent,
+    signing_input: bytes,
+    min_threshold: int
+) -> None:
+    """Validate witness receipt signatures against event.
+
+    For each witness receipt:
+    1. Resolve witness AID to public key
+    2. Verify signature against signing input
+    3. Count valid signatures
+
+    Args:
+        event: The KELEvent with witness receipts.
+        signing_input: Canonical bytes that were signed.
+        min_threshold: Minimum valid signatures required.
+
+    Raises:
+        KELChainInvalidError: If insufficient valid witness signatures.
+        ResolutionFailedError: If witness AIDs cannot be resolved.
+    """
+```
+
+**Behavior:**
+1. For each `WitnessReceipt` in `event.witness_receipts`:
+   a. Parse witness AID to extract public key (using existing `_decode_keri_key()`)
+   b. Verify signature against `signing_input`
+   c. Track valid signature count
+2. If valid count < `min_threshold`, raise `KELChainInvalidError`
+3. If witness AID cannot be parsed, raise `ResolutionFailedError` (INDETERMINATE)
+
+**Note:** Witness AIDs are typically non-transferable (B-prefix), so we can extract the key directly without KEL resolution.
+
+---
+
+## Data Flow
 
 ```
-PASSporT.kid (OOBI URL)
+OOBI Response (Content-Type: application/json+cesr)
         │
         ▼
 ┌──────────────────┐
-│ OOBI Dereferencer│ ──────► HTTP fetch from witness (CESR format)
+│  CESR Parser     │ ──────► Parse count codes, extract events + attachments
+│  (cesr.py)       │
 └────────┬─────────┘
-         │ OOBIResult (raw CESR)
+         │ List[CESRMessage]
          ▼
 ┌──────────────────┐
-│  KEL Parser      │ ──────► Parse CESR events
+│ Canonical        │ ──────► Serialize in KERI field order
+│ Serializer       │
 └────────┬─────────┘
-         │ List[KELEvent]
+         │ Canonical bytes
          ▼
 ┌──────────────────┐
-│ Chain Validator  │ ──────► Verify signatures + chain continuity
+│ SAID Validator   │ ──────► Verify d field matches Blake3 hash
 └────────┬─────────┘
          │ Validated events
          ▼
 ┌──────────────────┐
-│ Key State Cache  │◄────┐ Check cache by (AID, digest)
-└────────┬─────────┘     │
-         │ Miss          │
-         ▼               │
-┌──────────────────┐     │
-│Key State Resolver│     │ Store by (AID, establishment_digest)
-└────────┬─────────┘─────┘
-         │ KeyState (keys valid at T)
+│ Chain Validator  │ ──────► Verify controller signatures
+└────────┬─────────┘
+         │
          ▼
-   signature.py (verify with historical key)
+┌──────────────────┐
+│Witness Validator │ ──────► Verify witness receipt signatures
+└────────┬─────────┘
+         │ KELEvent list
+         ▼
+   Existing resolver flow
 ```
 
-### Error Handling
+---
 
-| Error Condition | Error Code | Claim Status | Recovery |
-|-----------------|------------|--------------|----------|
-| OOBI fetch failed (network) | KERI_RESOLUTION_FAILED | INDETERMINATE | Retry with backoff |
-| OOBI fetch timeout | KERI_RESOLUTION_FAILED | INDETERMINATE | Retry |
-| Invalid OOBI content type | VVP_OOBI_CONTENT_INVALID | INVALID | None |
-| KEL parse failed | KERI_STATE_INVALID | INVALID | None |
-| KEL chain continuity broken | KERI_STATE_INVALID | INVALID | None |
-| KEL event signature invalid | KERI_STATE_INVALID | INVALID | None |
-| No establishment event at/before T | KERI_STATE_INVALID | INVALID | None |
-| Insufficient witness receipts | KERI_RESOLUTION_FAILED | INDETERMINATE | Try more witnesses |
-| Delegated event (dip/drt) detected | KERI_RESOLUTION_FAILED | INDETERMINATE | Not yet supported |
+## Error Handling
 
-**Note**: Key rotation before T is **not an error**. The resolver returns the key that was valid at T. `KERI_STATE_INVALID` is only returned when no valid key state can be determined (e.g., reference time before inception, broken chain, invalid signatures).
+| Error Condition | Error Type | Claim Status |
+|-----------------|------------|--------------|
+| Invalid CESR count code | ResolutionFailedError | INDETERMINATE |
+| Truncated CESR stream | ResolutionFailedError | INDETERMINATE |
+| SAID mismatch | KELChainInvalidError | INVALID |
+| Signature mismatch (canonical) | KELChainInvalidError | INVALID |
+| Unknown event type | ResolutionFailedError | INDETERMINATE |
+| Witness AID resolution failed | ResolutionFailedError | INDETERMINATE |
+| Insufficient valid witness sigs | KELChainInvalidError | INVALID |
+| Blake3 unavailable (production) | ImportError | INDETERMINATE |
+| JSON content without test mode | ResolutionFailedError | INDETERMINATE |
 
-### Test Strategy
+---
 
-1. **Unit tests for KEL parser** (`tests/test_kel_parser.py`):
-   - Parse valid CESR inception event
-   - Parse rotation event with key change
-   - Handle malformed CESR
-   - Handle missing required fields
-   - Validate event SAID computation
+## Test Strategy
 
-2. **Unit tests for chain validation** (`tests/test_kel_chain.py`):
-   - Validate chain continuity (prior_digest references)
-   - Validate inception self-signature
-   - Validate rotation signature by prior keys
-   - Detect broken chain (invalid prior_digest)
-   - Detect invalid event signature
+### 1. Unit Tests for CESR Parser (`tests/test_cesr_parser.py`)
+- Parse valid CESR stream with controller signatures
+- Parse CESR stream with witness receipts
+- Handle truncated/invalid count codes
+- Handle empty stream
 
-3. **Unit tests for key state resolver** (`tests/test_kel_resolver.py`):
-   - Find key at time T (no rotations)
-   - Find key at time T (with rotation before T - returns rotated key)
-   - Find key at time T (with rotation after T - returns pre-rotation key)
-   - Handle reference time before inception (error)
-   - Validate toad threshold enforcement
+### 2. Unit Tests for Canonicalization (`tests/test_canonicalization.py`)
+- ICP event canonical order matches expected
+- ROT event canonical order matches expected
+- IXN event canonical order matches expected
+- Unknown event type raises error
 
-4. **Unit tests for cache** (`tests/test_kel_cache.py`):
-   - Cache hit by (AID, digest)
-   - Cache hit by (AID, time) via secondary index
-   - Cache miss triggers resolution
-   - TTL expiration
-   - LRU eviction
+### 3. Canonical Verification Against keripy (`tests/test_canonical_keripy_compat.py`)
+**NEW: Addresses reviewer requirement #1**
 
-5. **Integration tests** (`tests/test_kel_integration.py`):
-   - Mock OOBI server with CESR responses
-   - End-to-end key state resolution
-   - Delegated event detection (returns INDETERMINATE)
+Compare our `canonical_serialize()` output against keripy's serdering output for all fixture event types:
+
+```python
+def test_icp_canonical_matches_keripy():
+    """Verify ICP canonical output matches keripy serdering."""
+    # Load ICP fixture generated by keripy
+    fixture = load_fixture("icp_keripy.json")
+
+    # Get expected canonical bytes from keripy output
+    expected = fixture["canonical_bytes"]
+
+    # Compute using our implementation
+    actual = canonical_serialize(fixture["event"])
+
+    assert actual == expected, "ICP canonical mismatch with keripy"
+
+def test_rot_canonical_matches_keripy():
+    """Verify ROT canonical output matches keripy serdering."""
+    # ... similar
+
+def test_ixn_canonical_matches_keripy():
+    """Verify IXN canonical output matches keripy serdering."""
+    # ... similar
+```
+
+**Fixture Generation Script:**
+Create `scripts/generate_keripy_fixtures.py` that uses keripy's serdering to generate canonical byte vectors:
+```python
+from keri.core.serdering import SerderKERI
+# Generate events and capture canonical bytes for each event type
+```
+
+### 4. Unit Tests for SAID (`tests/test_said_canonical.py`)
+- SAID computation matches known vectors
+- SAID validation passes for correct digest
+- SAID validation fails for incorrect digest
+- Most compact form generates correct placeholder
+- Blake3 required in production mode (ImportError if missing)
+
+### 5. Unit Tests for Witness Validation (`tests/test_witness_validation.py`)
+**NEW: Addresses reviewer requirement #2**
+
+- Valid witness signatures pass threshold
+- Invalid witness signatures fail validation
+- Missing witness signatures fail threshold
+- Witness AID parsing extracts correct key
+- Non-transferable witness AIDs (B-prefix) work correctly
+
+### 6. Integration Tests (`tests/test_kel_cesr_integration.py`)
+- End-to-end CESR KEL parsing and validation
+- Signature verification with canonical bytes
+- Chain validation with real CESR fixtures
+- Witness receipt validation with CESR fixtures
+
+### 7. Fixtures (`tests/fixtures/keri/`)
+- `icp_cesr.txt` - Inception event with signatures
+- `rot_cesr.txt` - Rotation event with signatures
+- `kel_stream.txt` - Full KEL stream (icp + rot + ixn)
+- `kel_with_witnesses.txt` - KEL with witness receipts
+- `icp_keripy.json` - keripy-generated ICP with canonical bytes
+- `rot_keripy.json` - keripy-generated ROT with canonical bytes
+- `ixn_keripy.json` - keripy-generated IXN with canonical bytes
+
+**Fixture Generation:**
+Use keripy to generate all fixtures (authoritative reference, prevents serialization drift).
+
+---
 
 ## Files to Create/Modify
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `app/vvp/keri/oobi.py` | Create | OOBI dereferencing |
-| `app/vvp/keri/kel_parser.py` | Create | KEL event parsing + chain validation |
-| `app/vvp/keri/kel_resolver.py` | Create | Key state at time T |
-| `app/vvp/keri/cache.py` | Create | Key state caching |
-| `app/vvp/keri/signature.py` | Modify | Use resolved key state |
-| `app/vvp/keri/exceptions.py` | Modify | Add new exception types |
-| `tests/test_kel_parser.py` | Create | KEL parser tests |
-| `tests/test_kel_chain.py` | Create | Chain validation tests |
-| `tests/test_kel_resolver.py` | Create | Resolver tests |
-| `tests/test_kel_cache.py` | Create | Cache tests |
-| `tests/test_kel_integration.py` | Create | Integration tests |
+| `app/vvp/keri/cesr.py` | Create | CESR count code parser |
+| `app/vvp/keri/keri_canonical.py` | Create | KERI canonical serialization |
+| `app/vvp/keri/kel_parser.py` | Modify | Integrate CESR + canonical + witness validation |
+| `app/vvp/keri/oobi.py` | Modify | Content-type routing |
+| `app/core/config.py` | Modify | Update feature flag docs |
+| `tests/test_cesr_parser.py` | Create | CESR parser tests |
+| `tests/test_canonicalization.py` | Create | Canonicalization tests |
+| `tests/test_canonical_keripy_compat.py` | Create | keripy compatibility verification |
+| `tests/test_said_canonical.py` | Create | SAID tests |
+| `tests/test_witness_validation.py` | Create | Witness receipt validation tests |
+| `tests/test_kel_cesr_integration.py` | Create | Integration tests |
+| `tests/fixtures/keri/` | Create | CESR test fixtures |
+| `scripts/generate_keripy_fixtures.py` | Create | Fixture generation script |
 
-## Resolved Questions (per Reviewer)
+---
 
-1. **Witness threshold**: Use the event's `toad` field if present; otherwise use a configurable minimum with production default ≥ quorum of current witnesses. Avoid fixed "1" default beyond dev.
+## Implementation Order
 
-2. **CESR vs JSON**: CESR is the primary supported format per `application/json+cesr`. JSON is allowed only for tests or clearly marked non-normative fallback.
+1. **Generate keripy Fixtures** - Create authoritative test vectors first
+2. **Canonical Serializer** - KERI field ordering with keripy verification
+3. **SAID Computation** - Using canonical bytes, Blake3 required
+4. **CESR Parser** - Parse count codes and extract attachments
+5. **Witness Receipt Validation** - Validate signatures against AIDs
+6. **Chain Validation** - Update to use canonical path + witness validation
+7. **OOBI Routing** - Content-type based parsing, JSON strictly test-only
+8. **Integration Tests** - End-to-end validation
+9. **Enable Feature Flag** - Flip `TIER2_KEL_RESOLUTION_ENABLED` to True
 
-3. **Delegation events**: Detect `dip`/`drt` and return INDETERMINATE with `DelegationNotSupportedError` until delegated resolution is implemented in a future phase.
-
-4. **Cache granularity**: Cache by `(AID, establishment_event_digest)` with a secondary index `(AID, reference_time) → event_digest`. Avoid rounding timestamps.
+---
 
 ## Risks and Mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
-| CESR parsing complexity | Medium | High | Use keripy CESR parsing as reference; comprehensive test vectors |
-| Signature validation complexity | Medium | High | Reuse existing Ed25519 verification; test against keripy-generated events |
-| Witness unavailability | Medium | Medium | Fall back to cached state with warning |
-| Performance degradation | Low | Medium | Aggressive caching by event digest; async fetches |
-| Edge cases in KEL walk | Medium | Medium | Comprehensive test vectors; clear error classification |
+| CESR parsing complexity | Medium | High | Use keripy as authoritative reference |
+| Field ordering errors | Low | High | Validate against keripy fixtures explicitly |
+| Blake3 availability | Low | Medium | Require in production, fail clearly if missing |
+| Backward compatibility | Low | Medium | Keep JSON test path intact but strictly gated |
+| Witness AID resolution | Low | Medium | Support common non-transferable prefixes |
+
+---
+
+## Exit Criteria
+
+- [ ] CESR parser handles all required count codes
+- [ ] Canonical serialization matches keripy output (verified by tests)
+- [ ] SAID validation works with canonical bytes
+- [ ] Witness receipt signatures validated against AIDs
+- [ ] Chain validation passes with real CESR fixtures
+- [ ] All existing tests still pass
+- [ ] New tests provide >90% coverage of new code
+- [ ] Blake3 required in production (ImportError if missing)
+- [ ] JSON parsing strictly gated behind test mode
+- [ ] `TIER2_KEL_RESOLUTION_ENABLED` can be safely set to True
+
+---
+
+## Resolved Questions (per Reviewer)
+
+1. **Fixture generation**: Use keripy to generate fixtures. It's the authoritative reference and prevents subtle serialization drift.
+
+2. **Blake3 dependency**: Require blake3 in production. SHA256 fallback is test-only and explicitly non-compliant.
+
+3. **Witness receipt validation**: Yes—validate witness signatures against witness AIDs in this phase. This is required for production-grade key state resolution.
 
 ---
 
@@ -327,195 +551,14 @@ PASSporT.kid (OOBI URL)
 
 | Finding | Resolution |
 |---------|------------|
-| [High] No KEL event signature validation and chain continuity checks | Added explicit chain validation (Component 2), signature verification against prior key state, and `validate_kel_chain()` function |
-| [High] "Key rotated before T → KERI_STATE_INVALID" incorrect | Fixed: rotation before T is normal, resolver returns key valid at T. Error only if no establishment event at/before T |
-| [Medium] Cache key rounding to minute risks incorrect results | Changed cache key to `(AID, establishment_event_digest)` with secondary time index |
+| [Medium] No verification step proving canonical alignment with keripy | Added explicit keripy compatibility tests in `tests/test_canonical_keripy_compat.py` that compare our output against keripy's serdering for all event types |
+| [Medium] Witness receipt signatures not validated | Added Component 6: Witness Receipt Signature Validation with full implementation details |
 
-### Additional Improvements
+### Additional Changes
 
-1. Added `WitnessReceipt` dataclass for structured receipt handling
-2. Added `DelegationNotSupportedError` for dip/drt detection
-3. Added separate test file for chain validation (`test_kel_chain.py`)
-4. Clarified `KERI_RESOLUTION_FAILED` vs `KERI_STATE_INVALID` semantics in error table
-5. Added `valid_from` timestamp to KeyState for temporal ordering
-
----
-
-## Reviewer Prompt (Revision 1)
-
-```
-## Plan Review Request: Phase 7 - KERI Key State Resolution (Revision 1)
-
-You are the Reviewer in a pair programming workflow. This is a re-review after addressing your previous CHANGES_REQUESTED feedback.
-
-### Documents to Review
-
-1. `PLAN.md` - The revised plan with "Revision 1" section documenting fixes
-
-### Changes Made Since Last Review
-
-| Finding | Resolution |
-|---------|------------|
-| [High] No KEL signature/chain validation | Added explicit chain validation, signature verification against prior keys |
-| [High] Rotation before T incorrectly treated as error | Fixed: return key valid at T, only error if no establishment event at/before T |
-| [Medium] Cache rounding risks | Changed to (AID, establishment_digest) with secondary time index |
-
-Additional improvements:
-- WitnessReceipt dataclass for structured receipts
-- DelegationNotSupportedError for dip/drt detection
-- Separate test file for chain validation
-- Clarified error code semantics
-
-### Your Task
-
-1. Verify the required changes have been correctly addressed
-2. Confirm chain validation and signature verification are now explicit in the design
-3. Confirm the key-at-T logic no longer treats rotation as an error
-4. Confirm cache keying strategy avoids timestamp rounding
-5. Provide verdict and feedback in `REVIEW.md`
-
-### Response Format
-
-Write your response to `REVIEW.md` using this structure:
-
-## Plan Review: Phase 7 - KERI Key State Resolution (Revision 1)
-
-**Verdict:** APPROVED | CHANGES_REQUESTED
-
-### Required Changes Verification
-[Confirm each required change was properly addressed]
-
-### Additional Improvements Assessment
-[Evaluation of the additional changes made]
-
-### Findings
-- [High]: Critical issue that blocks approval
-- [Medium]: Important issue that should be addressed
-- [Low]: Suggestion for improvement (optional)
-
-### Required Changes (if CHANGES_REQUESTED)
-1. [Specific change required]
-
-### Final Recommendations
-- [Optional improvements or future considerations]
-```
-
----
-
-## Implementation Notes
-
-### Deviations from Plan
-
-1. **Cache time index**: Added a `reference_time` parameter to `cache.put()` to also index by the query time, enabling cache hits on subsequent queries for the same AID and reference time.
-
-2. **Timezone handling**: Added `_normalize_datetime()` and `_compare_datetimes()` helpers to handle both timezone-aware and naive datetimes, since KEL timestamps may include timezone info (Z suffix) while query times may be naive.
-
-3. **CESR parsing**: Full CESR binary parsing is stubbed with a TODO - the implementation currently supports JSON-encoded KEL for testing. CESR parsing will be completed when real KERI infrastructure is available for testing.
-
-### Implementation Details
-
-- Used `httpx` for async HTTP in OOBI dereferencer (consistent with existing codebase)
-- Signature verification reuses existing `pysodium` integration from Tier 1
-- Cache uses `asyncio.Lock` for thread safety in async context
-- All datetime comparisons normalized to UTC to avoid timezone comparison errors
-
-### Test Results
-
-```
-94 passed (Phase 7 tests)
-365 passed, 2 skipped (full test suite)
-```
-
-### Files Changed
-
-| File | Lines | Summary |
-|------|-------|---------|
-| `app/vvp/keri/exceptions.py` | +48 | Added KELChainInvalidError, KeyNotYetValidError, DelegationNotSupportedError, OOBIContentInvalidError |
-| `app/vvp/keri/cache.py` | +210 | New key state cache with LRU eviction and TTL |
-| `app/vvp/keri/kel_parser.py` | +380 | KEL event parser with chain validation |
-| `app/vvp/keri/oobi.py` | +180 | OOBI dereferencer for fetching KEL data |
-| `app/vvp/keri/kel_resolver.py` | +330 | Key state resolver at reference time T |
-| `app/vvp/keri/signature.py` | +50 | Added verify_passport_signature_tier2 |
-| `app/vvp/keri/__init__.py` | +30 | Updated exports for Tier 2 |
-| `tests/test_kel_parser.py` | +190 | KEL parser unit tests |
-| `tests/test_kel_chain.py` | +280 | Chain validation tests |
-| `tests/test_kel_cache.py` | +280 | Cache behavior tests |
-| `tests/test_kel_resolver.py` | +290 | Resolver tests |
-| `tests/test_kel_integration.py` | +280 | End-to-end integration tests |
-
----
-
-## Implementation Revision 1 (Response to Code Review CHANGES_REQUESTED)
-
-### Changes Made
-
-| Finding | Resolution |
-|---------|------------|
-| [High] CESR parsing not implemented but expected | Added explicit CESR detection that returns clear `ResolutionFailedError` explaining JSON-only is supported. Updated docstrings to clarify limitation. |
-| [High] Signature canonicalization doesn't match KERI | Added extensive warning in `_compute_signing_input()` documenting that JSON sorted-key canonicalization is test-only and won't work with real KERI events. |
-| [Medium] SAID validation missing | Added `_validate_event_said()` function and integrated into `validate_kel_chain()`. Defaults to disabled since test fixtures use placeholder digests. |
-| [Medium] Missing timestamps use latest state | Changed to raise `ResolutionFailedError` (INDETERMINATE) when rotations lack timestamps, since we cannot determine temporal validity. Inception-only KELs without timestamps still work. |
-| [Low] Timezone handling in signature.py | Changed `datetime.fromtimestamp(iat)` to `datetime.fromtimestamp(iat, tz=timezone.utc)` for consistent UTC handling. |
-
-### Test Updates
-
-- Renamed `test_events_without_timestamps_use_sequence` to `test_events_without_timestamps_raises_indeterminate`
-- Added `test_inception_only_without_timestamp_succeeds` to verify inception-only KELs work
-
-### Test Results (Revision 1)
-
-```
-95 passed (Phase 7 tests)
-366 passed, 2 skipped (full test suite)
-```
-
----
-
-## Implementation Revision 2 (Response to Code Review CHANGES_REQUESTED)
-
-### Changes Made
-
-| Finding | Resolution |
-|---------|------------|
-| [High] CESR still not supported - functional blocker | Per reviewer recommendation, added feature flag `TIER2_KEL_RESOLUTION_ENABLED` to gate Tier 2 as TEST-ONLY. Default is `False`. |
-| [High] Signature canonicalization still test-only | Added feature flag gating. Tier 2 now explicitly fails with clear error when flag is disabled. |
-| [Medium] SAID validation disabled by default | Documented in code; feature flag now makes Tier 2 limitations explicit. |
-| [Medium] Rotation without timestamps test coverage | Verified `test_events_without_timestamps_raises_indeterminate` exists at line 229 of test_kel_resolver.py and correctly tests INDETERMINATE behavior. |
-
-### Implementation Details
-
-1. **Feature Flag in config.py**:
-   Added `TIER2_KEL_RESOLUTION_ENABLED: bool = False` with extensive documentation explaining:
-   - JSON-only: CESR binary format NOT supported
-   - Signature canonicalization uses JSON sorted-keys, NOT KERI-compliant Blake3
-   - SAID validation disabled by default
-   - Conclusion: Tier 2 ONLY works with synthetic test fixtures
-
-2. **Feature Gate in kel_resolver.py**:
-   `resolve_key_state()` checks `TIER2_KEL_RESOLUTION_ENABLED` first and raises `ResolutionFailedError` with clear message when disabled. Added `_allow_test_mode` parameter to bypass gate for tests.
-
-3. **Feature Gate in signature.py**:
-   `verify_passport_signature_tier2()` also checks the flag and has `_allow_test_mode` parameter for testing.
-
-4. **Test Updates**:
-   - All 14 tests calling `resolve_key_state()` updated to pass `_allow_test_mode=True`
-   - Added `TestFeatureFlag` class with 2 tests verifying gate behavior:
-     - `test_tier2_disabled_by_default`: Verifies resolution fails when flag disabled
-     - `test_tier2_allowed_with_test_mode`: Verifies `_allow_test_mode=True` bypasses gate
-
-### Files Changed (Revision 2)
-
-| File | Change |
-|------|--------|
-| `app/core/config.py` | Added `TIER2_KEL_RESOLUTION_ENABLED = False` with documentation |
-| `app/vvp/keri/kel_resolver.py` | Added feature gate check, `_allow_test_mode` parameter |
-| `app/vvp/keri/signature.py` | Added feature gate check, `_allow_test_mode` parameter, updated docstring |
-| `tests/test_kel_resolver.py` | Updated 2 tests with `_allow_test_mode=True` |
-| `tests/test_kel_integration.py` | Updated 12 tests with `_allow_test_mode=True`, added `TestFeatureFlag` class |
-
-### Test Results (Revision 2)
-
-```
-97 passed (Phase 7 tests)
-368 passed, 2 skipped (full test suite)
-```
+1. **Blake3 now required in production** - SHA256 fallback only in test mode
+2. **JSON parsing strictly gated** - `allow_json_only` default changed to `False`
+3. **Added fixture generation script** - `scripts/generate_keripy_fixtures.py`
+4. **Added keripy compatibility test file** - `tests/test_canonical_keripy_compat.py`
+5. **Added witness validation test file** - `tests/test_witness_validation.py`
+6. **Updated implementation order** - Generate fixtures first, then build against them

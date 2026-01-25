@@ -1,10 +1,10 @@
 # VVP Verifier Implementation Checklist
 
-**Document Version:** 2.0
-**Specification Version:** v1.4 FINAL
+**Document Version:** 3.2
+**Specification Version:** v1.4 FINAL + draft-hardman-verifiable-voice-protocol §5
 **Created:** 2026-01-23
-**Last Updated:** 2026-01-23
-**Status:** In Progress
+**Last Updated:** 2026-01-25
+**Status:** Tier 1 Complete, Tier 2 In Progress (60% overall)
 
 ---
 
@@ -17,18 +17,28 @@
 
 ---
 
+## Implementation Tiers
+
+| Tier | Description | Status |
+|------|-------------|--------|
+| **Tier 1** | Direct verification: parse, validate structure, verify embedded keys | Complete |
+| **Tier 2** | Full KERI: KEL resolution, historical key state, witness validation | In Progress |
+| **Tier 3** | Authorization: TNAlloc, delegation, brand credentials, business logic | Not Started |
+
+---
+
 ## Phase 1: Core Infrastructure
 
 | # | Task | Status | Commit | Comments |
 |---|------|--------|--------|----------|
-| 1.1 | Create `app/core/config.py` with configuration constants | [ ] | | Clock skew (±300s), max token age (300s), timeouts, algorithm policy |
-| 1.2 | Define `ClaimStatus` enum (VALID, INVALID, INDETERMINATE) | [ ] | | Per §3.2 |
-| 1.3 | Define `ClaimNode` Pydantic model with `{required, node}` children | [ ] | | Per §4.3B |
-| 1.4 | Define `VerifyRequest` model (passport_jwt, context) | [ ] | | Per §4.1 |
-| 1.5 | Define `VerifyResponse` model (request_id, overall_status, claims, errors) | [ ] | | Per §4.2, §4.3 |
-| 1.6 | Define `ErrorDetail` model (code, message, recoverable) | [ ] | | Per §4.2 |
-| 1.7 | Create error code constants per §4.2A registry (18 codes) | [ ] | | See Error Code Registry below |
-| 1.8 | Implement `overall_status` derivation logic per §4.3A | [ ] | | Precedence rules |
+| 1.1 | Create `app/core/config.py` with configuration constants | [x] | | Clock skew (±300s), max token age (300s), timeouts, algorithm policy |
+| 1.2 | Define `ClaimStatus` enum (VALID, INVALID, INDETERMINATE) | [x] | | Per §3.2 |
+| 1.3 | Define `ClaimNode` Pydantic model with `{required, node}` children | [x] | | Per §4.3B |
+| 1.4 | Define `VerifyRequest` model (passport_jwt, context) | [x] | | Per §4.1 |
+| 1.5 | Define `VerifyResponse` model (request_id, overall_status, claims, errors) | [x] | | Per §4.2, §4.3 |
+| 1.6 | Define `ErrorDetail` model (code, message, recoverable) | [x] | | Per §4.2 |
+| 1.7 | Create error code constants per §4.2A registry (18 codes) | [x] | | See Error Code Registry below |
+| 1.8 | Implement `overall_status` derivation logic per §4.3A | [x] | | Precedence rules |
 
 ---
 
@@ -36,16 +46,16 @@
 
 | # | Task | Status | Commit | Comments |
 |---|------|--------|--------|----------|
-| 2.1 | Create `app/vvp/header.py` module | [ ] | | |
-| 2.2 | Implement base64url decoding of VVP-Identity header | [ ] | | Error: VVP_IDENTITY_INVALID on decode failure |
-| 2.3 | Parse JSON with fields: `ppt`, `kid`, `evd`, `iat`, `exp` | [ ] | | |
-| 2.4 | Validate `ppt` field exists | [ ] | | Value not constrained; "shaken" is valid per §4.1A |
-| 2.5 | Validate `kid` and `evd` are present and are OOBI references | [ ] | | Per §4.1B OOBI semantics |
-| 2.6 | Implement clock skew validation (±300s) on `iat` | [ ] | | Per §4.1A |
-| 2.7 | Handle optional `exp`; if absent, use `iat` + 300s max age | [ ] | | Per §4.1A; configurable |
-| 2.8 | Reject future `iat` beyond clock skew | [ ] | | Per §4.1A |
-| 2.9 | Return structured errors for all failure modes | [ ] | | |
-| 2.10 | Unit tests for header parsing | [ ] | | Happy path + edge cases |
+| 2.1 | Create `app/vvp/header.py` module | [x] | | |
+| 2.2 | Implement base64url decoding of VVP-Identity header | [x] | | Error: VVP_IDENTITY_INVALID on decode failure |
+| 2.3 | Parse JSON with fields: `ppt`, `kid`, `evd`, `iat`, `exp` | [x] | | |
+| 2.4 | Validate `ppt` field exists | [x] | | Value not constrained; "shaken" is valid per §4.1A |
+| 2.5 | Validate `kid` and `evd` are present and are OOBI references | [x] | | Per §4.1B OOBI semantics |
+| 2.6 | Implement clock skew validation (±300s) on `iat` | [x] | | Per §4.1A |
+| 2.7 | Handle optional `exp`; if absent, use `iat` + 300s max age | [x] | | Per §4.1A; configurable |
+| 2.8 | Reject future `iat` beyond clock skew | [x] | | Per §4.1A |
+| 2.9 | Return structured errors for all failure modes | [x] | | |
+| 2.10 | Unit tests for header parsing | [x] | | Happy path + edge cases |
 
 ---
 
@@ -53,142 +63,263 @@
 
 | # | Task | Status | Commit | Comments |
 |---|------|--------|--------|----------|
-| 3.1 | Create `app/vvp/passport.py` module | [ ] | | |
-| 3.2 | Parse JWT structure (header.payload.signature) | [ ] | | Error: PASSPORT_PARSE_FAILED |
-| 3.3 | Reject `alg=none` | [ ] | | Per §5.1 |
-| 3.4 | Reject ES256, HMAC, RSA algorithms | [ ] | | Per §5.0/§5.1 - explicitly forbidden for VVP |
-| 3.5 | Accept only EdDSA (Ed25519) | [ ] | | Per §5.1 - baseline for VVP PASSporT |
-| 3.6 | Return PASSPORT_FORBIDDEN_ALG for algorithm violations | [ ] | | Per §4.2A |
-| 3.7 | Extract header claims: `alg`, `typ`, `ppt`, `kid` | [ ] | | |
-| 3.8 | Extract VVP payload claims: `iss`, `iat`, `orig`, `dest`, `evd` (required) | [ ] | | Per VVP draft §4 |
-| 3.9 | Extract optional VVP claims: `card`, `goal`, `call-reason`, `origid`, `exp` | [ ] | | VVP extensions |
-| 3.10 | Validate `ppt` matches between PASSporT and VVP-Identity | [ ] | | Per §5.2 header binding |
-| 3.11 | Validate `kid` binding between PASSporT and VVP-Identity | [ ] | | Per §5.2 |
-| 3.12 | Defer signature verification (requires KERI key state at T) | [ ] | | Placeholder for Phase 4 |
-| 3.13 | Unit tests for PASSporT parsing | [ ] | | |
+| 3.1 | Create `app/vvp/passport.py` module | [x] | | |
+| 3.2 | Parse JWT structure (header.payload.signature) | [x] | | Error: PASSPORT_PARSE_FAILED |
+| 3.3 | Reject `alg=none` | [x] | | Per §5.1 |
+| 3.4 | Reject ES256, HMAC, RSA algorithms | [x] | | Per §5.0/§5.1 - explicitly forbidden for VVP |
+| 3.5 | Accept only EdDSA (Ed25519) | [x] | | Per §5.1 - baseline for VVP PASSporT |
+| 3.6 | Return PASSPORT_FORBIDDEN_ALG for algorithm violations | [x] | | Per §4.2A |
+| 3.7 | Extract header claims: `alg`, `typ`, `ppt`, `kid` | [x] | | |
+| 3.8 | Extract VVP payload claims: `iss`, `iat`, `orig`, `dest`, `evd` (required) | [x] | | Per VVP draft §4 |
+| 3.9 | Extract optional VVP claims: `card`, `goal`, `call-reason`, `origid`, `exp` | [x] | | VVP extensions |
+| 3.10 | Validate `ppt` matches between PASSporT and VVP-Identity | [x] | | Per §5.2 header binding |
+| 3.11 | Validate `kid` binding between PASSporT and VVP-Identity | [x] | | Per §5.2 |
+| 3.12 | Validate `iat` drift ≤ 5 seconds between PASSporT and VVP-Identity | [x] | | Per §5.2A - NORMATIVE |
+| 3.13 | Unit tests for PASSporT parsing | [x] | | |
 
 ---
 
-## Phase 4: KERI Integration
+## Phase 4: KERI Signature Verification (Tier 1)
 
 | # | Task | Status | Commit | Comments |
 |---|------|--------|--------|----------|
-| 4.1 | Add `keri>=2.0.0` to requirements.txt | [ ] | | Plus pysodium, blake3, lmdb |
-| 4.2 | Create `app/vvp/keri/resolver.py` module | [ ] | | |
-| 4.3 | Initialize KERI database (Habery context) | [ ] | | Using keri.app.habbing |
-| 4.4 | Implement `KeriResolver.resolve(identifier: str, at_time: int)` | [ ] | | Returns KeyState at reference time T |
-| 4.5 | Implement OOBI dereferencing for `kid` field | [ ] | | Must support `application/json+cesr` per §4.1B |
-| 4.6 | Validate OOBI content-type is `application/json+cesr` | [ ] | | Error: VVP_OOBI_CONTENT_INVALID if wrong |
-| 4.7 | Handle OOBI fetch failures | [ ] | | Error: VVP_OOBI_FETCH_FAILED (recoverable) |
-| 4.8 | Implement KEL parsing via `keri.core.parsing.Parser` | [ ] | | |
-| 4.9 | Implement KERI/CESR version handling per §7.1 | [ ] | | Support v1/v2, reject mismatched versions |
-| 4.10 | Implement historical key state lookup at reference time T | [ ] | | Per §5.3; T = iat from VVP-Identity |
-| 4.11 | Validate witness receipts at reference time T | [ ] | | Per §5.3 |
-| 4.12 | Check for key rotation/revocation prior to T | [ ] | | Per §5.3; INVALID if revoked before T |
-| 4.13 | Implement Ed25519 signature verification via `Verfer.verify()` | [ ] | | Using key state at T |
-| 4.14 | Handle transient failures → INDETERMINATE | [ ] | | Error: KERI_RESOLUTION_FAILED |
-| 4.15 | Handle cryptographically invalid state → INVALID | [ ] | | Error: KERI_STATE_INVALID |
-| 4.16 | Integration tests with mock KERI infrastructure | [ ] | | |
+| 4.1 | Create `app/vvp/keri/` module structure | [x] | | key_parser.py, signature.py, exceptions.py |
+| 4.2 | Parse KERI AID from `kid` field | [x] | | Support "B" (transferable) and "D" (non-transferable) prefixes |
+| 4.3 | Extract Ed25519 public key from AID | [x] | | Base64url decode, validate 32 bytes |
+| 4.4 | Implement Ed25519 signature verification via pysodium | [x] | | crypto_sign_verify_detached |
+| 4.5 | Handle invalid kid format → INDETERMINATE | [x] | | ResolutionFailedError |
+| 4.6 | Handle signature failure → INVALID | [x] | | SignatureInvalidError |
+| 4.7 | Unit tests for signature verification | [x] | | |
 
 ---
 
-## Phase 5: Dossier Fetching and Validation
+## Phase 5: Dossier Fetching and Validation (Tier 1)
 
 | # | Task | Status | Commit | Comments |
 |---|------|--------|--------|----------|
-| 5.1 | Create `app/vvp/dossier/fetch.py` module | [ ] | | |
-| 5.2 | Create `app/vvp/dossier/model.py` module | [ ] | | |
-| 5.3 | Define `ACDCNode` dataclass | [ ] | | said, issuer, schema, attributes, edges, proofs per §6.1A |
-| 5.4 | Define `DossierGraph` dataclass | [ ] | | root, nodes dict per §6.1 |
-| 5.5 | Implement OOBI dereference for `evd` field | [ ] | | Per §4.1B/§6.1B |
-| 5.6 | Validate response content-type is `application/json+cesr` | [ ] | | Per §6.1B |
-| 5.7 | Enforce timeout (configurable, e.g. 5 seconds) | [ ] | | Per §6.1B |
-| 5.8 | Enforce redirect limits | [ ] | | Per §6.1B |
-| 5.9 | Enforce size limit (configurable, e.g. 1MB) | [ ] | | Per §6.1B |
-| 5.10 | Parse dossier using KERI/CESR parser (not generic JSON) | [ ] | | Per §4.1B/§6.1B |
-| 5.11 | Handle ACDC variants: compact, partial, aggregate | [ ] | | Per §1.4/§6.1B - MUST support |
-| 5.12 | Implement DAG cycle detection | [ ] | | Error: DOSSIER_GRAPH_INVALID |
-| 5.13 | Validate explicit root node exists | [ ] | | Error: DOSSIER_GRAPH_INVALID |
-| 5.14 | Implement "most compact form" SAID computation per ACDC spec | [ ] | | Depth-first, compute leaf SAIDs first |
-| 5.15 | Verify each ACDC SAID matches recomputed value | [ ] | | Blake3-256, Error: ACDC_SAID_MISMATCH |
-| 5.16 | Verify ACDC issuer signatures via KERI historical key state | [ ] | | Key state at ACDC issuance time |
-| 5.17 | Verify ACDC proofs present where required | [ ] | | Error: ACDC_PROOF_MISSING |
-| 5.18 | Enforce freshness/expiry policy on credentials | [ ] | | Per §7.3 - don't default to "never" |
-| 5.19 | Handle fetch failures → INDETERMINATE | [ ] | | Error: DOSSIER_FETCH_FAILED |
-| 5.20 | Unit tests for dossier validation | [ ] | | Including ACDC variant tests |
+| 5.1 | Create `app/vvp/dossier/` module structure | [x] | | fetch.py, parser.py, validator.py |
+| 5.2 | Implement HTTP fetch from `evd` URL | [x] | | |
+| 5.3 | Enforce timeout (5 seconds default) | [x] | | Per §6.1B |
+| 5.4 | Enforce max size (1MB default) | [x] | | Per §6.1B |
+| 5.5 | Enforce max redirects (3 default) | [x] | | Per §6.1B |
+| 5.6 | Validate content-type (application/json+cesr or application/json) | [x] | | Per §6.1B |
+| 5.7 | Parse ACDC objects from JSON | [x] | | Support single object or array |
+| 5.8 | Validate required ACDC fields: d (SAID), i (issuer), s (schema) | [x] | | Per §6.1A |
+| 5.9 | Extract optional ACDC fields: a (attributes), e (edges), r (rules) | [x] | | |
+| 5.10 | Build DAG from ACDC edges | [x] | | |
+| 5.11 | Detect cycles in DAG (3-color DFS) | [x] | | Error: DOSSIER_GRAPH_INVALID |
+| 5.12 | Validate single root node exists | [x] | | Error: DOSSIER_GRAPH_INVALID |
+| 5.13 | Handle fetch failures → INDETERMINATE | [x] | | Error: DOSSIER_FETCH_FAILED |
+| 5.14 | Handle parse failures → INVALID | [x] | | Error: DOSSIER_PARSE_FAILED |
+| 5.15 | Unit tests for dossier validation | [x] | | |
 
 ---
 
-## Phase 6: Claim Derivation Engine
+## Phase 6: Verification Orchestration (Tier 1)
 
 | # | Task | Status | Commit | Comments |
 |---|------|--------|--------|----------|
-| 6.1 | Create `app/vvp/verify/engine.py` module | [ ] | | |
-| 6.2 | Create `app/vvp/verify/claimtree.py` module | [ ] | | |
-| 6.3 | Implement claim tree construction from dossier | [ ] | | |
-| 6.4 | Validate all children have explicit required/optional flag | [ ] | | Per §3.3 - omission is ERROR |
-| 6.5 | Implement REQUIRED child propagation: INVALID → parent INVALID | [ ] | | Per §3.3A |
-| 6.6 | Implement REQUIRED child propagation: INDETERMINATE → parent INDETERMINATE | [ ] | | Per §3.3A |
-| 6.7 | Implement OPTIONAL child handling (never invalidates parent) | [ ] | | Per §3.3A |
-| 6.8 | Implement `overall_status` derivation from root claims | [ ] | | Per §4.3A |
-| 6.9 | Support partial trees for recoverable failures | [ ] | | Per §9 |
-| 6.10 | Implement short-circuit on fatal PASSporT failures | [ ] | | Per §9 |
-| 6.11 | Handle DI2I delegation edges (or mark INDETERMINATE if unsupported) | [ ] | | Per §7.2 |
-| 6.12 | Log all claim decisions with request_id | [ ] | | JSON format per §11 |
-| 6.13 | Unit tests for claim propagation | [ ] | | All status combinations |
+| 6.1 | Create `app/vvp/verify.py` module | [x] | | |
+| 6.2 | Implement claim tree structure per §3.3A | [x] | | caller_authorised → passport_verified, dossier_verified |
+| 6.3 | Implement status propagation (INVALID > INDETERMINATE > VALID) | [x] | | |
+| 6.4 | Implement REQUIRED vs OPTIONAL child handling | [x] | | Per §3.3A |
+| 6.5 | Implement evidence accumulation | [x] | | kid, binding_valid, signature_valid, etc. |
+| 6.6 | Short-circuit dossier fetch on passport failure | [x] | | Optimization |
+| 6.7 | Wire up POST /verify endpoint | [x] | | |
+| 6.8 | Unit tests for orchestration | [x] | | |
 
 ---
 
-## Phase 7: API Routes
+## Phase 7: KERI Key State Resolution (Tier 2)
+
+**Spec Reference:** §5.1.1-2.4 (Key State Retrieval), VVP draft §5
 
 | # | Task | Status | Commit | Comments |
 |---|------|--------|--------|----------|
-| 7.1 | Create/update `app/api/routes.py` | [ ] | | |
-| 7.2 | Implement `POST /verify` endpoint | [ ] | | |
-| 7.3 | Extract VVP-Identity header | [ ] | | Error: VVP_IDENTITY_MISSING if absent |
-| 7.4 | Parse request body (passport_jwt, context) | [ ] | | Error: PASSPORT_MISSING if absent |
-| 7.5 | Generate request_id (UUID) | [ ] | | |
-| 7.6 | Wire up verification engine per §9 pseudocode | [ ] | | |
-| 7.7 | Return structured response (claims or errors) | [ ] | | Per §4.2, §4.3 |
-| 7.8 | Implement `GET /version` endpoint | [ ] | | Return GIT_SHA |
-| 7.9 | Implement `GET /healthz` endpoint | [ ] | | Health check |
-| 7.10 | Add request correlation logging middleware | [ ] | | |
-| 7.11 | Integration tests for API routes | [ ] | | |
+| 7.1 | Create `app/vvp/keri/kel_resolver.py` module | [x] | 850df11 | Key state resolver with cache |
+| 7.2 | Implement OOBI dereferencing for `kid` field | [x] | 850df11 | `oobi.py` - supports OOBI URL in kid |
+| 7.3 | Parse KEL stream (CESR and JSON) | [x] | | `cesr.py` + `kel_parser.py` |
+| 7.4 | Extract key state at reference time T (iat) | [x] | 850df11 | `_find_key_state_at_time()` |
+| 7.5 | Validate witness receipts at reference time T | [x] | 850df11 | Threshold checking implemented |
+| 7.6 | Check for key rotation events before T | [x] | 850df11 | Handled in key state resolution |
+| 7.7 | Validate KEL chain (signatures, continuity) | [x] | 850df11 | `validate_kel_chain()` |
+| 7.8 | Implement key state caching per freshness policy | [x] | 850df11 | `cache.py` - LRU with TTL |
+| 7.9 | Handle transient failures → INDETERMINATE | [x] | 850df11 | ResolutionFailedError |
+| 7.10 | Handle invalid key state → INVALID | [x] | 850df11 | KELChainInvalidError |
+| 7.11 | Integration tests with KEL data | [x] | 850df11 | 97 Phase 7 tests |
+| 7.12 | CESR parsing (`application/json+cesr`) | [x] | | Standalone CESR parser |
+| 7.13 | KERI canonical serialization | [x] | | `keri_canonical.py` |
+| 7.14 | Live witness resolution (Provenant staging) | [x] | | Tested with witness5.stage.provenant.net |
+| 7.15 | Delegation validation (`dip`, `drt` events) | [ ] | | Raises DelegationNotSupportedError |
+| 7.16 | Witness receipt signature validation | [ ] | | Currently presence-only check |
 
 ---
 
-## Phase 8: Test Vectors
+## Phase 8: ACDC Signature Verification (Tier 2) - NEW
+
+**Spec Reference:** §5.1.1-2.8 (Dossier Validation)
 
 | # | Task | Status | Commit | Comments |
 |---|------|--------|--------|----------|
-| 8.1 | Create test vector directory structure | [ ] | | tests/vectors/ |
-| 8.2 | Valid VVP-Identity + valid EdDSA PASSporT + valid dossier → VALID | [ ] | | Per §10.2 |
-| 8.3 | PASSporT uses forbidden algorithm (ES256) → INVALID | [ ] | | Per §10.2 |
-| 8.4 | PASSporT signature invalid at reference time T → INVALID | [ ] | | Per §10.2 |
-| 8.5 | Key rotated/revoked before T (historical) → INVALID | [ ] | | Per §10.2 |
-| 8.6 | OOBI/KERI resolution timeout → INDETERMINATE | [ ] | | Per §10.2 |
-| 8.7 | Dossier unreachable → INDETERMINATE | [ ] | | Per §10.2 |
-| 8.8 | SAID mismatch under most-compact-form rule → INVALID | [ ] | | Per §10.2 |
-| 8.9 | Valid compact/partial/aggregate dossier variant → VALID | [ ] | | Per §10.2 |
-| 8.10 | Each vector includes: input, artefacts, T, expected tree, errors | [ ] | | Per §10.3 |
-| 8.11 | Implement test vector runner | [ ] | | |
-| 8.12 | CI integration for test vectors | [ ] | | GitHub Actions |
+| 8.1 | Create `app/vvp/dossier/acdc_verifier.py` module | [ ] | | |
+| 8.2 | Compute SAID using Blake3-256 "most compact form" | [ ] | | Per ACDC spec |
+| 8.3 | Verify each ACDC SAID matches computed value | [ ] | | Error: ACDC_SAID_MISMATCH |
+| 8.4 | Resolve issuer key state at ACDC issuance time | [ ] | | Per §5.1.1-2.8.2 |
+| 8.5 | Verify ACDC signature against issuer key | [ ] | | Ed25519 |
+| 8.6 | Validate ACDC schema against declared schema SAID | [ ] | | Per §5.1.1-2.8.3 |
+| 8.7 | Traverse evidence chain to root of trust | [ ] | | Per §5.1.1-2.8.3 |
+| 8.8 | Verify correct relationships among artifacts | [ ] | | Per §5.1.1-2.8.3 |
+| 8.9 | Handle ACDC variants: compact, partial, aggregate | [ ] | | Per §1.4/§6.1B |
+| 8.10 | Unit tests for ACDC verification | [ ] | | |
 
 ---
 
-## Phase 9: Deployment and Verification
+## Phase 9: Revocation Checking (Tier 2)
+
+**Spec Reference:** §5.1.1-2.9 (Revocation Status Check)
 
 | # | Task | Status | Commit | Comments |
 |---|------|--------|--------|----------|
-| 9.1 | Update Dockerfile for new dependencies | [ ] | | libsodium, lmdb |
-| 9.2 | Update requirements.txt | [ ] | | All keripy dependencies |
-| 9.3 | Verify local Docker build | [ ] | | |
-| 9.4 | Push to main branch | [ ] | | Triggers CI/CD |
-| 9.5 | Verify GitHub Actions workflow succeeds | [ ] | | |
-| 9.6 | Verify new ACA revision created | [ ] | | az containerapp revision list |
-| 9.7 | Verify /healthz endpoint responds | [ ] | | curl command |
-| 9.8 | Verify /version returns correct SHA | [ ] | | |
-| 9.9 | End-to-end test with real request | [ ] | | |
+| 9.1 | Create `app/vvp/keri/tel_client.py` module | [x] | | TEL client with witness query |
+| 9.2 | Implement TEL query for credential revocation status | [x] | | `check_revocation()` method |
+| 9.3 | Check revocation status for each ACDC in dossier | [ ] | | Full graph traversal - integration pending |
+| 9.4 | Implement revocation cache with freshness threshold | [x] | | `_cache` dict in TELClient |
+| 9.5 | Handle revocation check failures → INDETERMINATE | [x] | | CredentialStatus.ERROR/UNKNOWN |
+| 9.6 | Handle revoked credential → INVALID | [x] | | CredentialStatus.REVOKED |
+| 9.7 | Unit tests for revocation checking | [ ] | | Tests not yet created |
+
+---
+
+## Phase 10: Authorization Verification (Tier 3) - NEW
+
+**Spec Reference:** §5.1.1-2.10, §5.1.1-2.11 (Originating Party Authorization, Phone Number Rights)
+
+| # | Task | Status | Commit | Comments |
+|---|------|--------|--------|----------|
+| 10.1 | Create `app/vvp/authorization/` module structure | [ ] | | |
+| 10.2 | Extract originating party AID from passport | [ ] | | From `kid` |
+| 10.3 | Extract accountable party AID from dossier root | [ ] | | Issuer of identity credential |
+| 10.4 | **Case A:** No delegation - verify orig party = accountable party | [ ] | | Per §5.1.1-2.10 |
+| 10.5 | **Case B:** With delegation - verify delegation credential chain | [ ] | | Per §5.1.1-2.10, §7.2 |
+| 10.6 | Locate TNAlloc credential in dossier | [ ] | | Per §5.1.1-2.11 |
+| 10.7 | Compare `orig` field to TNAlloc credential | [ ] | | Phone number rights |
+| 10.8 | Verify accountable party has right to originate | [ ] | | Per §5.1.1-2.11 |
+| 10.9 | Add `caller_authorized` claim to tree | [ ] | | New claim node |
+| 10.10 | Add `tn_rights_valid` claim to tree | [ ] | | New claim node |
+| 10.11 | Unit tests for authorization | [ ] | | |
+
+---
+
+## Phase 11: Brand and Business Logic (Tier 3) - NEW
+
+**Spec Reference:** §5.1.1-2.12, §5.1.1-2.13 (Brand Attributes, Business Logic)
+
+| # | Task | Status | Commit | Comments |
+|---|------|--------|--------|----------|
+| 11.1 | Create `app/vvp/claims/brand.py` module | [ ] | | |
+| 11.2 | Extract `card` claim from passport payload | [ ] | | Optional rich call data |
+| 11.3 | Locate brand credential in dossier | [ ] | | If `card` present |
+| 11.4 | Verify brand attributes match credential | [ ] | | Per §5.1.1-2.12 |
+| 11.5 | Create `app/vvp/claims/goal.py` module | [ ] | | |
+| 11.6 | Extract `goal` claim from passport payload | [ ] | | Optional |
+| 11.7 | Implement verifier goal acceptance policy | [ ] | | Configurable |
+| 11.8 | Check delegated signer constraints (hours, geographies) | [ ] | | Per §5.1.1-2.13 |
+| 11.9 | Verify call attributes match credential limitations | [ ] | | Per §5.1.1-2.13 |
+| 11.10 | Add `brand_verified` claim to tree (OPTIONAL) | [ ] | | |
+| 11.11 | Add `business_logic_verified` claim to tree (OPTIONAL) | [ ] | | |
+| 11.12 | Unit tests for brand and business logic | [ ] | | |
+
+---
+
+## Phase 12: Callee Verification (Tier 3) - NEW
+
+**Spec Reference:** §5.2 (Verifying the Callee)
+
+| # | Task | Status | Commit | Comments |
+|---|------|--------|--------|----------|
+| 12.1 | Create `app/vvp/verify_callee.py` module | [ ] | | Separate flow per §5.2 |
+| 12.2 | Validate `call-id` and `cseq` match SIP INVITE | [ ] | | Per §5.2-2.1 |
+| 12.3 | Validate `iat` matches SIP metadata | [ ] | | Per §5.2-2.2 |
+| 12.4 | Analyze `exp` for timeout evaluation | [ ] | | Per §5.2-2.3 |
+| 12.5 | Extract `kid` and resolve callee key state | [ ] | | Per §5.2-2.4, §5.2-2.5 |
+| 12.6 | Verify callee passport signature | [ ] | | Per §5.2-2.6 |
+| 12.7 | Fetch and validate callee dossier | [ ] | | Per §5.2-2.7 to §5.2-2.10 |
+| 12.8 | Confirm dossier signed by AID in `kid` | [ ] | | Per §5.2-2.9 |
+| 12.9 | Check revocation status for callee dossier | [ ] | | Per §5.2-2.11 |
+| 12.10 | Verify callee TNAlloc credential | [ ] | | Per §5.2-2.12 |
+| 12.11 | Verify callee brand attributes if present | [ ] | | Per §5.2-2.13 |
+| 12.12 | Check goal overlap with caller (if applicable) | [ ] | | Per §5.2-2.14 |
+| 12.13 | Add POST /verify-callee endpoint | [ ] | | |
+| 12.14 | Unit tests for callee verification | [ ] | | |
+
+---
+
+## Phase 13: SIP Contextual Alignment - NEW
+
+**Spec Reference:** §5.1.1-2.2 (Contextual Alignment)
+
+| # | Task | Status | Commit | Comments |
+|---|------|--------|--------|----------|
+| 13.1 | Define SIP context fields in request model | [ ] | | call_id, cseq, from_uri, to_uri, invite_time |
+| 13.2 | Validate `orig` matches SIP From URI | [ ] | | Per §5.1.1-2.2 |
+| 13.3 | Validate `dest` matches SIP To URI | [ ] | | Per §5.1.1-2.2 |
+| 13.4 | Validate `iat` aligns with SIP INVITE timing | [ ] | | Per §5.1.1-2.2 |
+| 13.5 | Add `context_aligned` claim to tree | [ ] | | |
+| 13.6 | Unit tests for SIP alignment | [ ] | | |
+
+---
+
+## Phase 14: Caching and Efficiency
+
+**Spec Reference:** §5.3 (Planning for Efficiency), §5.1.1-2.7 (Dossier Cache)
+
+| # | Task | Status | Commit | Comments |
+|---|------|--------|--------|----------|
+| 14.1 | Create `app/vvp/keri/cache.py` module | [x] | 850df11 | KeyStateCache with LRU |
+| 14.2 | Implement SAID-based dossier cache | [ ] | | Per §5.1.1-2.7 |
+| 14.3 | Implement key state cache | [x] | 850df11 | `cache.py` - LRU + TTL |
+| 14.4 | Implement revocation status cache | [x] | | TELClient._cache |
+| 14.5 | Configure cache TTL per freshness policy | [x] | 850df11 | 300s default per §5C.2 |
+| 14.6 | Implement cache invalidation on revocation | [ ] | | |
+| 14.7 | Add cache metrics/logging | [ ] | | |
+| 14.8 | Unit tests for caching | [x] | 850df11 | `test_kel_cache.py` |
+
+---
+
+## Phase 15: Test Vectors
+
+| # | Task | Status | Commit | Comments |
+|---|------|--------|--------|----------|
+| 15.1 | Create test vector directory structure | [x] | | tests/vectors/ |
+| 15.2 | Valid VVP-Identity + valid EdDSA PASSporT + valid dossier → VALID | [x] | | Per §10.2 |
+| 15.3 | PASSporT uses forbidden algorithm (ES256) → INVALID | [x] | | Per §10.2 |
+| 15.4 | PASSporT signature invalid → INVALID | [x] | | Per §10.2 |
+| 15.5 | OOBI/KERI resolution timeout → INDETERMINATE | [ ] | | Per §10.2 - requires Tier 2 |
+| 15.6 | Dossier unreachable → INDETERMINATE | [x] | | Per §10.2 |
+| 15.7 | Key rotated/revoked before T (historical) → INVALID | [ ] | | Per §10.2 - requires Tier 2 |
+| 15.8 | SAID mismatch under most-compact-form rule → INVALID | [ ] | | Per §10.2 - requires Phase 8 |
+| 15.9 | Valid compact/partial/aggregate dossier variant → VALID | [ ] | | Per §10.2 - requires Phase 8 |
+| 15.10 | TNAlloc mismatch → INVALID | [ ] | | Per §5.1.1-2.11 - requires Phase 10 |
+| 15.11 | Delegation chain invalid → INVALID | [ ] | | Per §5.1.1-2.10 - requires Phase 10 |
+| 15.12 | Revoked credential in dossier → INVALID | [ ] | | Per §5.1.1-2.9 - requires Phase 9 |
+| 15.13 | Implement test vector runner | [x] | | |
+| 15.14 | CI integration for test vectors | [ ] | | GitHub Actions |
+
+---
+
+## Phase 16: API Routes and Deployment
+
+| # | Task | Status | Commit | Comments |
+|---|------|--------|--------|----------|
+| 16.1 | Implement `POST /verify` endpoint | [x] | | |
+| 16.2 | Implement `POST /verify-callee` endpoint | [ ] | | Phase 12 |
+| 16.3 | Implement `GET /version` endpoint | [x] | | |
+| 16.4 | Implement `GET /healthz` endpoint | [x] | | |
+| 16.5 | Add request correlation logging middleware | [x] | | |
+| 16.6 | Update Dockerfile for new dependencies | [ ] | | libsodium, lmdb, keripy |
+| 16.7 | Update requirements.txt | [ ] | | All keripy dependencies |
+| 16.8 | Verify local Docker build | [ ] | | |
+| 16.9 | End-to-end integration tests | [ ] | | |
 
 ---
 
@@ -221,18 +352,53 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 
 ## Summary
 
-| Phase | Total Tasks | Completed | Percentage |
-|-------|-------------|-----------|------------|
-| 1. Core Infrastructure | 8 | 0 | 0% |
-| 2. VVP-Identity Header | 10 | 0 | 0% |
-| 3. PASSporT JWT | 13 | 0 | 0% |
-| 4. KERI Integration | 16 | 0 | 0% |
-| 5. Dossier Validation | 20 | 0 | 0% |
-| 6. Claim Engine | 13 | 0 | 0% |
-| 7. API Routes | 11 | 0 | 0% |
-| 8. Test Vectors | 12 | 0 | 0% |
-| 9. Deployment | 9 | 0 | 0% |
-| **TOTAL** | **112** | **0** | **0%** |
+| Phase | Description | Total | Done | % |
+|-------|-------------|-------|------|---|
+| 1 | Core Infrastructure | 8 | 8 | 100% |
+| 2 | VVP-Identity Header | 10 | 10 | 100% |
+| 3 | PASSporT JWT | 13 | 13 | 100% |
+| 4 | KERI Signature (Tier 1) | 7 | 7 | 100% |
+| 5 | Dossier Validation (Tier 1) | 15 | 15 | 100% |
+| 6 | Verification Orchestration (Tier 1) | 8 | 8 | 100% |
+| 7 | KEL Key State Resolution (Tier 2) | 16 | 14 | 88% |
+| 8 | ACDC Signature Verification (Tier 2) | 10 | 0 | 0% |
+| 9 | Revocation Checking (Tier 2) | 7 | 5 | 71% |
+| 10 | Authorization Verification (Tier 3) | 11 | 0 | 0% |
+| 11 | Brand and Business Logic (Tier 3) | 12 | 0 | 0% |
+| 12 | Callee Verification (Tier 3) | 14 | 0 | 0% |
+| 13 | SIP Contextual Alignment | 6 | 0 | 0% |
+| 14 | Caching and Efficiency | 8 | 5 | 63% |
+| 15 | Test Vectors | 14 | 6 | 43% |
+| 16 | API Routes and Deployment | 9 | 4 | 44% |
+| **TOTAL** | | **158** | **95** | **60%** |
+
+---
+
+## Spec §5 Verification Steps Mapping
+
+### §5.1 Verifying the Caller
+
+| Step | Spec Section | Phase | Status |
+|------|--------------|-------|--------|
+| Timing Analysis | §5.1.1-2.1 | 2, 3 | Done |
+| Contextual Alignment | §5.1.1-2.2 | 13 | Not Started |
+| Key Identification | §5.1.1-2.3 | 4 | Done |
+| Key State Retrieval | §5.1.1-2.4 | 7 | **Done** (OOBI+CESR) |
+| Signature Verification | §5.1.1-2.5 | 4, 7 | Done (Tier 1+2) |
+| Evidence Reference | §5.1.1-2.6 | 5 | Done |
+| Dossier Cache Check | §5.1.1-2.7 | 14 | Partial (key state cache done) |
+| Dossier Validation | §5.1.1-2.8 | 5, 8 | Partial |
+| Revocation Status | §5.1.1-2.9 | 9 | **Partial** (TEL client done, integration pending) |
+| Originating Party Auth | §5.1.1-2.10 | 10 | Not Started |
+| Phone Number Rights | §5.1.1-2.11 | 10 | Not Started |
+| Brand Attributes | §5.1.1-2.12 | 11 | Not Started |
+| Business Logic | §5.1.1-2.13 | 11 | Not Started |
+
+### §5.2 Verifying the Callee
+
+| Step | Spec Section | Phase | Status |
+|------|--------------|-------|--------|
+| All steps | §5.2-2.1 to §5.2-2.14 | 12 | Not Started |
 
 ---
 
@@ -241,10 +407,13 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-01-23 | Initial checklist |
-| 1.1 | 2026-01-23 | Fixed: ppt validation, error codes (9), 60s expiration layer, historical key state, most-compact-form SAID |
-| 2.0 | 2026-01-23 | Updated for v1.4 FINAL: 18 error codes, OOBI semantics (§4.1B), EdDSA mandatory/ES256 forbidden (§5.0-5.1), 300s default max age, header binding (§5.2), ACDC variants support, KERI versioning (§7.1), DI2I delegation (§7.2), freshness policy (§7.3), expanded test vectors |
+| 1.1 | 2026-01-23 | Fixed: ppt validation, error codes, 60s expiration layer, historical key state, most-compact-form SAID |
+| 2.0 | 2026-01-23 | Updated for v1.4 FINAL: 18 error codes, OOBI semantics, EdDSA mandatory, 300s default max age, header binding, ACDC variants, KERI versioning, DI2I delegation, freshness policy, expanded test vectors |
+| 3.0 | 2026-01-24 | Added Tier model. Added Phases 7-14 from spec §5 gap analysis. Marked Tier 1 (Phases 1-6) complete. Added §5 verification steps mapping. |
+| 3.1 | 2026-01-25 | Phase 7 updated: CESR parsing, KERI canonical serialization, live Provenant witness resolution. Added tasks 7.12-7.16. |
+| 3.2 | 2026-01-25 | Phase 9: TEL client 71% (tel_client.py). Phase 14: Caching 63% (cache.py). Overall 60% complete. |
 
 ---
 
-**Last Updated:** 2026-01-23
-**Next Review:** After Phase 1 completion
+**Last Updated:** 2026-01-25
+**Next Review:** After Phase 8 (ACDC verification) or remaining Phase 7/9 integration

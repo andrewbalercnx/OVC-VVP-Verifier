@@ -1,0 +1,61 @@
+{
+  "description": "Complete KEL: icp -> rot -> ixn",
+  "keripy_version": "2.0.0-dev5",
+  "keripy_commit": "1e2bf869faef77621cd75190aab7a93917c60d19",
+  "events": [
+    {
+      "v": "KERI10JSON000154_",
+      "t": "icp",
+      "d": "EO97yMHEAfX2Q0V20tzYscGaiwkYShJgyEhTCdWUrBhs",
+      "i": "DER2RcVO4AlODS6zPZgYuMexC0TRhYQEYCuhWio2tCZY",
+      "s": "0",
+      "kt": 1,
+      "k": [
+        "DER2RcVO4AlODS6zPZgYuMexC0TRhYQEYCuhWio2tCZY"
+      ],
+      "nt": 1,
+      "n": [
+        "EBh11V7ORpIEPAP_ouWaTs2phvB1lu2cturY8UufxBAv",
+        "EBXCnjObkg3e5oe4vhvh7f111XK3Z2u-AUzp21XxfElM"
+      ],
+      "bt": 0,
+      "b": [],
+      "c": [],
+      "a": []
+    },
+    {
+      "v": "KERI10JSON00015a_",
+      "t": "rot",
+      "d": "EK8AkOlY6tsRTbZAA2tarqMRfs9ravCpQuIFZTEqbn97",
+      "i": "DER2RcVO4AlODS6zPZgYuMexC0TRhYQEYCuhWio2tCZY",
+      "s": "1",
+      "p": "EO97yMHEAfX2Q0V20tzYscGaiwkYShJgyEhTCdWUrBhs",
+      "kt": 1,
+      "k": [
+        "DFsVGmBiLZ-VyzZ5QrBBp4s-3QAb3W9tHrzYR7brBUtv"
+      ],
+      "nt": 1,
+      "n": [
+        "EBXCnjObkg3e5oe4vhvh7f111XK3Z2u-AUzp21XxfElM"
+      ],
+      "bt": 0,
+      "br": [],
+      "ba": [],
+      "a": []
+    },
+    {
+      "v": "KERI10JSON0000cb_",
+      "t": "ixn",
+      "d": "ENCxElIIjuLG4tzFh9k-EKOkgxK2DpIoOVZ9H0BQaQ5n",
+      "i": "DER2RcVO4AlODS6zPZgYuMexC0TRhYQEYCuhWio2tCZY",
+      "s": "2",
+      "p": "EK8AkOlY6tsRTbZAA2tarqMRfs9ravCpQuIFZTEqbn97",
+      "a": []
+    }
+  ],
+  "canonical_bytes": [
+    "eyJ2IjoiS0VSSTEwSlNPTjAwMDE1NF8iLCJ0IjoiaWNwIiwiZCI6IkVPOTd5TUhFQWZYMlEwVjIwdHpZc2NHYWl3a1lTaEpneUVoVENkV1VyQmhzIiwiaSI6IkRFUjJSY1ZPNEFsT0RTNnpQWmdZdU1leEMwVFJoWVFFWUN1aFdpbzJ0Q1pZIiwicyI6IjAiLCJrdCI6MSwiayI6WyJERVIyUmNWTzRBbE9EUzZ6UFpnWXVNZXhDMFRSaFlRRVlDdWhXaW8ydENaWSJdLCJudCI6MSwibiI6WyJFQmgxMVY3T1JwSUVQQVBfb3VXYVRzMnBodkIxbHUyY3R1clk4VXVmeEJBdiIsIkVCWENuak9ia2czZTVvZTR2aHZoN2YxMTFYSzNaMnUtQVV6cDIxWHhmRWxNIl0sImJ0IjowLCJiIjpbXSwiYyI6W10sImEiOltdfQ==",
+    "eyJ2IjoiS0VSSTEwSlNPTjAwMDE1YV8iLCJ0Ijoicm90IiwiZCI6IkVLOEFrT2xZNnRzUlRiWkFBMnRhcnFNUmZzOXJhdkNwUXVJRlpURXFibjk3IiwiaSI6IkRFUjJSY1ZPNEFsT0RTNnpQWmdZdU1leEMwVFJoWVFFWUN1aFdpbzJ0Q1pZIiwicyI6IjEiLCJwIjoiRU85N3lNSEVBZlgyUTBWMjB0ellzY0dhaXdrWVNoSmd5RWhUQ2RXVXJCaHMiLCJrdCI6MSwiayI6WyJERnNWR21CaUxaLVZ5elo1UXJCQnA0cy0zUUFiM1c5dEhyellSN2JyQlV0diJdLCJudCI6MSwibiI6WyJFQlhDbmpPYmtnM2U1b2U0dmh2aDdmMTExWEszWjJ1LUFVenAyMVh4ZkVsTSJdLCJidCI6MCwiYnIiOltdLCJiYSI6W10sImEiOltdfQ==",
+    "eyJ2IjoiS0VSSTEwSlNPTjAwMDBjYl8iLCJ0IjoiaXhuIiwiZCI6IkVOQ3hFbElJanVMRzR0ekZoOWstRUtPa2d4SzJEcElvT1ZaOUgwQlFhUTVuIiwiaSI6IkRFUjJSY1ZPNEFsT0RTNnpQWmdZdU1leEMwVFJoWVFFWUN1aFdpbzJ0Q1pZIiwicyI6IjIiLCJwIjoiRUs4QWtPbFk2dHNSVGJaQUEydGFycU1SZnM5cmF2Q3BRdUlGWlRFcWJuOTciLCJhIjpbXX0="
+  ]
+}

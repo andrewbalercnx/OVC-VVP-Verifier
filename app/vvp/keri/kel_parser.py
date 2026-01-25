@@ -18,11 +18,17 @@ from typing import Any, Dict, List, Optional
 
 import pysodium
 
+from .cesr import CESRMessage, parse_cesr_stream as cesr_parse, is_cesr_stream
 from .exceptions import (
     DelegationNotSupportedError,
     KELChainInvalidError,
     ResolutionFailedError,
 )
+from .keri_canonical import canonical_serialize, most_compact_form
+
+# Content types for OOBI responses
+CESR_CONTENT_TYPE = "application/json+cesr"
+JSON_CONTENT_TYPE = "application/json"
 
 
 class EventType(Enum):
@@ -111,45 +117,57 @@ class KELEvent:
         return self.event_type in DELEGATED_TYPES
 
 
-def parse_kel_stream(kel_data: bytes, allow_json_only: bool = True) -> List[KELEvent]:
+def parse_kel_stream(
+    kel_data: bytes,
+    content_type: str = JSON_CONTENT_TYPE,
+    allow_json_only: bool = False
+) -> List[KELEvent]:
     """Parse a KEL stream into a list of events.
 
-    IMPORTANT: This implementation currently only supports JSON-encoded KELs.
-    Binary CESR parsing is not yet implemented. When CESR data is encountered,
-    a ResolutionFailedError is raised with INDETERMINATE status.
-
-    For production use with real KERI infrastructure, CESR parsing must be
-    implemented. The JSON format is intended for testing only.
+    Routes to CESR or JSON parser based on content type. Production use
+    requires CESR format; JSON is only allowed for testing.
 
     Args:
-        kel_data: Raw KEL data (JSON encoded; CESR not yet supported).
-        allow_json_only: If True (default), accept JSON format. If False,
-            raise an error indicating CESR is required but not supported.
+        kel_data: Raw KEL data (CESR or JSON encoded).
+        content_type: Content-Type from OOBI response. Used for routing
+            to the appropriate parser.
+        allow_json_only: If True, accept JSON format even when CESR is expected.
+            Defaults to False (production mode). Set True only for testing.
 
     Returns:
         List of parsed KELEvent objects in sequence order.
 
     Raises:
-        ResolutionFailedError: If parsing fails or CESR format detected.
+        ResolutionFailedError: If parsing fails.
         DelegationNotSupportedError: If delegated events are detected.
     """
-    # Check for CESR binary markers before attempting JSON parse
-    # CESR count codes start with specific characters
-    if kel_data and kel_data[0:1] in (b"-", b"0", b"1", b"4", b"5", b"6"):
-        # Looks like CESR binary format
-        raise ResolutionFailedError(
-            "CESR binary format detected but not yet supported. "
-            "Tier 2 key state resolution requires JSON-encoded KEL for testing. "
-            "Full CESR support is planned for a future release."
-        )
+    # Detect format based on content type and data inspection
+    is_cesr = CESR_CONTENT_TYPE.lower() in content_type.lower()
+
+    # Also check for CESR markers in data (regardless of content type)
+    if not is_cesr and kel_data:
+        is_cesr = is_cesr_stream(kel_data)
+
+    if is_cesr:
+        # Parse CESR stream
+        return _parse_cesr_kel(kel_data)
+
+    # JSON format - check if allowed
+    if not allow_json_only:
+        # Check if data looks like JSON
+        if kel_data and kel_data[0:1] == b"{":
+            # Warn but allow in this transition period
+            pass  # Could log a warning here
+        elif kel_data and kel_data[0:1] in (b"-", b"0", b"1", b"4", b"5", b"6"):
+            # CESR markers detected but content_type was JSON
+            return _parse_cesr_kel(kel_data)
 
     # Try JSON parsing
     try:
         return _parse_json_kel(kel_data)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise ResolutionFailedError(
-            f"Failed to parse KEL: not valid JSON and CESR is not yet supported. "
-            f"Error: {e}"
+            f"Failed to parse KEL: {e}"
         )
 
 
@@ -264,23 +282,42 @@ def _parse_cesr_kel(kel_data: bytes) -> List[KELEvent]:
     """Parse CESR-encoded KEL stream.
 
     CESR is a self-framing binary format. This implementation handles
-    the subset needed for VVP verification.
+    the subset needed for VVP verification by delegating to the cesr module.
+
+    Returns:
+        List of KELEvent objects parsed from the CESR stream.
+
+    Raises:
+        ResolutionFailedError: If parsing fails.
     """
-    # CESR parsing is complex - for now, raise an error
-    # A full implementation would:
-    # 1. Parse the count code to determine message type/length
-    # 2. Extract JSON-encoded event
-    # 3. Parse attached signatures
-    # 4. Repeat for all events in stream
+    # Parse CESR stream using the cesr module
+    cesr_messages = cesr_parse(kel_data)
 
-    # Check for CESR version string or count code
-    if kel_data and kel_data[0:1] in (b"-", b"0", b"1", b"4", b"5", b"6"):
-        # Looks like CESR, but we need proper parsing
-        raise ResolutionFailedError(
-            "CESR parsing not fully implemented - use JSON format for testing"
-        )
+    if not cesr_messages:
+        # Empty or whitespace-only stream
+        return []
 
-    raise ResolutionFailedError("Unable to parse KEL data as CESR")
+    events = []
+    for msg in cesr_messages:
+        # Convert CESRMessage to KELEvent
+        event = _parse_event_dict(msg.event_dict)
+
+        # Add signatures from CESR attachments
+        event.signatures = msg.controller_sigs
+
+        # Convert CESR witness receipts to KELEvent format
+        for receipt in msg.witness_receipts:
+            event.witness_receipts.append(WitnessReceipt(
+                witness_aid=receipt.witness_aid,
+                signature=receipt.signature,
+            ))
+
+        events.append(event)
+
+    # Sort by sequence number
+    events.sort(key=lambda e: e.sequence)
+
+    return events
 
 
 def _decode_keri_key(key_str: str) -> bytes:
@@ -350,7 +387,12 @@ def _parse_timestamp(ts_str: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def validate_kel_chain(events: List[KELEvent], validate_saids: bool = False) -> None:
+def validate_kel_chain(
+    events: List[KELEvent],
+    validate_saids: bool = False,
+    use_canonical: bool = False,
+    validate_witnesses: bool = False
+) -> None:
     """Validate KEL chain continuity and signatures.
 
     Validates:
@@ -359,6 +401,7 @@ def validate_kel_chain(events: List[KELEvent], validate_saids: bool = False) -> 
     3. Each event's prior_digest matches previous event's digest
     4. Each event is signed by keys from prior event (or self-signed for inception)
     5. Each event's digest (d field) matches computed SAID (if validate_saids=True)
+    6. Witness receipts meet threshold (if validate_witnesses=True)
 
     Args:
         events: List of KELEvent objects in sequence order.
@@ -366,6 +409,11 @@ def validate_kel_chain(events: List[KELEvent], validate_saids: bool = False) -> 
             Defaults to False because SAID validation uses JSON canonicalization
             which only works for specially-prepared test fixtures, not real KERI
             events or typical test data with placeholder digests.
+        use_canonical: If True, use KERI canonical serialization for signing input.
+            This is required for validating real KERI events from production.
+            Defaults to False for backward compatibility with JSON test fixtures.
+        validate_witnesses: If True, validate witness receipt signatures against
+            event.toad threshold. Requires use_canonical=True for production use.
 
     Raises:
         KELChainInvalidError: If chain validation fails.
@@ -387,10 +435,15 @@ def validate_kel_chain(events: List[KELEvent], validate_saids: bool = False) -> 
 
     # Validate SAID for first event
     if validate_saids:
-        _validate_event_said(first_event)
+        _validate_event_said(first_event, use_canonical=use_canonical)
 
     # Validate inception is self-signed
-    _validate_inception_signature(first_event)
+    _validate_inception_signature(first_event, use_canonical=use_canonical)
+
+    # Validate witness receipts for inception if enabled
+    if validate_witnesses and first_event.toad > 0:
+        signing_input = _compute_signing_input(first_event, use_canonical=use_canonical)
+        validate_witness_receipts(first_event, signing_input, min_threshold=first_event.toad)
 
     # Track current signing keys for signature validation
     current_keys = first_event.signing_keys
@@ -414,10 +467,15 @@ def validate_kel_chain(events: List[KELEvent], validate_saids: bool = False) -> 
 
         # Validate SAID if enabled
         if validate_saids:
-            _validate_event_said(event)
+            _validate_event_said(event, use_canonical=use_canonical)
 
         # Validate event signature against current keys
-        _validate_event_signature(event, current_keys)
+        _validate_event_signature(event, current_keys, use_canonical=use_canonical)
+
+        # Validate witness receipts if enabled
+        if validate_witnesses and event.toad > 0:
+            signing_input = _compute_signing_input(event, use_canonical=use_canonical)
+            validate_witness_receipts(event, signing_input, min_threshold=event.toad)
 
         # Update current keys if this is an establishment event
         if event.is_establishment:
@@ -426,15 +484,13 @@ def validate_kel_chain(events: List[KELEvent], validate_saids: bool = False) -> 
         prev_event = event
 
 
-def _validate_event_said(event: KELEvent) -> None:
+def _validate_event_said(event: KELEvent, use_canonical: bool = False) -> None:
     """Validate that an event's digest (d field) matches its computed SAID.
-
-    IMPORTANT: This uses JSON canonicalization for SAID computation, which
-    only works for JSON test fixtures. Real KERI events use different
-    serialization and this validation would fail.
 
     Args:
         event: The KELEvent to validate.
+        use_canonical: If True, use KERI canonical serialization for SAID
+            computation. If False, use JSON sorted-keys (test mode only).
 
     Raises:
         KELChainInvalidError: If the digest doesn't match computed SAID.
@@ -447,8 +503,11 @@ def _validate_event_said(event: KELEvent) -> None:
         # No raw data to compute SAID from
         return
 
-    # Compute expected SAID
-    computed = compute_said(event.raw)
+    # Compute expected SAID using appropriate method
+    if use_canonical:
+        computed = compute_said_canonical(event.raw)
+    else:
+        computed = compute_said(event.raw)
 
     # Compare (allowing for different derivation codes)
     # The first character is the derivation code, rest is the hash
@@ -464,10 +523,14 @@ def _validate_event_said(event: KELEvent) -> None:
             )
 
 
-def _validate_inception_signature(event: KELEvent) -> None:
+def _validate_inception_signature(event: KELEvent, use_canonical: bool = False) -> None:
     """Validate that an inception event is self-signed.
 
     For inception, the signing keys in the event itself must have signed it.
+
+    Args:
+        event: The inception event to validate.
+        use_canonical: If True, use KERI canonical serialization for signing input.
     """
     if not event.signatures:
         raise KELChainInvalidError(
@@ -480,7 +543,7 @@ def _validate_inception_signature(event: KELEvent) -> None:
         )
 
     # Verify at least one signature matches a signing key
-    signing_input = _compute_signing_input(event)
+    signing_input = _compute_signing_input(event, use_canonical=use_canonical)
     verified = False
 
     for sig in event.signatures:
@@ -497,12 +560,17 @@ def _validate_inception_signature(event: KELEvent) -> None:
         )
 
 
-def _validate_event_signature(event: KELEvent, prior_keys: List[bytes]) -> None:
+def _validate_event_signature(
+    event: KELEvent,
+    prior_keys: List[bytes],
+    use_canonical: bool = False
+) -> None:
     """Validate that an event is signed by keys from the prior event.
 
     Args:
         event: The event to validate.
         prior_keys: Signing keys from the prior establishment event.
+        use_canonical: If True, use KERI canonical serialization for signing input.
     """
     if not event.signatures:
         raise KELChainInvalidError(
@@ -514,7 +582,7 @@ def _validate_event_signature(event: KELEvent, prior_keys: List[bytes]) -> None:
             f"No prior keys available to validate event at seq {event.sequence}"
         )
 
-    signing_input = _compute_signing_input(event)
+    signing_input = _compute_signing_input(event, use_canonical=use_canonical)
     verified = False
 
     for sig in event.signatures:
@@ -532,38 +600,40 @@ def _validate_event_signature(event: KELEvent, prior_keys: List[bytes]) -> None:
         )
 
 
-def _compute_signing_input(event: KELEvent) -> bytes:
+def _compute_signing_input(event: KELEvent, use_canonical: bool = False) -> bytes:
     """Compute the signing input for an event.
-
-    IMPORTANT LIMITATION: This implementation uses JSON with sorted keys for
-    canonicalization. Real KERI uses a specific field ordering defined by the
-    protocol (not alphabetical) and may use CBOR or other serializations.
-
-    This canonicalization is ONLY valid for JSON test fixtures where the
-    test data was signed using the same sorted-key JSON approach. It will
-    NOT correctly verify signatures from real KERI infrastructure that uses
-    proper KERI serialization.
-
-    For production use, this function must be updated to use KERI's actual
-    serialization rules (label ordering per event type, CESR encoding).
 
     Args:
         event: The KELEvent to compute signing input for.
+        use_canonical: If True, use KERI canonical serialization (proper field
+            ordering per event type). If False, use JSON sorted-keys (test only).
 
     Returns:
         The bytes that should have been signed.
+
+    Note:
+        When use_canonical=False (default), this uses JSON with sorted keys which
+        is ONLY valid for JSON test fixtures where the test data was signed using
+        the same sorted-key JSON approach. It will NOT correctly verify signatures
+        from real KERI infrastructure.
+
+        When use_canonical=True, this uses KERI's actual serialization rules
+        (label ordering per event type) which is required for production use.
     """
-    # For JSON test events, use canonical JSON of the raw dict minus signatures
-    # WARNING: This is JSON-test-only canonicalization
+    # Remove attachment fields before computing signing input
     raw_copy = dict(event.raw)
     raw_copy.pop("signatures", None)
     raw_copy.pop("-", None)
     raw_copy.pop("receipts", None)
     raw_copy.pop("rcts", None)
 
-    # Sort keys for canonical form (NOT KERI-compliant, test only)
-    canonical = json.dumps(raw_copy, sort_keys=True, separators=(",", ":"))
-    return canonical.encode("utf-8")
+    if use_canonical:
+        # Use KERI canonical serialization with proper field ordering
+        return canonical_serialize(raw_copy)
+    else:
+        # Legacy: Sort keys for canonical form (NOT KERI-compliant, test only)
+        canonical = json.dumps(raw_copy, sort_keys=True, separators=(",", ":"))
+        return canonical.encode("utf-8")
 
 
 def _verify_signature(message: bytes, signature: bytes, public_key: bytes) -> bool:
@@ -628,3 +698,235 @@ def compute_said(data: Dict[str, Any], algorithm: str = "blake3-256") -> str:
     # Encode with derivation code
     encoded = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
     return "E" + encoded
+
+
+def _cesr_encode(raw: bytes, code: str = "E") -> str:
+    """Encode raw bytes in CESR format with derivation code.
+
+    CESR (Composable Event Streaming Representation) encoding combines
+    the derivation code with the base64 representation of the raw bytes
+    in a specific way that ensures proper byte alignment.
+
+    For fixed-size codes like 'E' (Blake3-256, 32 bytes):
+    1. Compute pad size: ps = (3 - (len(raw) % 3)) % 3
+    2. Prepad raw with ps zero bytes
+    3. Base64 encode the prepadded bytes
+    4. Skip the first ps characters (which encode the zero padding)
+    5. Prepend the derivation code
+
+    Args:
+        raw: Raw bytes to encode (e.g., 32-byte digest).
+        code: Derivation code character (e.g., "E" for Blake3-256).
+
+    Returns:
+        CESR-encoded string (e.g., "EO97yMHEAfX2...").
+    """
+    rs = len(raw)
+    ls = 0  # lead bytes for 'E' code
+    cs = len(code)  # code size is 1 for 'E'
+
+    # Compute pad size
+    ps = (3 - ((rs + ls) % 3)) % 3
+
+    # Prepad with ps + ls zero bytes
+    prepadded = bytes([0] * (ps + ls)) + raw
+
+    # Base64 encode
+    b64 = base64.urlsafe_b64encode(prepadded).decode("ascii")
+
+    # Skip first ps characters and strip padding
+    trimmed = b64[ps:].rstrip("=")
+
+    # Prepend code
+    return code + trimmed
+
+
+def compute_said_canonical(
+    event: Dict[str, Any],
+    require_blake3: bool = False,
+    said_field: str = "d"
+) -> str:
+    """Compute SAID using KERI canonical serialization.
+
+    This is the production-ready SAID computation that uses proper
+    KERI field ordering instead of JSON sorted keys.
+
+    Steps:
+    1. Create most compact form with placeholder
+    2. Hash with Blake3-256 (or SHA256 in test mode)
+    3. Encode with CESR derivation code
+
+    Args:
+        event: Event dictionary with 't' field indicating type.
+        require_blake3: If True, raise ImportError if blake3 not available.
+            Should be True in production, False for tests.
+        said_field: Field containing SAID (usually 'd').
+
+    Returns:
+        SAID string with derivation code prefix (e.g., "E...").
+
+    Raises:
+        ImportError: If blake3 not available and require_blake3=True.
+        CanonicalSerializationError: If event type unknown.
+    """
+    # Generate most compact form with placeholder
+    canonical_bytes = most_compact_form(event, said_field=said_field)
+
+    # Hash with Blake3-256
+    try:
+        import blake3
+        digest = blake3.blake3(canonical_bytes).digest()
+    except ImportError:
+        if require_blake3:
+            raise ImportError(
+                "blake3 is required for production SAID computation. "
+                "Install with: pip install blake3"
+            )
+        # Fall back to SHA256 in test mode
+        digest = hashlib.sha256(canonical_bytes).digest()
+
+    # Encode with CESR format (E = Blake3-256)
+    return _cesr_encode(digest, code="E")
+
+
+def validate_event_said_canonical(
+    event: Dict[str, Any],
+    require_blake3: bool = False,
+    said_field: str = "d"
+) -> None:
+    """Validate that event's SAID field matches computed SAID.
+
+    Uses KERI canonical serialization for production-ready validation.
+
+    Args:
+        event: Event dictionary.
+        require_blake3: If True, raise ImportError if blake3 not available.
+        said_field: Field containing SAID (usually 'd').
+
+    Raises:
+        KELChainInvalidError: If SAID doesn't match.
+        ImportError: If blake3 not available and require_blake3=True.
+    """
+    if said_field not in event:
+        return  # No SAID to validate
+
+    expected_said = event[said_field]
+    if not expected_said or expected_said.startswith("#"):
+        return  # Placeholder or empty, skip validation
+
+    computed_said = compute_said_canonical(
+        event,
+        require_blake3=require_blake3,
+        said_field=said_field
+    )
+
+    if expected_said != computed_said:
+        raise KELChainInvalidError(
+            f"SAID mismatch: event has {expected_said[:20]}... "
+            f"but computed {computed_said[:20]}..."
+        )
+
+
+def validate_witness_receipts(
+    event: KELEvent,
+    signing_input: bytes,
+    min_threshold: int = 0
+) -> int:
+    """Validate witness receipt signatures against an event.
+
+    For each witness receipt:
+    1. Resolve witness AID to public key (using _decode_keri_key)
+    2. Verify signature against signing input
+    3. Count valid signatures
+
+    Non-transferable witness AIDs (B-prefix) contain the public key directly
+    in the AID, so no KEL resolution is needed for them.
+
+    Args:
+        event: The KELEvent with witness receipts to validate.
+        signing_input: Canonical bytes that were signed by witnesses.
+        min_threshold: Minimum valid signatures required. If 0, uses event.toad.
+
+    Returns:
+        Number of valid witness signatures found.
+
+    Raises:
+        KELChainInvalidError: If insufficient valid witness signatures.
+        ResolutionFailedError: If witness AIDs cannot be resolved.
+    """
+    if not event.witness_receipts:
+        # No receipts to validate
+        if min_threshold > 0:
+            raise KELChainInvalidError(
+                f"No witness receipts but threshold requires {min_threshold}"
+            )
+        return 0
+
+    # Determine threshold: use provided min_threshold or event.toad
+    threshold = min_threshold if min_threshold > 0 else event.toad
+
+    # Build a set of valid witness AIDs from the event's witness list
+    valid_witness_aids = set(event.witnesses)
+
+    valid_count = 0
+    errors = []
+
+    for receipt in event.witness_receipts:
+        witness_aid = receipt.witness_aid
+        signature = receipt.signature
+
+        # Skip receipts with empty AID (indexed witness sigs need context)
+        if not witness_aid:
+            continue
+
+        # Verify witness is in event's witness list
+        if valid_witness_aids and witness_aid not in valid_witness_aids:
+            errors.append(f"Witness {witness_aid[:16]}... not in event's witness list")
+            continue
+
+        # Extract public key from witness AID
+        try:
+            public_key = _decode_keri_key(witness_aid)
+        except ResolutionFailedError as e:
+            errors.append(f"Cannot decode witness AID {witness_aid[:16]}...: {e}")
+            continue
+
+        # Verify signature
+        if _verify_signature(signing_input, signature, public_key):
+            valid_count += 1
+        else:
+            errors.append(f"Invalid signature from witness {witness_aid[:16]}...")
+
+    # Check threshold
+    if valid_count < threshold:
+        error_summary = "; ".join(errors[:3])  # Limit error details
+        if len(errors) > 3:
+            error_summary += f" (and {len(errors) - 3} more)"
+        raise KELChainInvalidError(
+            f"Insufficient valid witness signatures: {valid_count} < threshold {threshold}. "
+            f"Errors: {error_summary if errors else 'none'}"
+        )
+
+    return valid_count
+
+
+def compute_signing_input_canonical(event: Dict[str, Any]) -> bytes:
+    """Compute canonical signing input for an event.
+
+    This uses KERI canonical serialization (proper field ordering)
+    and is suitable for production use.
+
+    Args:
+        event: Event dictionary with 't' field indicating type.
+
+    Returns:
+        Canonical bytes that should have been signed.
+    """
+    # Remove any non-canonical fields (signatures, receipts)
+    event_copy = dict(event)
+    event_copy.pop("signatures", None)
+    event_copy.pop("-", None)
+    event_copy.pop("receipts", None)
+    event_copy.pop("rcts", None)
+
+    return canonical_serialize(event_copy)

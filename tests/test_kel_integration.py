@@ -431,17 +431,21 @@ class TestFeatureFlag:
     """Test Tier 2 feature flag gating."""
 
     @pytest.mark.asyncio
-    async def test_tier2_disabled_by_default(self):
-        """Tier 2 resolution is blocked when feature flag is disabled."""
-        # Without _allow_test_mode=True and with default config, resolution should fail
-        # The default config has TIER2_KEL_RESOLUTION_ENABLED=False
-        with pytest.raises(ResolutionFailedError, match="disabled"):
-            await resolve_key_state(
-                kid="http://example.com/oobi/BAID",
-                reference_time=datetime(2024, 6, 15),
-                min_witnesses=0,
-                _allow_test_mode=False  # Explicitly disable test mode
-            )
+    async def test_tier2_disabled_when_flag_false(self):
+        """Tier 2 resolution is blocked when feature flag is explicitly disabled."""
+        # When TIER2_KEL_RESOLUTION_ENABLED=False and _allow_test_mode=False,
+        # resolution should fail with a clear error message
+        with patch(
+            "app.core.config.TIER2_KEL_RESOLUTION_ENABLED",
+            False
+        ):
+            with pytest.raises(ResolutionFailedError, match="disabled"):
+                await resolve_key_state(
+                    kid="http://example.com/oobi/BAID",
+                    reference_time=datetime(2024, 6, 15),
+                    min_witnesses=0,
+                    _allow_test_mode=False  # Explicitly disable test mode
+                )
 
     @pytest.mark.asyncio
     async def test_tier2_allowed_with_test_mode(self):

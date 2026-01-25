@@ -1,8 +1,18 @@
-Review: Phase 7 - KERI Key State Resolution (Revision 2)
-Verdict: APPROVED
+## Plan Review: Phase 7b - CESR Parsing (Revision 1)
 
-Findings
-- [Low]: `validate_kel_chain()` now supports optional SAID validation, but production behavior still defaults to JSON-test-only. Consider documenting the intended production default once CESR/canonicalization land. `app/vvp/keri/kel_parser.py:380`
+**Verdict:** APPROVED
 
-Recommendations
-- Add a short note in `app/core/config.py` or the Phase 7 docs about when to flip `TIER2_KEL_RESOLUTION_ENABLED` as CESR support becomes available.
+### Required Changes Verification
+- Canonical alignment with keripy is now explicitly verified via `tests/test_canonical_keripy_compat.py`.
+- Witness receipt signature validation is fully specified as Component 6 and covered by a dedicated test file.
+
+### Additional Improvements Assessment
+- Blake3 is required in production; SHA256 is clearly test-only.
+- JSON parsing is strictly gated (`allow_json_only=False` by default).
+- Fixture generation is automated with a keripy-based script and is first in the implementation order.
+
+### Findings
+- [Low]: Ensure the keripy fixture generator pins a specific keripy version to avoid silent canonicalization drift across releases. `PLAN.md:465`
+
+### Final Recommendations
+- Consider adding a “keripy version lock” note to the exit criteria for reproducibility.

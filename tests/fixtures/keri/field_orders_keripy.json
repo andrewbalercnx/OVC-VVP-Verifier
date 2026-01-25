@@ -1,0 +1,196 @@
+{
+  "description": "Field orderings per event type from keripy",
+  "keripy_version": "2.0.0-dev5",
+  "keripy_commit": "1e2bf869faef77621cd75190aab7a93917c60d19",
+  "protocol_version": "1.0",
+  "field_orders": {
+    "icp": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "s",
+      "kt",
+      "k",
+      "nt",
+      "n",
+      "bt",
+      "b",
+      "c",
+      "a"
+    ],
+    "rot": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "s",
+      "p",
+      "kt",
+      "k",
+      "nt",
+      "n",
+      "bt",
+      "br",
+      "ba",
+      "a"
+    ],
+    "ixn": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "s",
+      "p",
+      "a"
+    ],
+    "dip": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "s",
+      "kt",
+      "k",
+      "nt",
+      "n",
+      "bt",
+      "b",
+      "c",
+      "a",
+      "di"
+    ],
+    "drt": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "s",
+      "p",
+      "kt",
+      "k",
+      "nt",
+      "n",
+      "bt",
+      "br",
+      "ba",
+      "a"
+    ],
+    "rct": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "s"
+    ],
+    "qry": [
+      "v",
+      "t",
+      "d",
+      "dt",
+      "r",
+      "rr",
+      "q"
+    ],
+    "rpy": [
+      "v",
+      "t",
+      "d",
+      "dt",
+      "r",
+      "a"
+    ],
+    "pro": [
+      "v",
+      "t",
+      "d",
+      "dt",
+      "r",
+      "rr",
+      "q"
+    ],
+    "bar": [
+      "v",
+      "t",
+      "d",
+      "dt",
+      "r",
+      "a"
+    ],
+    "exn": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "rp",
+      "p",
+      "dt",
+      "r",
+      "q",
+      "a",
+      "e"
+    ],
+    "vcp": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "ii",
+      "s",
+      "c",
+      "bt",
+      "b",
+      "n"
+    ],
+    "vrt": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "p",
+      "s",
+      "bt",
+      "br",
+      "ba"
+    ],
+    "iss": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "s",
+      "ri",
+      "dt"
+    ],
+    "rev": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "s",
+      "ri",
+      "p",
+      "dt"
+    ],
+    "bis": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "ii",
+      "s",
+      "ra",
+      "dt"
+    ],
+    "brv": [
+      "v",
+      "t",
+      "d",
+      "i",
+      "s",
+      "p",
+      "ra",
+      "dt"
+    ]
+  }
+}
