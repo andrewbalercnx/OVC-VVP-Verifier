@@ -153,14 +153,14 @@ class TestWitnessValidationIntegration:
                 signature=bytes.fromhex(r["signature_hex"]),
             ))
 
-        # Validate
-        valid_count = validate_witness_receipts(
+        # Validate - returns list of validated AIDs
+        validated_aids = validate_witness_receipts(
             parsed_event,
             canonical_bytes,
             min_threshold=fixture["toad"]
         )
 
-        assert valid_count >= fixture["toad"]
+        assert len(validated_aids) >= fixture["toad"]
 
 
 class TestChainValidationIntegration:

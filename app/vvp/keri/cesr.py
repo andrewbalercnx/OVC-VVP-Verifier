@@ -500,3 +500,68 @@ def is_cesr_stream(data: bytes) -> bool:
             pass
 
     return False
+
+
+def decode_pss_signature(cesr_sig: str) -> bytes:
+    """Decode PASSporT-Specific Signature from VVP CESR format.
+
+    Per VVP §6.3.1, PASSporT signatures use CESR encoding with derivation
+    codes, NOT standard JWS base64url. The common format is:
+
+    - 0B prefix: Ed25519 indexed signature (index 1)
+    - 0A prefix: Ed25519 indexed signature (index 0)
+    - AA prefix: Ed25519 non-indexed signature
+
+    Format: <2-char code><86-char base64url signature> = 88 chars total
+    The 86 chars encode 64 bytes (512 bits) of Ed25519 signature.
+
+    Args:
+        cesr_sig: CESR-encoded signature string (88 characters).
+
+    Returns:
+        Raw 64-byte Ed25519 signature.
+
+    Raises:
+        ResolutionFailedError: If format is invalid (maps to PASSPORT_PARSE_FAILED).
+    """
+    import base64
+
+    if not cesr_sig:
+        raise ResolutionFailedError("Empty CESR signature")
+
+    # Valid CESR Ed25519 signature is exactly 88 characters
+    if len(cesr_sig) != 88:
+        raise ResolutionFailedError(
+            f"Invalid CESR signature length: {len(cesr_sig)}, expected 88"
+        )
+
+    # Extract derivation code (first 2 characters)
+    code = cesr_sig[:2]
+
+    # Validate derivation code
+    valid_codes = ("0A", "0B", "0C", "0D", "AA")
+    if code not in valid_codes:
+        raise ResolutionFailedError(
+            f"Invalid CESR signature derivation code: {code}, "
+            f"expected one of {valid_codes}"
+        )
+
+    # Extract base64url-encoded signature (remaining 86 characters)
+    sig_b64 = cesr_sig[2:]
+
+    # CESR uses URL-safe base64 without padding
+    # Add padding for standard base64 decode
+    padded = sig_b64 + "=" * (-len(sig_b64) % 4)
+
+    try:
+        sig_bytes = base64.urlsafe_b64decode(padded)
+    except Exception as e:
+        raise ResolutionFailedError(f"Invalid CESR signature encoding: {e}")
+
+    # Ed25519 signature is exactly 64 bytes
+    if len(sig_bytes) != 64:
+        raise ResolutionFailedError(
+            f"Invalid signature length after decode: {len(sig_bytes)}, expected 64"
+        )
+
+    return sig_bytes

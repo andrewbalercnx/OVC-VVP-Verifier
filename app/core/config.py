@@ -91,3 +91,34 @@ TIER2_KEL_RESOLUTION_ENABLED: bool = True
 # Default: True for dev, set to False in production deployments
 # Controls whether /admin endpoint returns configuration data
 ADMIN_ENDPOINT_ENABLED: bool = os.getenv("ADMIN_ENDPOINT_ENABLED", "true").lower() == "true"
+
+
+def _parse_trusted_roots() -> frozenset[str]:
+    """Parse comma-separated trusted root AIDs from environment.
+
+    Per VVP §5.1-7, the verifier MUST accept a configured root of trust.
+    This determines which AIDs anchor the ACDC credential chain.
+
+    Supports multiple roots for different governance frameworks:
+    - GLEIF External (production vLEI ecosystem)
+    - QVI roots (Qualified vLEI Issuers)
+    - Test roots (development/staging)
+
+    Environment variable format:
+        VVP_TRUSTED_ROOT_AIDS=EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao,EQq7xL2...
+
+    Returns:
+        frozenset of trusted root AID strings.
+    """
+    env_value = os.getenv("VVP_TRUSTED_ROOT_AIDS", "")
+    if env_value:
+        # Parse comma-separated AIDs, strip whitespace, filter empty
+        return frozenset(aid.strip() for aid in env_value.split(",") if aid.strip())
+    # Default: GLEIF External AID for production vLEI ecosystem
+    return frozenset({"EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao"})
+
+
+# Trusted root AIDs for ACDC chain validation
+# Per VVP §5.1-7: verifier MUST accept root of trust
+# ACDC credentials must chain back to one of these AIDs
+TRUSTED_ROOT_AIDS: frozenset[str] = _parse_trusted_roots()

@@ -2,12 +2,14 @@
 
 Tier 1 implementation: Direct verification using public key embedded in KERI AID.
 Tier 2 implementation: Resolve key state at reference time T via KEL lookup.
+
+Note: pysodium is imported lazily inside functions to:
+1. Avoid import errors when libsodium is not available at module load time
+2. Enable testing of code paths that don't require signature verification
 """
 
 from datetime import datetime, timezone
 from typing import Optional
-
-import pysodium
 
 from app.vvp.passport import Passport
 from .key_parser import parse_kid_to_verkey
@@ -41,6 +43,7 @@ def verify_passport_signature(passport: Passport) -> None:
     signing_input = f"{passport.raw_header}.{passport.raw_payload}".encode("ascii")
 
     # Step 3: Verify signature using pysodium (libsodium)
+    import pysodium
     try:
         # pysodium.crypto_sign_verify_detached raises ValueError if invalid
         pysodium.crypto_sign_verify_detached(
@@ -124,6 +127,7 @@ async def verify_passport_signature_tier2(
 
     # Verify signature against all signing keys from the resolved state
     # At least one key must validate the signature
+    import pysodium
     signature_valid = False
 
     for signing_key in key_state.signing_keys:

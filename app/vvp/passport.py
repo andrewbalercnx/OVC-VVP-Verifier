@@ -225,7 +225,36 @@ def _decode_jwt_part(encoded: str, part_name: str) -> dict[str, Any]:
 
 
 def _decode_signature(encoded: str) -> bytes:
-    """Decode a base64url-encoded signature to bytes."""
+    """Decode a PASSporT signature to bytes.
+
+    VVP PASSporT signatures may use either:
+    1. CESR encoding with derivation code prefix (88 chars for Ed25519)
+    2. Standard JWS base64url encoding
+
+    Per VVP §6.3.1, PSS (PASSporT-Specific Signatures) use CESR format.
+    This function auto-detects the format based on length and prefix.
+
+    Args:
+        encoded: Signature string (CESR or base64url).
+
+    Returns:
+        Raw signature bytes.
+
+    Raises:
+        PassportError: If decoding fails.
+    """
+    from app.vvp.keri.cesr import decode_pss_signature
+    from app.vvp.keri.exceptions import ResolutionFailedError
+
+    # Check for CESR-encoded PSS signature (88 chars with valid code prefix)
+    cesr_codes = ("0A", "0B", "0C", "0D", "AA")
+    if len(encoded) == 88 and encoded[:2] in cesr_codes:
+        try:
+            return decode_pss_signature(encoded)
+        except ResolutionFailedError as e:
+            raise PassportError.parse_failed(f"CESR signature decode failed: {e}")
+
+    # Standard JWS base64url encoding
     try:
         padded = encoded + "=" * (-len(encoded) % 4)
         return base64.urlsafe_b64decode(padded)

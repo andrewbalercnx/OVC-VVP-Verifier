@@ -831,13 +831,21 @@ def validate_witness_receipts(
     event: KELEvent,
     signing_input: bytes,
     min_threshold: int = 0
-) -> int:
+) -> List[str]:
     """Validate witness receipt signatures against an event.
 
-    For each witness receipt:
-    1. Resolve witness AID to public key (using _decode_keri_key)
-    2. Verify signature against signing input
-    3. Count valid signatures
+    Per VVP §7.3, witness receipts must be cryptographically validated,
+    not just presence-checked. This function:
+    1. Resolves witness AID to public key (non-transferable AIDs embed the key)
+    2. Verifies Ed25519 signature against signing input
+    3. Counts valid signatures and compares to threshold
+    4. Returns list of validated witness AIDs
+
+    Threshold Determination (per KERI spec):
+    - Use event's 'bt' (witness threshold) field if present and non-zero
+    - Otherwise, use provided min_threshold if non-zero
+    - Otherwise, default to majority: ceil(len(witnesses) / 2)
+    - Do NOT hardcode 2-of-3
 
     Non-transferable witness AIDs (B-prefix) contain the public key directly
     in the AID, so no KEL resolution is needed for them.
@@ -845,30 +853,47 @@ def validate_witness_receipts(
     Args:
         event: The KELEvent with witness receipts to validate.
         signing_input: Canonical bytes that were signed by witnesses.
-        min_threshold: Minimum valid signatures required. If 0, uses event.toad.
+        min_threshold: Minimum valid signatures required. If 0, computes from
+            event.toad or witness majority.
 
     Returns:
-        Number of valid witness signatures found.
+        List of witness AIDs whose signatures validated successfully.
 
     Raises:
-        KELChainInvalidError: If insufficient valid witness signatures.
+        KELChainInvalidError: If insufficient valid witness signatures (KERI_STATE_INVALID).
         ResolutionFailedError: If witness AIDs cannot be resolved.
     """
+    import math
+
     if not event.witness_receipts:
         # No receipts to validate
+        # Compute threshold to check if we should fail
         if min_threshold > 0:
             raise KELChainInvalidError(
                 f"No witness receipts but threshold requires {min_threshold}"
             )
-        return 0
+        if event.toad > 0:
+            raise KELChainInvalidError(
+                f"No witness receipts but event toad requires {event.toad}"
+            )
+        return []
 
-    # Determine threshold: use provided min_threshold or event.toad
-    threshold = min_threshold if min_threshold > 0 else event.toad
+    # Determine threshold (priority: explicit param > event.toad > majority)
+    if min_threshold > 0:
+        threshold = min_threshold
+    elif event.toad > 0:
+        threshold = event.toad
+    elif event.witnesses:
+        # Default to majority: ceil(len(witnesses) / 2)
+        threshold = math.ceil(len(event.witnesses) / 2)
+    else:
+        # No witnesses and no threshold - nothing to validate
+        threshold = 0
 
     # Build a set of valid witness AIDs from the event's witness list
     valid_witness_aids = set(event.witnesses)
 
-    valid_count = 0
+    validated_aids: List[str] = []
     errors = []
 
     for receipt in event.witness_receipts:
@@ -893,21 +918,21 @@ def validate_witness_receipts(
 
         # Verify signature
         if _verify_signature(signing_input, signature, public_key):
-            valid_count += 1
+            validated_aids.append(witness_aid)
         else:
             errors.append(f"Invalid signature from witness {witness_aid[:16]}...")
 
     # Check threshold
-    if valid_count < threshold:
+    if len(validated_aids) < threshold:
         error_summary = "; ".join(errors[:3])  # Limit error details
         if len(errors) > 3:
             error_summary += f" (and {len(errors) - 3} more)"
         raise KELChainInvalidError(
-            f"Insufficient valid witness signatures: {valid_count} < threshold {threshold}. "
+            f"Insufficient valid witness signatures: {len(validated_aids)} < threshold {threshold}. "
             f"Errors: {error_summary if errors else 'none'}"
         )
 
-    return valid_count
+    return validated_aids
 
 
 def compute_signing_input_canonical(event: Dict[str, Any]) -> bytes:

@@ -1,5 +1,71 @@
 # VVP Verifier Change Log
 
+## Phase 10: Tier 2 Completion - ACDC & Crypto Finalization
+
+**Date:** 2026-01-25
+**Commit:** (pending)
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/core/config.py` | Modified | Added `TRUSTED_ROOT_AIDS` with multi-root support via env var |
+| `app/vvp/keri/cesr.py` | Modified | Added `decode_pss_signature()` for CESR PSS signatures |
+| `app/vvp/keri/kel_parser.py` | Modified | Enhanced `validate_witness_receipts()` |
+| `app/vvp/keri/kel_resolver.py` | Modified | Added `_fetch_and_validate_oobi()` for §4.2 OOBI KEL validation |
+| `app/vvp/keri/oobi.py` | Modified | Added `validate_oobi_is_kel()` |
+| `app/vvp/keri/signature.py` | Modified | Moved pysodium to lazy import inside functions |
+| `app/vvp/passport.py` | Modified | Integrated CESR PSS signature auto-detection in `_decode_signature()` |
+| `app/vvp/acdc/__init__.py` | Created | Package exports for ACDC verification |
+| `app/vvp/acdc/exceptions.py` | Created | ACDCError hierarchy (Parse, SAID, Signature, Chain) |
+| `app/vvp/acdc/models.py` | Created | ACDC and ACDCChainResult dataclasses |
+| `app/vvp/acdc/parser.py` | Created | ACDC parsing and SAID validation with Blake3 |
+| `app/vvp/acdc/verifier.py` | Created | Chain validation, schema validation, credential type validation |
+| `tests/test_cesr_pss.py` | Created | 8 tests for PSS signature decoding |
+| `tests/test_witness_receipts.py` | Created | 8 tests for witness validation |
+| `tests/test_acdc.py` | Created | 38 tests for ACDC verification |
+| `tests/test_trusted_roots.py` | Created | 7 tests for root configuration |
+| `tests/test_passport.py` | Modified | 6 new tests for CESR signature integration |
+| `app/Documentation/PLAN_Phase10.md` | Created | Archived implementation plan |
+
+### Summary
+
+Completed Tier 2 verification components: ACDC chain validation, CESR PSS signature decoding, OOBI KEL validation, and trusted root configuration.
+
+**Key Changes:**
+
+1. **Root of Trust Configuration (§5.1-7):**
+   - `TRUSTED_ROOT_AIDS` frozenset from `VVP_TRUSTED_ROOT_AIDS` env var
+   - Default: GLEIF External AID for production vLEI ecosystem
+   - Supports multiple comma-separated roots
+
+2. **PSS CESR Signature Decoding (§6.3.1):**
+   - `decode_pss_signature()` handles 0A/0B/0C/0D/AA prefixed CESR signatures
+   - Auto-detection in `_decode_signature()` with fallback to base64url
+
+3. **OOBI KEL Validation (§4.2):**
+   - `_fetch_and_validate_oobi()` validates KEL structure during resolution
+   - Checks: KEL data present, inception event first, chain integrity
+
+4. **ACDC Chain Validation (§6.3.x):**
+   - `validate_credential_chain()` walks edges to trusted root
+   - Credential type-specific validation: APE, DE, TNAlloc
+   - `pss_signer_aid` parameter for DE signer binding per §6.3.4
+   - Schema SAID validation against known vLEI governance schemas
+
+5. **Lazy pysodium Import:**
+   - Moved import inside functions to avoid load-time errors
+
+**Spec Compliance:**
+- §4.2: OOBI must resolve to valid KEL
+- §5.1-7: Root of trust configuration
+- §6.3.1: PSS CESR signature format
+- §6.3.3: APE credential validation (vetting edge required)
+- §6.3.4: DE credential validation (PSS signer must match delegate)
+- §6.3.6: TNAlloc credential validation (TN subset of parent)
+
+---
+
 ## Phase 9.4: TEL Resolution Architecture Fix
 
 **Date:** 2026-01-25

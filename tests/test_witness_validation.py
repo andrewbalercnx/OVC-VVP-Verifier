@@ -175,27 +175,27 @@ class TestValidateWitnessReceipts:
         """Event with sufficient valid receipts passes validation."""
         event, canonical_bytes = event_with_receipts
 
-        # Should not raise
-        valid_count = validate_witness_receipts(event, canonical_bytes, min_threshold=2)
+        # Should not raise - returns list of validated AIDs
+        validated_aids = validate_witness_receipts(event, canonical_bytes, min_threshold=2)
 
-        assert valid_count >= 2
+        assert len(validated_aids) >= 2
 
     def test_exceeds_threshold(self, event_with_receipts):
         """3 valid receipts with threshold 2 passes."""
         event, canonical_bytes = event_with_receipts
 
-        valid_count = validate_witness_receipts(event, canonical_bytes, min_threshold=2)
+        validated_aids = validate_witness_receipts(event, canonical_bytes, min_threshold=2)
 
-        assert valid_count == 3  # All 3 receipts are valid
+        assert len(validated_aids) == 3  # All 3 receipts are valid
 
     def test_uses_event_toad_when_threshold_zero(self, event_with_receipts):
         """When min_threshold=0, uses event.toad."""
         event, canonical_bytes = event_with_receipts
 
         # min_threshold=0 means use event.toad (which is 2)
-        valid_count = validate_witness_receipts(event, canonical_bytes, min_threshold=0)
+        validated_aids = validate_witness_receipts(event, canonical_bytes, min_threshold=0)
 
-        assert valid_count >= event.toad
+        assert len(validated_aids) >= event.toad
 
     def test_insufficient_valid_receipts_raises(self, event_with_receipts, fixture):
         """Insufficient valid receipts raises KELChainInvalidError."""
@@ -250,9 +250,9 @@ class TestValidateWitnessReceipts:
         )
 
         canonical_bytes = bytes.fromhex(fixture["canonical_bytes_hex"])
-        valid_count = validate_witness_receipts(event, canonical_bytes, min_threshold=0)
+        validated_aids = validate_witness_receipts(event, canonical_bytes, min_threshold=0)
 
-        assert valid_count == 0
+        assert len(validated_aids) == 0
 
     def test_no_receipts_with_nonzero_threshold_raises(self, fixture):
         """Event with no receipts but threshold > 0 raises error."""
@@ -293,9 +293,9 @@ class TestValidateWitnessReceipts:
         event.witness_receipts = event.witness_receipts[:2] + [unknown_receipt]
 
         # Should still pass with 2 valid (unknown is skipped)
-        valid_count = validate_witness_receipts(event, canonical_bytes, min_threshold=2)
+        validated_aids = validate_witness_receipts(event, canonical_bytes, min_threshold=2)
 
-        assert valid_count == 2
+        assert len(validated_aids) == 2
 
 
 class TestComputeSigningInputCanonical:

@@ -916,3 +916,99 @@ class TestEdgeCases:
         jwt = make_jwt(valid_header(), payload)
         passport = parse_passport(jwt)
         assert passport.payload.call_reason == "business-inquiry"
+
+
+# =============================================================================
+# CESR PSS Signature Integration Tests
+# =============================================================================
+
+class TestCESRSignature:
+    """Tests for CESR-encoded PASSporT-Specific Signature (PSS) handling."""
+
+    def test_cesr_0b_signature_decoded(self):
+        """CESR 0B-prefixed signature is decoded correctly."""
+        header = b64url_encode(valid_header())
+        payload = b64url_encode(valid_payload())
+
+        # Create valid CESR 0B signature (88 chars: 2 prefix + 86 base64url)
+        # Using a placeholder signature (all A's = all zeros)
+        cesr_sig = "0B" + "A" * 86
+
+        jwt = f"{header}.{payload}.{cesr_sig}"
+        passport = parse_passport(jwt)
+
+        # Should have decoded to 64 bytes
+        assert len(passport.signature) == 64
+        assert isinstance(passport.signature, bytes)
+
+    def test_cesr_0a_signature_decoded(self):
+        """CESR 0A-prefixed signature is decoded correctly."""
+        header = b64url_encode(valid_header())
+        payload = b64url_encode(valid_payload())
+        cesr_sig = "0A" + "A" * 86
+
+        jwt = f"{header}.{payload}.{cesr_sig}"
+        passport = parse_passport(jwt)
+
+        assert len(passport.signature) == 64
+
+    def test_cesr_aa_signature_decoded(self):
+        """CESR AA-prefixed (non-indexed) signature is decoded correctly."""
+        header = b64url_encode(valid_header())
+        payload = b64url_encode(valid_payload())
+        cesr_sig = "AA" + "A" * 86
+
+        jwt = f"{header}.{payload}.{cesr_sig}"
+        passport = parse_passport(jwt)
+
+        assert len(passport.signature) == 64
+
+    def test_standard_base64_signature_still_works(self):
+        """Standard JWS base64url signature still works."""
+        header = b64url_encode(valid_header())
+        payload = b64url_encode(valid_payload())
+
+        # Standard base64url signature (not 88 chars)
+        import os
+        raw_sig = os.urandom(64)
+        std_sig = base64.urlsafe_b64encode(raw_sig).rstrip(b"=").decode()
+
+        jwt = f"{header}.{payload}.{std_sig}"
+        passport = parse_passport(jwt)
+
+        assert passport.signature == raw_sig
+
+    def test_cesr_signature_real_format(self):
+        """CESR signature with realistic base64url content."""
+        header = b64url_encode(valid_header())
+        payload = b64url_encode(valid_payload())
+
+        # Create a realistic CESR signature from random bytes
+        import os
+        raw_sig = os.urandom(64)
+        sig_b64 = base64.urlsafe_b64encode(raw_sig).decode().rstrip("=")
+        # Ensure exactly 86 chars (padding may vary)
+        if len(sig_b64) < 86:
+            sig_b64 = sig_b64 + "A" * (86 - len(sig_b64))
+        elif len(sig_b64) > 86:
+            sig_b64 = sig_b64[:86]
+        cesr_sig = "0B" + sig_b64
+
+        jwt = f"{header}.{payload}.{cesr_sig}"
+        passport = parse_passport(jwt)
+
+        assert len(passport.signature) == 64
+
+    def test_non_cesr_88_char_signature(self):
+        """88-char signature without valid CESR prefix uses base64 decode."""
+        header = b64url_encode(valid_header())
+        payload = b64url_encode(valid_payload())
+
+        # 88 chars but not a valid CESR prefix (starts with 'XX')
+        non_cesr_sig = "XX" + "A" * 86
+
+        jwt = f"{header}.{payload}.{non_cesr_sig}"
+        # Should fall through to standard base64 decode
+        passport = parse_passport(jwt)
+        # The signature will decode as base64url (with some padding added)
+        assert passport.signature is not None
