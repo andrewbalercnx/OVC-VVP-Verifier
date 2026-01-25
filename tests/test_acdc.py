@@ -19,6 +19,10 @@ from app.vvp.acdc import (
     ACDCChainInvalid,
 )
 
+# Known vLEI LE schema SAID for tests that need valid LE credentials
+# Per §6.3.5, APE vetting credentials must use known LE schemas
+KNOWN_LE_SCHEMA = next(iter(KNOWN_SCHEMA_SAIDS.get("LE", frozenset())), "")
+
 
 class TestParseAcdc:
     """Tests for ACDC parsing."""
@@ -388,7 +392,7 @@ class TestCredentialTypeValidation:
             version="",
             said=le_said,
             issuer_aid=root_aid,
-            schema_said="",
+            schema_said=KNOWN_LE_SCHEMA,  # Use known vLEI LE schema per §6.3.5
             attributes={"LEI": "1234567890", "i": ape_issuer},  # Issuee binding
             raw={}
         )
@@ -605,7 +609,7 @@ class TestCredentialTypeValidation:
             version="",
             said="E" + "V" * 43,
             issuer_aid=root_aid,
-            schema_said="",
+            schema_said=KNOWN_LE_SCHEMA,  # Use known vLEI LE schema per §6.3.5
             attributes={"LEI": "1234567890", "i": "D" + "I" * 43},  # LE type with issuee
             raw={}
         )
@@ -690,7 +694,7 @@ class TestEdgeSemantics:
             version="",
             said=le_said,
             issuer_aid="D" + "R" * 43,
-            schema_said="",
+            schema_said=KNOWN_LE_SCHEMA,  # Use known vLEI LE schema per §6.3.5
             attributes={"LEI": "1234567890"},  # LE type
             raw={}
         )
@@ -1318,11 +1322,12 @@ class TestIssueeBinding:
         trusted_roots = {root_aid}
 
         # Root credential (issued by GLEIF) - has issuee as it's going to child
+        # Use known LE schema to pass §6.3.5 vetting validation
         root_acdc = ACDC(
             version="",
             said="E" + "R" * 43,
             issuer_aid=root_aid,
-            schema_said="E" + "S" * 43,
+            schema_said=KNOWN_LE_SCHEMA,  # Use known vLEI LE schema per §6.3.5
             attributes={"LEI": "1234567890", "i": child_issuer},  # Has issuee
             raw={}
         )
@@ -1349,3 +1354,133 @@ class TestIssueeBinding:
                 trusted_roots,
                 dossier_acdcs
             )
+
+
+class TestSprint17ApeVettingValidation:
+    """Sprint 17 tests for APE vetting edge and schema validation.
+
+    Per VVP §6.3.3: APE credentials MUST reference vetting LE credential.
+    Per VVP §6.3.5: Vetting credential MUST conform to LE vLEI schema.
+    """
+
+    def test_ape_vetting_edge_required_even_for_root_issuer(self):
+        """APE from root issuer still requires vetting edge target per §6.3.3.
+
+        APE is detected by having a vetting edge, so we test that even with
+        is_root=True, the edge target must be present (not relaxed for APE).
+        """
+        from app.vvp.acdc.verifier import validate_edge_semantics
+
+        # APE credential with vetting edge pointing to missing target
+        ape_cred = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "R" * 43,  # Root issuer
+            schema_said="",
+            edges={"vetting": {"n": "E" + "X" * 43}},  # Edge exists but target missing
+            attributes={"name": "Test APE"},
+            raw={}
+        )
+
+        # Even with is_root=True, APE vetting edge target should be required
+        # (this is the fix from Sprint 17 - skip_for_root excludes APE)
+        with pytest.raises(ACDCChainInvalid, match="not found in dossier"):
+            validate_edge_semantics(ape_cred, {}, is_root=True)
+
+    def test_ape_vetting_credential_requires_known_le_schema(self, monkeypatch):
+        """APE vetting LE with unknown schema raises in strict mode per §6.3.5."""
+        from app.vvp.acdc.verifier import validate_edge_semantics
+        import app.core.config
+
+        # Ensure strict mode is enabled
+        monkeypatch.setattr(app.core.config, "SCHEMA_VALIDATION_STRICT", True)
+
+        le_said = "E" + "L" * 43
+        ape_said = "E" + "A" * 43
+
+        # LE credential with UNKNOWN schema SAID
+        le_cred = ACDC(
+            version="",
+            said=le_said,
+            issuer_aid="D" + "R" * 43,
+            schema_said="E" + "X" * 43,  # Unknown schema
+            attributes={"LEI": "1234567890"},  # LE type
+            raw={}
+        )
+
+        # APE credential with vetting edge to LE
+        ape_cred = ACDC(
+            version="",
+            said=ape_said,
+            issuer_aid="D" + "I" * 43,
+            schema_said="",
+            edges={"vetting": {"n": le_said}},
+            raw={}
+        )
+
+        dossier_acdcs = {le_said: le_cred}
+
+        # With strict schema validation, unknown LE schema should raise
+        with pytest.raises(ACDCChainInvalid, match="not in known vLEI LE schemas"):
+            validate_edge_semantics(ape_cred, dossier_acdcs)
+
+    def test_ape_vetting_credential_known_schema_passes(self, monkeypatch):
+        """APE vetting LE with known vLEI schema passes validation per §6.3.5."""
+        from app.vvp.acdc.verifier import validate_edge_semantics
+        from app.vvp.acdc.schema_registry import KNOWN_SCHEMA_SAIDS
+        import app.core.config
+
+        # Ensure strict mode is enabled
+        monkeypatch.setattr(app.core.config, "SCHEMA_VALIDATION_STRICT", True)
+
+        # Get known LE schema SAID
+        known_le_schemas = KNOWN_SCHEMA_SAIDS.get("LE", frozenset())
+        if not known_le_schemas:
+            pytest.skip("No known LE schemas in registry")
+        known_le_schema = next(iter(known_le_schemas))
+
+        le_said = "E" + "L" * 43
+        ape_said = "E" + "A" * 43
+
+        # LE credential with KNOWN schema SAID
+        le_cred = ACDC(
+            version="",
+            said=le_said,
+            issuer_aid="D" + "R" * 43,
+            schema_said=known_le_schema,  # Known vLEI LE schema
+            attributes={"LEI": "1234567890"},  # LE type
+            raw={}
+        )
+
+        # APE credential with vetting edge to LE
+        ape_cred = ACDC(
+            version="",
+            said=ape_said,
+            issuer_aid="D" + "I" * 43,
+            schema_said="",
+            edges={"vetting": {"n": le_said}},
+            raw={}
+        )
+
+        dossier_acdcs = {le_said: le_cred}
+
+        # With strict schema validation, known LE schema should pass
+        warnings = validate_edge_semantics(ape_cred, dossier_acdcs)
+        assert warnings == []
+
+    def test_ape_vetting_target_must_be_le_type(self):
+        """APE vetting target that isn't LE type raises per §6.3.3."""
+        from app.vvp.acdc.verifier import validate_ape_vetting_target
+
+        # Create a credential that's detected as TNAlloc (not LE)
+        wrong_type = ACDC(
+            version="",
+            said="E" + "T" * 43,
+            issuer_aid="D" + "R" * 43,
+            schema_said="",
+            attributes={"tn": ["+1555*"]},  # TNAlloc type
+            raw={}
+        )
+
+        with pytest.raises(ACDCChainInvalid, match="must be LE type"):
+            validate_ape_vetting_target(wrong_type)

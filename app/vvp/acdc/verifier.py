@@ -13,6 +13,7 @@ from .schema_registry import (
     KNOWN_SCHEMA_SAIDS,
     get_known_schemas,
     has_governance_schemas,
+    is_known_schema,
 )
 
 log = logging.getLogger(__name__)
@@ -168,7 +169,9 @@ def validate_edge_semantics(
 
         # Validate edge presence and target type
         if found_edge is None:
-            if required and not is_root:
+            # APE vetting edge is ALWAYS required per §6.3.3, even for root issuers
+            skip_for_root = is_root and cred_type != "APE"
+            if required and not skip_for_root:
                 raise ACDCChainInvalid(
                     f"{cred_type} credential {acdc.said[:20]}... missing required edge: "
                     f"{description}"
@@ -177,7 +180,9 @@ def validate_edge_semantics(
                 warnings.append(f"Optional edge not found: {description}")
         elif found_target is None:
             # Edge exists but target is not in dossier
-            if required and not is_root:
+            # APE vetting edge is ALWAYS required per §6.3.3, even for root issuers
+            skip_for_root = is_root and cred_type != "APE"
+            if required and not skip_for_root:
                 raise ACDCChainInvalid(
                     f"{cred_type} credential {acdc.said[:20]}... edge '{found_edge}' "
                     f"references credential not found in dossier"
@@ -193,7 +198,44 @@ def validate_edge_semantics(
                     f"{target_types}"
                 )
 
+            # Additional APE vetting target validation per §6.3.5
+            if cred_type == "APE" and found_edge.lower() in name_patterns:
+                from app.core import config
+                validate_ape_vetting_target(found_target, strict_schema=config.SCHEMA_VALIDATION_STRICT)
+
     return warnings
+
+
+def validate_ape_vetting_target(
+    vetting_target: ACDC,
+    strict_schema: bool = True
+) -> None:
+    """Validate APE vetting credential per §6.3.3 and §6.3.5.
+
+    Per VVP §6.3.3, APE credentials MUST reference a vetting LE credential.
+    Per VVP §6.3.5, that vetting credential MUST conform to the vLEI LE schema.
+
+    Args:
+        vetting_target: The credential referenced by APE vetting edge.
+        strict_schema: If True, require known vLEI LE schema SAID.
+
+    Raises:
+        ACDCChainInvalid: If vetting credential is invalid.
+    """
+    # Validate credential type is LE
+    if vetting_target.credential_type != "LE":
+        raise ACDCChainInvalid(
+            f"APE vetting credential must be LE type per §6.3.3, "
+            f"got {vetting_target.credential_type}"
+        )
+
+    # Validate schema SAID against known vLEI LE schemas (§6.3.5)
+    if strict_schema and has_governance_schemas("LE"):
+        if not is_known_schema("LE", vetting_target.schema_said):
+            raise ACDCChainInvalid(
+                f"APE vetting credential schema {vetting_target.schema_said[:20]}... "
+                f"not in known vLEI LE schemas per §6.3.5"
+            )
 
 
 async def resolve_issuer_key_state(issuer_aid: str, oobi_url: Optional[str] = None):

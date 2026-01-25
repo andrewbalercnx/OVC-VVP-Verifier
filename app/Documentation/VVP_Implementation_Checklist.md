@@ -1,10 +1,10 @@
 # VVP Verifier Implementation Checklist
 
-**Document Version:** 3.7
+**Document Version:** 3.9
 **Specification Version:** v1.4 FINAL + draft-hardman-verifiable-voice-protocol §5
 **Created:** 2026-01-23
 **Last Updated:** 2026-01-25
-**Status:** Tier 1 Complete, Tier 2 In Progress (68% overall)
+**Status:** Tier 1 Complete, Tier 2 Complete, Tier 3 In Progress (79% overall)
 
 ---
 
@@ -22,8 +22,8 @@
 | Tier | Description | Status |
 |------|-------------|--------|
 | **Tier 1** | Direct verification: parse, validate structure, verify embedded keys | Complete |
-| **Tier 2** | Full KERI: KEL resolution, historical key state, witness validation | In Progress |
-| **Tier 3** | Authorization: TNAlloc, delegation, brand credentials, business logic | Not Started |
+| **Tier 2** | Full KERI: KEL resolution, historical key state, witness validation | Mostly Complete (90%) |
+| **Tier 3** | Authorization: TNAlloc, delegation, brand credentials, business logic | In Progress (Phase 10 complete) |
 
 ---
 
@@ -234,25 +234,25 @@ The following VVP spec requirements are **out of scope** for this verification A
 
 | # | Task | Status | Commit | Comments |
 |---|------|--------|--------|----------|
-| 10.1 | Create `app/vvp/authorization/` module structure | [ ] | | |
-| 10.2 | Extract originating party AID from passport | [ ] | | From `kid` |
-| 10.3 | Extract accountable party AID from dossier root | [ ] | | Issuer of identity credential |
-| 10.4 | **Case A:** No delegation - verify orig party = accountable party | [ ] | | Per §5.1.1-2.10 |
-| 10.5 | **Case B:** With delegation - verify delegation credential chain | [ ] | | Per §5.1.1-2.10, §7.2 |
-| 10.6 | Locate TNAlloc credential in dossier | [ ] | | Per §5.1.1-2.11 |
-| 10.7 | Compare `orig` field to TNAlloc credential | [ ] | | Phone number rights |
-| 10.8 | Verify accountable party has right to originate | [ ] | | Per §5.1.1-2.11 |
-| 10.9 | Add `caller_authorized` claim to tree | [ ] | | New claim node |
-| 10.10 | Add `tn_rights_valid` claim to tree | [ ] | | New claim node |
-| 10.11 | Unit tests for authorization | [ ] | | |
-| 10.12 | Verify APE includes vetting credential for AP | [ ] | | Per VVP §6.3.3 - **MUST** |
-| 10.13 | If no delegation: verify AP AID = OP AID (identical) | [ ] | | Per VVP §5.1-9 - **MUST** |
-| 10.14 | If delegation: verify DE includes delegated signer credential | [ ] | | Per VVP §6.3.4 - **MUST** |
-| 10.15 | Verify TNAlloc includes JL to parent TNAlloc (except regulator) | [ ] | | Per VVP §6.3.6 - **MUST** |
-| 10.16 | Verify PSS signer matches OP AID (not OSP) | [ ] | | Per VVP §6.3.4 - **MUST** |
-| 10.17 | Verify OP is issuee of vetting OR delegated signer credential | [ ] | | Per VVP §5.1-9 - **MUST** |
-| 10.18 | Validate `kid` AID is single-sig; require DE when not legal entity AID | [ ] | | Per VVP §4.2 - **MUST** |
-| 10.19 | Validate vetting credential conforms to LE vLEI schema | [ ] | | Per VVP §6.3.5 - reference type implies schema/governance - **MUST** |
+| 10.1 | Create `app/vvp/authorization/` module structure | [x] | Sprint 15 | Created `authorization.py` |
+| 10.2 | Extract originating party AID from passport | [x] | Sprint 15 | From `kid` via `pss_signer_aid` |
+| 10.3 | Extract accountable party AID from dossier root | [x] | Sprint 15 | APE issuee |
+| 10.4 | **Case A:** No delegation - verify orig party = accountable party | [x] | Sprint 15 | Per §5.1.1-2.10 |
+| 10.5 | **Case B:** With delegation - verify delegation credential chain | [x] | Sprint 16 | Per §5.1.1-2.10, §7.2 |
+| 10.6 | Locate TNAlloc credential in dossier | [x] | Sprint 15 | Per §5.1.1-2.11 |
+| 10.7 | Compare `orig` field to TNAlloc credential | [x] | Sprint 15 | Phone number rights with issuee binding |
+| 10.8 | Verify accountable party has right to originate | [x] | Sprint 15 | Via TNAlloc bound to accountable party |
+| 10.9 | Add `caller_authorized` claim to tree | [x] | Sprint 15 | `authorization_valid` claim node |
+| 10.10 | Add `tn_rights_valid` claim to tree | [x] | Sprint 15 | Under `authorization_valid` |
+| 10.11 | Unit tests for authorization | [x] | Sprint 15-16 | 45 authorization tests |
+| 10.12 | Verify APE includes vetting credential for AP | [x] | Sprint 17 | Per VVP §6.3.3 - APE vetting edge always required |
+| 10.13 | If no delegation: verify AP AID = OP AID (identical) | [x] | Sprint 15 | Per VVP §5.1-9 - Case A validation |
+| 10.14 | If delegation: verify DE includes delegated signer credential | [x] | Sprint 16 | Per VVP §6.3.4 |
+| 10.15 | Verify TNAlloc includes JL to parent TNAlloc (except regulator) | [x] | Sprint 14 | Per VVP §6.3.6 - edge semantics |
+| 10.16 | Verify PSS signer matches OP AID (not OSP) | [x] | Sprint 15 | Per VVP §6.3.4 - DE issuee binding |
+| 10.17 | Verify OP is issuee of vetting OR delegated signer credential | [x] | Sprint 16 | Per VVP §5.1-9 |
+| 10.18 | Validate `kid` AID is single-sig; require DE when not legal entity AID | [x] | Sprint 17 | Per VVP §4.2 - Only B/D prefixes accepted |
+| 10.19 | Validate vetting credential conforms to LE vLEI schema | [x] | Sprint 17 | Per VVP §6.3.5 - `validate_ape_vetting_target()` |
 
 ---
 
@@ -415,14 +415,14 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 | 7 | KEL Key State Resolution (Tier 2) | 17 | 16 | 94% |
 | 8 | ACDC Signature Verification (Tier 2) | 14 | 10 | 71% |
 | 9 | Revocation Checking (Tier 2) | 7 | 7 | 100% |
-| 10 | Authorization Verification (Tier 3) | 19 | 0 | 0% |
+| 10 | Authorization Verification (Tier 3) | 19 | 19 | 100% |
 | 11 | Brand and Business Logic (Tier 3) | 17 | 0 | 0% |
 | 12 | Callee Verification (Tier 3) | 15 | 0 | 0% |
 | 13 | SIP Contextual Alignment | 6 | 0 | 0% |
 | 14 | Caching and Efficiency | 8 | 5 | 63% |
 | 15 | Test Vectors | 14 | 6 | 43% |
 | 16 | API Routes and Deployment | 9 | 4 | 44% |
-| **TOTAL** | | **182** | **124** | **68%** |
+| **TOTAL** | | **182** | **143** | **79%** |
 
 ---
 
@@ -470,8 +470,9 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 | 3.6 | 2026-01-25 | Reviewer re-review: Added 2 more items. Phase 3: +1 (SHAKEN E.164 format). Phase 12: +1 (unknown claims ignored). Added "Scope Exclusions and Policy Deviations" section documenting SIP out-of-scope and exp 300s policy with justification. Total 179 items (54% complete). |
 | 3.7 | 2026-01-25 | VVP spec review corrections: Fixed 4.2 AID prefix definitions (B=non-transferable, D=transferable per §6.2.3). Added 3.17 (PSS CESR signature decoding per §6.3.1). Added 10.19 (vetting credential LE vLEI schema validation per §6.3.5). Added 1.9 (root of trust configuration per §5.1-7). Updated exp policy section to reflect VVP compliance (300s max is spec-compliant, not deviation). Total 182 items (53% complete). |
 | 3.8 | 2026-01-25 | Sprint 12 completion: Phase 1 (1.9 root AIDs), Phase 3 (3.14-3.17 PASSporT validation complete), Phase 7 (7.16-7.17 witness sigs and OOBI KEL), Phase 8 (8.1-8.5, 8.7, 8.10, 8.12-8.14 ACDC verification). Total 182 items (68% complete). |
+| 3.9 | 2026-01-25 | Sprint 17: Phase 10 complete (19/19). Authorization verification finished. 10.12 APE vetting edge always required. 10.18 single-sig enforcement documented. 10.19 vetting credential LE schema validation via `validate_ape_vetting_target()`. Total 182 items (79% complete). |
 
 ---
 
 **Last Updated:** 2026-01-25
-**Next Review:** After Phase 8 (ACDC verification) or Phase 10 (Authorization)
+**Next Review:** After Phase 11 (Brand and Business Logic) or Phase 12 (Callee Verification)

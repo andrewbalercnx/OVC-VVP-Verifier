@@ -14,8 +14,12 @@ from .exceptions import ResolutionFailedError
 
 
 # KERI derivation codes for Ed25519 (from keripy MtrDex)
-# B = Ed25519 transferable (can rotate)
-# D = Ed25519 non-transferable (cannot rotate)
+# Per VVP §4.2, kid MUST be a single-sig AID. The B and D prefixes
+# are the only single-sig Ed25519 KERI codes per KERI §6.2.3:
+#   B = Ed25519 non-transferable (single-sig, cannot rotate)
+#   D = Ed25519 transferable (single-sig, can rotate)
+# Multi-sig AIDs (prefixes E, F, M, etc.) are rejected, satisfying
+# checklist item 10.18 requirements.
 ED25519_CODES = frozenset({"B", "D"})
 
 

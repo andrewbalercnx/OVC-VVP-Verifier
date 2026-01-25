@@ -1,5 +1,61 @@
 # VVP Verifier Change Log
 
+## Sprint 17: APE Vetting Edge & Schema Validation
+
+**Date:** 2026-01-25
+**Commit:** `pending`
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/vvp/acdc/verifier.py` | Modified | Fixed is_root bypass for APE vetting edges; added `validate_ape_vetting_target()` |
+| `app/vvp/keri/key_parser.py` | Modified | Added documentation for §4.2 single-sig AID enforcement |
+| `tests/test_acdc.py` | Modified | Added 4 new tests for APE vetting validation, added `KNOWN_LE_SCHEMA` constant |
+| `app/Documentation/VVP_Implementation_Checklist.md` | Modified | Phase 10 100% complete, overall 79% |
+
+### Summary
+
+Completed remaining MUST requirements in Phase 10 (Authorization Verification) per VVP spec §6.3.3, §4.2, and §6.3.5.
+
+**Key Changes:**
+
+1. **APE Vetting Edge Always Required (§6.3.3):**
+   - Fixed `validate_edge_semantics()` to not skip required edge checks for APE credentials
+   - Previous code allowed `is_root=True` to bypass vetting edge requirement
+   - APE credentials MUST have vetting edge → LE credential, even when issued by trusted root
+
+2. **APE Vetting Target Validation (§6.3.3, §6.3.5):**
+   - Added `validate_ape_vetting_target()` function
+   - Validates vetting target credential type is LE (not TNAlloc, DE, etc.)
+   - Validates vetting LE credential uses known vLEI schema SAID
+   - Respects `SCHEMA_VALIDATION_STRICT` config flag
+
+3. **Single-Sig AID Documentation (§4.2):**
+   - Added comprehensive documentation to `key_parser.py`
+   - Only B/D prefixes accepted (Ed25519 single-sig codes)
+   - Multi-sig AIDs (E, F, M prefixes) rejected
+   - Item 10.18 already enforced, now documented
+
+4. **Test Updates:**
+   - Added `KNOWN_LE_SCHEMA` constant for test fixtures
+   - Updated 4 existing tests to use known LE schema SAID
+   - Added 4 new Sprint 17 tests for APE vetting validation
+
+### Checklist Items Completed
+
+- 10.12: APE must include vetting edge → LE credential
+- 10.18: kid AID single-sig validation (already enforced, documented)
+- 10.19: Vetting credential must conform to LE vLEI schema
+
+### Test Results
+
+```
+752 passed, 2 skipped in 4.89s
+```
+
+---
+
 ## Sprint 16: Delegation Authorization (Case B)
 
 **Date:** 2026-01-25
