@@ -238,3 +238,77 @@ async def proxy_fetch(req: ProxyFetchRequest):
         return {"success": False, "error": f"Request failed: {str(e)}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+class CredentialGraphRequest(BaseModel):
+    """Request to build credential graph from dossier."""
+    dossier: dict  # Raw dossier data with 'acdcs' array
+    revocation_status: dict | None = None  # Optional SAID -> status mapping
+
+
+@app.post("/credential-graph")
+async def credential_graph(req: CredentialGraphRequest):
+    """Build a credential graph from dossier ACDCs for visualization.
+
+    Returns a graph structure with nodes (credentials) and edges (relationships)
+    suitable for rendering as a directed graph in the UI.
+
+    The graph includes:
+    - Credential nodes from the dossier
+    - Synthetic root nodes for trusted issuers
+    - Edges showing credential relationships (vetting, delegation, issued_by)
+    - Layer information for hierarchical visualization
+    """
+    from app.core.config import TRUSTED_ROOT_AIDS
+    from app.vvp.acdc import (
+        ACDC,
+        CredentialStatus,
+        build_credential_graph,
+        credential_graph_to_dict,
+        parse_acdc,
+    )
+
+    try:
+        # Parse ACDCs from dossier
+        dossier_acdcs: dict[str, ACDC] = {}
+        acdcs_data = req.dossier.get("acdcs", [])
+
+        if not acdcs_data:
+            return {"success": False, "error": "No ACDCs found in dossier"}
+
+        for acdc_data in acdcs_data:
+            try:
+                acdc = parse_acdc(acdc_data)
+                dossier_acdcs[acdc.said] = acdc
+            except Exception as e:
+                log.warning(f"Failed to parse ACDC: {e}")
+                continue
+
+        if not dossier_acdcs:
+            return {"success": False, "error": "No valid ACDCs parsed from dossier"}
+
+        # Parse revocation status if provided
+        revocation: dict[str, CredentialStatus] | None = None
+        if req.revocation_status:
+            revocation = {}
+            for said, status_str in req.revocation_status.items():
+                try:
+                    revocation[said] = CredentialStatus(status_str)
+                except ValueError:
+                    pass
+
+        # Build the graph
+        graph = build_credential_graph(
+            dossier_acdcs=dossier_acdcs,
+            trusted_roots=set(TRUSTED_ROOT_AIDS),
+            revocation_status=revocation,
+        )
+
+        return {
+            "success": True,
+            "graph": credential_graph_to_dict(graph),
+        }
+
+    except Exception as e:
+        log.error(f"Failed to build credential graph: {e}")
+        return {"success": False, "error": str(e)}

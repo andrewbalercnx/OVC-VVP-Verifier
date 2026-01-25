@@ -42,6 +42,15 @@ from .verifier import (
     validate_tnalloc_credential,
     verify_acdc_signature,
 )
+from .graph import (
+    CredentialGraph,
+    CredentialNode,
+    CredentialEdge,
+    CredentialStatus,
+    ResolutionSource,
+    build_credential_graph,
+    credential_graph_to_dict,
+)
 
 __all__ = [
     # Models
@@ -60,6 +69,14 @@ __all__ = [
     "validate_tnalloc_credential",
     "validate_schema_said",
     "KNOWN_SCHEMA_SAIDS",
+    # Graph visualization
+    "CredentialGraph",
+    "CredentialNode",
+    "CredentialEdge",
+    "CredentialStatus",
+    "ResolutionSource",
+    "build_credential_graph",
+    "credential_graph_to_dict",
     # Exceptions
     "ACDCError",
     "ACDCParseError",
