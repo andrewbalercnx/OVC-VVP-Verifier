@@ -3,7 +3,7 @@
 ## Sprint 21: ACDC Variant Support (Phase 8.9 / §1.4)
 
 **Date:** 2026-01-26
-**Commit:** TBD
+**Commit:** 5727fb2
 
 ### Files Changed
 
