@@ -7,6 +7,7 @@ import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import JSONResponse
@@ -627,8 +628,19 @@ async def ui_fetch_dossier(
     evd_url: str = Form(...),
     kid_url: str = Form(""),
 ):
-    """Fetch dossier and return HTML fragment with credentials."""
+    """Fetch dossier and return HTML fragment with credentials.
+
+    Uses Sprint 21/22 view-model path for enhanced credential display:
+    - Collapsible attribute sections with tooltips
+    - Formatted dates, booleans, arrays
+    - Redaction masking for partial disclosure
+    - Edge link navigation
+    - Inline revocation status from dossier TEL data
+    """
     from app.vvp.dossier.parser import parse_dossier
+    from app.vvp.acdc import parse_acdc
+    from app.vvp.ui.credential_viewmodel import build_credential_card_vm
+    from app.vvp.keri.tel_client import TELClient, CredentialStatus
 
     try:
         # Fetch raw dossier bytes
@@ -640,34 +652,70 @@ async def ui_fetch_dossier(
         # Use the existing CESR-aware dossier parser
         nodes, signatures = parse_dossier(raw_bytes)
 
-        # Convert ACDCNode objects to dicts for template rendering
-        acdcs = []
+        # Collect all SAIDs for edge availability checking
+        all_saids = {node.said for node in nodes}
+
+        # Parse TEL data from dossier for revocation status
+        tel_client = TELClient(timeout=2.0)
+        revocation_cache: dict[str, dict] = {}
         for node in nodes:
-            acdc = node.raw.copy() if node.raw else {}
-            acdc["d"] = node.said
-            acdc["i"] = node.issuer
-            acdc["s"] = node.schema
+            try:
+                result = tel_client.parse_dossier_tel(
+                    dossier_data=raw_text,
+                    credential_said=node.said,
+                    registry_said=node.raw.get("ri") if node.raw else None,
+                )
+                if result.status != CredentialStatus.UNKNOWN:
+                    revocation_cache[node.said] = {
+                        "status": result.status.value,
+                        "checked_at": datetime.now(timezone.utc).isoformat(),
+                        "source": result.source or "dossier",
+                        "error": result.error,
+                    }
+            except Exception as e:
+                log.debug(f"TEL parse failed for {node.said[:16]}: {e}")
 
-            # Infer credential type from attributes
-            attrs = node.attributes if isinstance(node.attributes, dict) else {}
-            if "tn" in attrs:
-                acdc["type"] = "TNAlloc"
-            elif "legalName" in attrs or "LEI" in attrs:
-                acdc["type"] = "LE"
-            elif "role" in attrs:
-                acdc["type"] = "APE"
-            elif "vcard" in attrs:
-                acdc["type"] = "LE"
-            else:
-                acdc["type"] = "UNKNOWN"
+        # Build view-models for each credential (Sprint 21/22 enhanced display)
+        credential_vms = []
+        acdcs_for_graph = []  # Keep raw dicts for graph building
 
-            acdcs.append(acdc)
+        for node in nodes:
+            # Build raw dict for backwards compatibility and graph
+            acdc_dict = node.raw.copy() if node.raw else {}
+            acdc_dict["d"] = node.said
+            acdc_dict["i"] = node.issuer
+            acdc_dict["s"] = node.schema
+            if node.attributes:
+                acdc_dict["a"] = node.attributes
+            if node.edges:
+                acdc_dict["e"] = node.edges
+            acdcs_for_graph.append(acdc_dict)
+
+            # Get revocation result if available
+            revocation_result = revocation_cache.get(node.said)
+
+            # Parse ACDC and build view-model
+            try:
+                acdc = parse_acdc(acdc_dict)
+                vm = build_credential_card_vm(
+                    acdc=acdc,
+                    chain_result=None,  # No chain validation at fetch time
+                    revocation_result=revocation_result,
+                    available_saids=all_saids,
+                )
+                credential_vms.append(vm)
+            except Exception as e:
+                log.warning(f"Failed to build view-model for {node.said[:16]}: {e}")
+                # Fall back to including raw dict (will use legacy template path)
+                acdc_dict["type"] = _infer_credential_type(node.attributes)
+                credential_vms.append(acdc_dict)
 
         return templates.TemplateResponse(
             "partials/dossier.html",
             {
                 "request": request,
-                "acdcs": acdcs,
+                "credential_vms": credential_vms,
+                "acdcs": acdcs_for_graph,  # Keep for graph building
                 "kid_url": kid_url,
                 "dossier_stream": raw_text,
                 "raw_data": raw_text[:5000] if len(raw_text) > 5000 else raw_text,
@@ -684,6 +732,21 @@ async def ui_fetch_dossier(
             "partials/dossier.html",
             {"request": request, "error": str(e), "evd_url": evd_url},
         )
+
+
+def _infer_credential_type(attributes: Any) -> str:
+    """Infer credential type from attributes for legacy template path."""
+    if not isinstance(attributes, dict):
+        return "UNKNOWN"
+    if "tn" in attributes:
+        return "TNAlloc"
+    elif "legalName" in attributes or "LEI" in attributes:
+        return "LE"
+    elif "role" in attributes:
+        return "APE"
+    elif "vcard" in attributes:
+        return "LE"
+    return "UNKNOWN"
 
 
 @app.post("/ui/check-revocation")
@@ -763,7 +826,10 @@ async def ui_credential_graph(
     request: Request,
     dossier_data: str = Form(...),
 ):
-    """Build credential graph and return HTML fragment."""
+    """Build credential graph and return HTML fragment.
+
+    Uses Sprint 21/22 view-model path for enhanced credential display.
+    """
     from app.core.config import TRUSTED_ROOT_AIDS
     from app.vvp.acdc import (
         ACDC,
@@ -772,6 +838,7 @@ async def ui_credential_graph(
         credential_graph_to_dict,
         parse_acdc,
     )
+    from app.vvp.ui.credential_viewmodel import build_credential_card_vm
 
     try:
         # Unescape HTML entities (form value may have &quot; etc. from template escaping)
@@ -803,9 +870,24 @@ async def ui_credential_graph(
 
         graph_dict = credential_graph_to_dict(graph)
 
+        # Build view-models for each credential (Sprint 21/22 enhanced display)
+        all_saids = set(dossier_acdcs.keys())
+        credential_vms: dict[str, Any] = {}
+        for said, acdc in dossier_acdcs.items():
+            try:
+                vm = build_credential_card_vm(
+                    acdc=acdc,
+                    chain_result=None,
+                    revocation_result=None,
+                    available_saids=all_saids,
+                )
+                credential_vms[said] = vm
+            except Exception as e:
+                log.warning(f"Failed to build view-model for graph node {said[:16]}: {e}")
+
         return templates.TemplateResponse(
             "partials/credential_graph.html",
-            {"request": request, "graph": graph_dict},
+            {"request": request, "graph": graph_dict, "credential_vms": credential_vms},
         )
     except Exception as e:
         log.error(f"Failed to build credential graph: {e}")

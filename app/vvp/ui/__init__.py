@@ -18,6 +18,7 @@ from app.vvp.ui.credential_viewmodel import (
     RawACDCData,
     RevocationStatus,
     VariantLimitations,
+    VCardInfo,
     build_credential_card_vm,
     normalize_edge,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "RawACDCData",
     "RevocationStatus",
     "VariantLimitations",
+    "VCardInfo",
     "build_credential_card_vm",
     "normalize_edge",
 ]

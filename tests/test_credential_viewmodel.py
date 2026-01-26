@@ -1131,3 +1131,149 @@ class TestAttributeDisplayTooltip:
         custom_attr = next((a for a in other_section.attributes), None)
         assert custom_attr is not None
         assert custom_attr.tooltip == ""
+
+
+# =============================================================================
+# vCard Parsing Tests
+# =============================================================================
+
+
+class TestParseVcardLines:
+    """Tests for _parse_vcard_lines function."""
+
+    def test_parse_logo_url(self):
+        """LOGO line with VALUE=URI extracts URL."""
+        from app.vvp.ui.credential_viewmodel import _parse_vcard_lines
+
+        lines = [
+            "LOGO;HASH=sha256-abc123;VALUE=URI:https://example.com/logo.png",
+        ]
+        info = _parse_vcard_lines(lines)
+        assert info.logo_url == "https://example.com/logo.png"
+
+    def test_parse_logo_hash(self):
+        """LOGO line extracts HASH value."""
+        from app.vvp.ui.credential_viewmodel import _parse_vcard_lines
+
+        lines = [
+            "LOGO;HASH=sha256-40bac686a3f0b48253de55b34f552c8070baf22f81255aac449721c879c716a4;VALUE=URI:https://example.com/logo.png",
+        ]
+        info = _parse_vcard_lines(lines)
+        assert info.logo_hash == "sha256-40bac686a3f0b48253de55b34f552c8070baf22f81255aac449721c879c716a4"
+
+    def test_parse_org(self):
+        """ORG line extracts organization name."""
+        from app.vvp.ui.credential_viewmodel import _parse_vcard_lines
+
+        lines = ["ORG:Rich Connexions"]
+        info = _parse_vcard_lines(lines)
+        assert info.org == "Rich Connexions"
+
+    def test_parse_lei_from_note(self):
+        """NOTE;LEI line extracts LEI."""
+        from app.vvp.ui.credential_viewmodel import _parse_vcard_lines
+
+        lines = ["NOTE;LEI:984500DEE7537A07Y615"]
+        info = _parse_vcard_lines(lines)
+        assert info.lei == "984500DEE7537A07Y615"
+
+    def test_parse_categories(self):
+        """CATEGORIES line extracts categories."""
+        from app.vvp.ui.credential_viewmodel import _parse_vcard_lines
+
+        lines = ["CATEGORIES:Business,Telecom"]
+        info = _parse_vcard_lines(lines)
+        assert info.categories == "Business,Telecom"
+
+    def test_parse_full_vcard(self):
+        """Full vCard with multiple lines parses correctly."""
+        from app.vvp.ui.credential_viewmodel import _parse_vcard_lines
+
+        lines = [
+            "CATEGORIES:",
+            "LOGO;HASH=sha256-abc;VALUE=URI:https://example.com/logo.png",
+            "NOTE;LEI:984500DEE7537A07Y615",
+            "ORG:Rich Connexions",
+        ]
+        info = _parse_vcard_lines(lines)
+        assert info.logo_url == "https://example.com/logo.png"
+        assert info.org == "Rich Connexions"
+        assert info.lei == "984500DEE7537A07Y615"
+        assert info.raw_lines == lines
+
+    def test_parse_empty_lines(self):
+        """Empty vCard lines returns empty VCardInfo."""
+        from app.vvp.ui.credential_viewmodel import _parse_vcard_lines
+
+        info = _parse_vcard_lines([])
+        assert info.logo_url is None
+        assert info.org is None
+        assert info.lei is None
+
+    def test_case_insensitive_parsing(self):
+        """Parsing is case-insensitive for field names."""
+        from app.vvp.ui.credential_viewmodel import _parse_vcard_lines
+
+        lines = [
+            "logo;hash=sha256-abc;value=uri:https://example.com/logo.png",
+            "org:Test Org",
+        ]
+        info = _parse_vcard_lines(lines)
+        assert info.logo_url == "https://example.com/logo.png"
+        assert info.org == "Test Org"
+
+
+class TestVmWithVcard:
+    """Tests for CredentialCardViewModel with vCard data."""
+
+    def test_vm_has_vcard_when_present(self):
+        """View model includes parsed vCard when attribute present."""
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "vcard": [
+                    "LOGO;VALUE=URI:https://example.com/logo.png",
+                    "ORG:Test Org",
+                ]
+            },
+            edges=None,
+            variant="full",
+        )
+        vm = build_credential_card_vm(acdc)
+
+        assert vm.vcard is not None
+        assert vm.vcard.logo_url == "https://example.com/logo.png"
+        assert vm.vcard.org == "Test Org"
+
+    def test_vm_vcard_none_when_not_present(self):
+        """View model has no vCard when attribute not present."""
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={"LEI": "549300EXAMPLE"},
+            edges=None,
+            variant="full",
+        )
+        vm = build_credential_card_vm(acdc)
+
+        assert vm.vcard is None
+
+    def test_vm_vcard_none_for_non_list(self):
+        """View model has no vCard when vcard attribute is not a list."""
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={"vcard": "not a list"},
+            edges=None,
+            variant="full",
+        )
+        vm = build_credential_card_vm(acdc)
+
+        assert vm.vcard is None

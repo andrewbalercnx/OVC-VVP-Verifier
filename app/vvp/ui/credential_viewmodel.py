@@ -150,6 +150,31 @@ class RawACDCData:
 
 
 @dataclass
+class VCardInfo:
+    """Parsed vCard data from credential attributes.
+
+    vCard fields are stored as a list of RFC 6350 lines in the
+    credential's `vcard` attribute. This dataclass holds the
+    parsed, display-ready values.
+
+    Attributes:
+        logo_url: URL extracted from LOGO;VALUE=URI:... line.
+        logo_hash: SHA-256 hash from LOGO;HASH=... (for integrity check).
+        org: Organization name from ORG: line.
+        lei: LEI from NOTE;LEI:... line.
+        categories: Categories from CATEGORIES: line.
+        raw_lines: Original vCard lines for debugging.
+    """
+
+    logo_url: Optional[str] = None
+    logo_hash: Optional[str] = None
+    org: Optional[str] = None
+    lei: Optional[str] = None
+    categories: Optional[str] = None
+    raw_lines: List[str] = field(default_factory=list)
+
+
+@dataclass
 class CredentialCardViewModel:
     """Normalized view model for credential card rendering.
 
@@ -171,6 +196,7 @@ class CredentialCardViewModel:
         limitations: Variant limitations for UI banners.
         raw: Original data for debug panel.
         raw_contents: All fields with tooltips for Raw Contents section.
+        vcard: Parsed vCard data (if credential has vcard attribute).
     """
 
     said: str
@@ -187,6 +213,7 @@ class CredentialCardViewModel:
     limitations: VariantLimitations
     raw: RawACDCData
     raw_contents: List[AttributeDisplay] = field(default_factory=list)
+    vcard: Optional[VCardInfo] = None
 
 
 # =============================================================================
@@ -797,6 +824,59 @@ def _build_edges(
     return result, missing
 
 
+def _parse_vcard_lines(vcard_lines: List[str]) -> VCardInfo:
+    """Parse vCard lines from credential attributes.
+
+    vCard data is stored as a list of RFC 6350 formatted lines:
+    - "LOGO;HASH=sha256-...;VALUE=URI:https://..."
+    - "ORG:Organization Name"
+    - "NOTE;LEI:123456789012345678"
+    - "CATEGORIES:..."
+
+    Args:
+        vcard_lines: List of vCard line strings.
+
+    Returns:
+        VCardInfo with extracted fields.
+    """
+    info = VCardInfo(raw_lines=vcard_lines)
+
+    for line in vcard_lines:
+        line = line.strip()
+
+        # Parse LOGO line: LOGO;HASH=...;VALUE=URI:https://...
+        if line.upper().startswith("LOGO"):
+            # Extract VALUE=URI:... part
+            if "VALUE=URI:" in line.upper():
+                uri_start = line.upper().find("VALUE=URI:")
+                if uri_start != -1:
+                    info.logo_url = line[uri_start + len("VALUE=URI:"):]
+
+            # Extract HASH=... part
+            if "HASH=" in line.upper():
+                hash_start = line.upper().find("HASH=")
+                if hash_start != -1:
+                    # Find end of hash (before ; or end of line)
+                    hash_part = line[hash_start + len("HASH="):]
+                    if ";" in hash_part:
+                        hash_part = hash_part.split(";")[0]
+                    info.logo_hash = hash_part
+
+        # Parse ORG line: ORG:Organization Name
+        elif line.upper().startswith("ORG:"):
+            info.org = line[4:].strip()
+
+        # Parse NOTE;LEI line: NOTE;LEI:123456789012345678
+        elif line.upper().startswith("NOTE;LEI:"):
+            info.lei = line[9:].strip()
+
+        # Parse CATEGORIES line: CATEGORIES:...
+        elif line.upper().startswith("CATEGORIES:"):
+            info.categories = line[11:].strip()
+
+    return info
+
+
 # =============================================================================
 # Main Adapter Function
 # =============================================================================
@@ -928,6 +1008,13 @@ def build_credential_card_vm(
 
     raw_contents = _build_raw_contents(acdc_full_dict)
 
+    # Parse vCard data if present
+    vcard_info: Optional[VCardInfo] = None
+    if isinstance(acdc.attributes, dict) and "vcard" in acdc.attributes:
+        vcard_data = acdc.attributes["vcard"]
+        if isinstance(vcard_data, list):
+            vcard_info = _parse_vcard_lines(vcard_data)
+
     return CredentialCardViewModel(
         said=said,
         schema_said=schema_said,
@@ -943,4 +1030,5 @@ def build_credential_card_vm(
         limitations=limitations,
         raw=raw,
         raw_contents=raw_contents,
+        vcard=vcard_info,
     )

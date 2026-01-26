@@ -1,4 +1,9 @@
 {# Dossier display partial #}
+{#
+   Expects either:
+   - credential_vms: List of CredentialCardViewModel (Sprint 21/22 enhanced display)
+   - acdcs: List of raw ACDC dicts (legacy, kept for graph building)
+#}
 
 {% if error %}
 <article aria-invalid="true">
@@ -16,9 +21,40 @@
 {% endif %}
 
 <h3>Dossier Contents</h3>
-<p><small>{{ acdcs | length }} credential(s) found</small></p>
+<p><small>{{ (credential_vms or acdcs) | length }} credential(s) found</small></p>
 
+{% if credential_vms %}
+{# Sprint 21/22: Use view-model path for enhanced display #}
+<div style="display:flex;flex-wrap:wrap;gap:1rem;">
+    {% for item in credential_vms %}
+    {% if item.said is defined %}
+    {# CredentialCardViewModel - use vm path #}
+    {% set vm = item %}
+    {% include "partials/credential_card.html" %}
+    {% else %}
+    {# Fallback: raw dict - use legacy acdc path #}
+    {% set acdc = item %}
+    {% include "partials/credential_card.html" %}
+    {% endif %}
+    {% endfor %}
+</div>
+
+{# Revocation check form #}
 {% if acdcs %}
+<form hx-post="/ui/check-revocation" hx-target="#revocation-result" hx-swap="innerHTML" style="margin-top:1rem;">
+    <input type="hidden" name="acdcs" value="{{ acdcs | tojson | forceescape }}">
+    <input type="hidden" name="kid_url" value="{{ kid_url or '' }}">
+    <input type="hidden" name="dossier_stream" value="{{ dossier_stream or '' }}">
+    <button type="submit" class="secondary">
+        <span class="htmx-indicator">Checking...</span>
+        <span>Check Live Revocation Status</span>
+    </button>
+</form>
+<div id="revocation-result"></div>
+{% endif %}
+
+{% elif acdcs %}
+{# Legacy path: raw ACDC dicts #}
 <div style="display:flex;flex-wrap:wrap;gap:1rem;">
     {% for acdc in acdcs %}
     {% include "partials/credential_card.html" %}
@@ -36,6 +72,7 @@
     </button>
 </form>
 <div id="revocation-result"></div>
+
 {% else %}
 <article aria-invalid="true">
     <p>No credentials found in dossier.</p>
