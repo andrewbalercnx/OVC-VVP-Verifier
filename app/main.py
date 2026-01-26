@@ -813,3 +813,147 @@ async def ui_credential_graph(
             "partials/credential_graph.html",
             {"request": request, "error": str(e)},
         )
+
+
+# =============================================================================
+# Sprint 21: Credential Card UI Endpoints
+# =============================================================================
+
+
+@app.post("/ui/revocation-badge")
+async def ui_revocation_badge(
+    request: Request,
+    credential_said: str = Form(...),
+    oobi_url: str = Form(""),
+    dossier_stream: str = Form(""),
+):
+    """Return revocation badge HTML for a single credential.
+
+    Used for lazy loading via HTMX. Returns a single <span class="badge">
+    element for the credential's revocation status.
+
+    Query order:
+    1. Parse inline dossier TEL data (instant, no network)
+    2. Query via OOBI URL if provided (network call)
+    3. Return UNKNOWN if no TEL data available
+
+    Args:
+        credential_said: The SAID of the credential to check.
+        oobi_url: Optional OOBI URL for witness discovery.
+        dossier_stream: Optional inline dossier data with TEL events.
+    """
+    from app.vvp.keri.tel_client import TELClient, CredentialStatus
+    from app.vvp.ui.credential_viewmodel import RevocationStatus
+    from datetime import datetime, timezone
+
+    try:
+        client = TELClient(timeout=2.0)
+
+        # 1. Try to parse TEL from inline dossier data (instant, no network)
+        dossier_data = html.unescape(dossier_stream) if dossier_stream else ""
+
+        if dossier_data:
+            try:
+                result = client.parse_dossier_tel(
+                    dossier_data=dossier_data,
+                    credential_said=credential_said,
+                    registry_said=None,
+                )
+                if result.status != CredentialStatus.UNKNOWN:
+                    revocation = RevocationStatus(
+                        state=result.status.value,
+                        checked_at=datetime.now(timezone.utc).isoformat(),
+                        source=result.source or "dossier",
+                        error=result.error,
+                    )
+                    return templates.TemplateResponse(
+                        "partials/revocation_badge.html",
+                        {"request": request, "revocation": revocation},
+                    )
+            except Exception as e:
+                log.debug(f"Dossier TEL parse failed for {credential_said[:20]}: {e}")
+
+        # 2. Try OOBI query if URL provided (network call)
+        oobi = html.unescape(oobi_url) if oobi_url else ""
+        if oobi:
+            try:
+                result = await client.check_revocation(
+                    credential_said=credential_said,
+                    registry_said=None,
+                    oobi_url=oobi,
+                )
+                revocation = RevocationStatus(
+                    state=result.status.value,
+                    checked_at=datetime.now(timezone.utc).isoformat(),
+                    source=result.source or "oobi",
+                    error=result.error,
+                )
+                return templates.TemplateResponse(
+                    "partials/revocation_badge.html",
+                    {"request": request, "revocation": revocation},
+                )
+            except Exception as e:
+                log.debug(f"OOBI revocation query failed for {credential_said[:20]}: {e}")
+
+        # 3. No TEL data available - return UNKNOWN
+        revocation = RevocationStatus(
+            state="UNKNOWN",
+            checked_at=datetime.now(timezone.utc).isoformat(),
+            source="unknown",
+            error="TEL data not available (no inline data or OOBI)",
+        )
+        return templates.TemplateResponse(
+            "partials/revocation_badge.html",
+            {"request": request, "revocation": revocation},
+        )
+
+    except Exception as e:
+        log.error(f"Revocation badge error for {credential_said[:20]}: {e}")
+        revocation = RevocationStatus(
+            state="UNKNOWN",
+            error=str(e),
+        )
+        return templates.TemplateResponse(
+            "partials/revocation_badge.html",
+            {"request": request, "revocation": revocation},
+        )
+
+
+@app.get("/ui/credential/{said}")
+async def ui_credential_card(
+    request: Request,
+    said: str,
+):
+    """Return credential card HTML for chain expansion.
+
+    Used for HTMX chain expansion - fetches a single credential from
+    the session cache and returns its card HTML.
+
+    Note: This endpoint requires credentials to be stored in session
+    during the initial verification flow. If the credential is not
+    found, returns a 404 error fragment.
+    """
+    from app.vvp.ui.credential_viewmodel import (
+        CredentialCardViewModel,
+        build_credential_card_vm,
+        RevocationStatus,
+        IssuerInfo,
+        AttributeDisplay,
+        EdgeLink,
+        VariantLimitations,
+        RawACDCData,
+    )
+
+    # For now, return a placeholder since we don't have session storage
+    # In a full implementation, this would fetch from session/cache
+    # TODO: Implement session-based credential storage for chain expansion
+
+    # Return a "not found" card for now
+    return templates.TemplateResponse(
+        "partials/toast.html",
+        {
+            "request": request,
+            "message": f"Credential {said[:16]}... not in session",
+            "type": "warning",
+        },
+    )

@@ -128,6 +128,48 @@
         details[open] > summary {
             margin-bottom: 0.5em;
         }
+
+        /* Sprint 21: Credential card enhancements */
+        .credential-primary {
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+
+        .credential-limitation-banner {
+            background: var(--vvp-warning);
+            color: black;
+            padding: 0.25em 0.5em;
+            border-radius: 0.25em;
+            margin: 0.5em 0;
+        }
+
+        .attrs-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.25em 1em;
+            margin: 0.5em 0;
+        }
+
+        .edge-unavailable {
+            color: var(--vvp-muted);
+            font-style: italic;
+        }
+
+        /* Indeterminate status (uses warning color) */
+        .credential-card.indeterminate {
+            border-color: var(--vvp-warning);
+        }
+
+        /* Responsive: stack on mobile */
+        @media (max-width: 600px) {
+            .credential-card header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .attrs-grid {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 
     {% block head %}{% endblock %}

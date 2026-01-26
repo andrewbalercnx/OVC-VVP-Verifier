@@ -1,0 +1,12 @@
+{# Single revocation status badge #}
+{# Expects: revocation (RevocationStatus dataclass or dict with state, checked_at, source, error) #}
+
+{% if revocation.error %}
+  <span class="badge badge-warning" title="Error: {{ revocation.error }}">REV?</span>
+{% elif revocation.state == 'ACTIVE' %}
+  <span class="badge badge-success" title="Active | Checked: {{ revocation.checked_at or 'unknown' }} | Source: {{ revocation.source }}">ACTIVE</span>
+{% elif revocation.state == 'REVOKED' %}
+  <span class="badge badge-danger" title="Revoked | Source: {{ revocation.source }}">REVOKED</span>
+{% else %}
+  <span class="badge badge-muted" title="Could not verify revocation status">UNKNOWN</span>
+{% endif %}

@@ -1,5 +1,53 @@
 # VVP Verifier Change Log
 
+## Sprint 22: Enhanced Credential Card UI
+
+**Date:** 2026-01-26
+**Commit:** d18bf22
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/vvp/ui/__init__.py` | Created | UI module exports |
+| `app/vvp/ui/credential_viewmodel.py` | Created | View-model dataclasses and adapter for credential cards |
+| `app/templates/partials/credential_card.html` | Modified | Dual-path template (vm + legacy acdc) |
+| `app/templates/partials/revocation_badge.html` | Created | Single revocation badge partial for HTMX lazy load |
+| `app/templates/base.html` | Modified | CSS for card enhancements, indeterminate status |
+| `app/main.py` | Modified | Added `/ui/revocation-badge` and `/ui/credential/{said}` endpoints |
+| `tests/test_credential_viewmodel.py` | Created | 33 unit tests for view-model adapter |
+| `app/Documentation/PLAN_Credential_Card_UI.md` | Modified | Added implementation notes |
+
+### Summary
+
+Implemented view-model pattern for credential card UI per Sprint 21 plan, decoupling templates from raw ACDC field variations.
+
+**Key Changes:**
+
+1. **View-Model Adapter:**
+   - `CredentialCardViewModel` normalizes ACDC data for templates
+   - Primary/secondary attribute extraction per credential type (APE, DE, TNAlloc, LE)
+   - Edge normalization handles string, dict with n/d, and list formats
+   - Variant limitation detection for compact/partial credentials
+
+2. **Status vs Revocation Separation:**
+   - `status`: ClaimStatus (VALID/INVALID/INDETERMINATE) from chain validation
+   - `revocation`: RevocationStatus (ACTIVE/REVOKED/UNKNOWN) from TEL
+
+3. **Redaction Detection:**
+   - Detects `"_"` full redaction placeholder
+   - Detects `"_:type"` typed placeholders (e.g., `"_:string"`)
+   - Surfaces limitations in UI banners
+
+4. **HTMX Endpoints:**
+   - `/ui/revocation-badge`: Lazy revocation badge with OOBI query support
+   - `/ui/credential/{said}`: Placeholder for chain expansion (pending session storage)
+
+5. **Template Backwards Compatibility:**
+   - Template accepts both `vm` (new) and `acdc` (legacy) for gradual migration
+
+---
+
 ## Sprint 21: ACDC Variant Support (Phase 8.9 / §1.4)
 
 **Date:** 2026-01-26
