@@ -1277,3 +1277,380 @@ class TestVmWithVcard:
         vm = build_credential_card_vm(acdc)
 
         assert vm.vcard is None
+
+
+# =============================================================================
+# Issuer Identity Resolution Tests
+# =============================================================================
+
+
+class TestIssuerIdentity:
+    """Tests for IssuerIdentity dataclass."""
+
+    def test_issuer_identity_fields(self):
+        """IssuerIdentity has expected fields."""
+        from app.vvp.ui.credential_viewmodel import IssuerIdentity
+
+        identity = IssuerIdentity(
+            aid="D" + "A" * 43,
+            legal_name="Acme Corp",
+            lei="549300EXAMPLE",
+            source_said="E" + "B" * 43,
+        )
+        assert identity.aid == "D" + "A" * 43
+        assert identity.legal_name == "Acme Corp"
+        assert identity.lei == "549300EXAMPLE"
+        assert identity.source_said == "E" + "B" * 43
+
+    def test_issuer_identity_optional_fields(self):
+        """IssuerIdentity optional fields default to None."""
+        from app.vvp.ui.credential_viewmodel import IssuerIdentity
+
+        identity = IssuerIdentity(aid="D" + "A" * 43)
+        assert identity.aid == "D" + "A" * 43
+        assert identity.legal_name is None
+        assert identity.lei is None
+        assert identity.source_said is None
+
+
+class TestBuildIssuerIdentityMap:
+    """Tests for build_issuer_identity_map function."""
+
+    def test_empty_list_returns_empty_map(self):
+        """Empty ACDC list returns empty identity map."""
+        from app.vvp.ui.credential_viewmodel import build_issuer_identity_map
+
+        result = build_issuer_identity_map([])
+        assert result == {}
+
+    def test_extracts_identity_from_le_credential(self):
+        """Extracts identity from LE credential with legalName and LEI."""
+        from app.vvp.ui.credential_viewmodel import build_issuer_identity_map
+
+        # LE credential about an issuee
+        le_acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "L" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "issuee": "D" + "T" * 43,  # Target AID being identified
+                "legalName": "Target Corp",
+                "LEI": "549300TARGET",
+            },
+            edges=None,
+            variant="full",
+        )
+
+        result = build_issuer_identity_map([le_acdc])
+
+        target_aid = "D" + "T" * 43
+        assert target_aid in result
+        assert result[target_aid].legal_name == "Target Corp"
+        assert result[target_aid].lei == "549300TARGET"
+        assert result[target_aid].source_said == "E" + "L" * 43
+
+    def test_extracts_identity_from_vcard(self):
+        """Extracts organization name from vCard when no legalName."""
+        from app.vvp.ui.credential_viewmodel import build_issuer_identity_map
+
+        # LE credential with vCard data
+        le_acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "L" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "issuee": "D" + "T" * 43,
+                "vcard": [
+                    "ORG:VCard Organization",
+                    "NOTE;LEI:549300VCARD",
+                ],
+            },
+            edges=None,
+            variant="full",
+        )
+
+        result = build_issuer_identity_map([le_acdc])
+
+        target_aid = "D" + "T" * 43
+        assert target_aid in result
+        assert result[target_aid].legal_name == "VCard Organization"
+
+    def test_self_issued_le_identifies_issuer(self):
+        """Self-issued LE credential (no issuee) identifies its issuer."""
+        from app.vvp.ui.credential_viewmodel import build_issuer_identity_map
+
+        # LE credential without explicit issuee
+        le_acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "L" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "legalName": "Self Corp",
+                "LEI": "549300SELF",
+            },
+            edges=None,
+            variant="full",
+        )
+
+        result = build_issuer_identity_map([le_acdc])
+
+        issuer_aid = "D" + "I" * 43
+        assert issuer_aid in result
+        assert result[issuer_aid].legal_name == "Self Corp"
+        assert result[issuer_aid].lei == "549300SELF"
+
+    def test_ignores_credentials_without_identity(self):
+        """Credentials without legalName or LEI are ignored."""
+        from app.vvp.ui.credential_viewmodel import build_issuer_identity_map
+
+        # APE credential without identity info
+        ape_acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "P" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "issuee": "D" + "T" * 43,
+                "role": "Operator",
+            },
+            edges=None,
+            variant="full",
+        )
+
+        result = build_issuer_identity_map([ape_acdc])
+        assert result == {}
+
+    def test_ignores_compact_variant(self):
+        """Compact variant credentials are ignored."""
+        from app.vvp.ui.credential_viewmodel import build_issuer_identity_map
+
+        # Compact variant (attributes is None or not a dict)
+        compact_acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "C" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes=None,
+            edges=None,
+            variant="compact",
+        )
+
+        result = build_issuer_identity_map([compact_acdc])
+        assert result == {}
+
+    def test_extracts_lei_from_lids_string(self):
+        """Extracts LEI from lids field when it's a direct string."""
+        from app.vvp.ui.credential_viewmodel import build_issuer_identity_map
+
+        issuee_aid = "D" + "E" * 43
+        # lids as 20-char alphanumeric LEI
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "i": issuee_aid,
+                "lids": "12345678901234567890",  # 20-char LEI
+            },
+        )
+
+        result = build_issuer_identity_map([acdc])
+        assert issuee_aid in result
+        assert result[issuee_aid].lei == "12345678901234567890"
+
+    def test_extracts_lei_from_lids_dict(self):
+        """Extracts LEI from lids field when it's a dict."""
+        from app.vvp.ui.credential_viewmodel import build_issuer_identity_map
+
+        issuee_aid = "D" + "E" * 43
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "i": issuee_aid,
+                "lids": {"LEI": "98765432109876543210", "legalName": "LIDS Corp"},
+            },
+        )
+
+        result = build_issuer_identity_map([acdc])
+        assert issuee_aid in result
+        assert result[issuee_aid].lei == "98765432109876543210"
+        assert result[issuee_aid].legal_name == "LIDS Corp"
+
+    def test_extracts_lei_from_lids_array(self):
+        """Extracts LEI from lids field when it's an array."""
+        from app.vvp.ui.credential_viewmodel import build_issuer_identity_map
+
+        issuee_aid = "D" + "E" * 43
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "i": issuee_aid,
+                "lids": [{"lei": "11111111111111111111"}, {"legalName": "Array Corp"}],
+            },
+        )
+
+        result = build_issuer_identity_map([acdc])
+        assert issuee_aid in result
+        assert result[issuee_aid].lei == "11111111111111111111"
+
+    def test_wellknown_aids_fallback(self):
+        """Well-known AIDs provide identity fallback for issuers not in dossier."""
+        from app.vvp.ui.credential_viewmodel import WELLKNOWN_AIDS, build_issuer_identity_map
+
+        # Get a well-known AID (GLEIF)
+        gleif_aid = "EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao"
+        assert gleif_aid in WELLKNOWN_AIDS
+
+        # Create a credential issued by GLEIF but no LE cred for GLEIF
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=gleif_aid,
+            schema_said="E" + "S" * 43,
+            attributes={"role": "QVI"},  # Not an LE credential
+        )
+
+        result = build_issuer_identity_map([acdc])
+        # GLEIF should be in the map from well-known fallback
+        assert gleif_aid in result
+        assert result[gleif_aid].legal_name == "GLEIF"
+
+    def test_wellknown_aids_not_used_when_dossier_has_identity(self):
+        """Well-known AIDs don't override identity from dossier LE credential."""
+        from app.vvp.ui.credential_viewmodel import WELLKNOWN_AIDS, build_issuer_identity_map
+
+        gleif_aid = "EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao"
+        assert gleif_aid in WELLKNOWN_AIDS
+
+        # Create an LE credential that identifies GLEIF with different name
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=gleif_aid,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "i": gleif_aid,  # Self-issued LE
+                "legalName": "GLEIF International",  # Different from well-known
+                "LEI": "5493001KJTIIGC8Y1R12",
+            },
+        )
+
+        result = build_issuer_identity_map([acdc])
+        # Dossier identity takes precedence
+        assert gleif_aid in result
+        assert result[gleif_aid].legal_name == "GLEIF International"
+
+
+class TestIssuerInfoWithIdentity:
+    """Tests for IssuerInfo with resolved identity."""
+
+    def test_issuer_info_has_display_name_field(self):
+        """IssuerInfo dataclass has display_name field."""
+        issuer = IssuerInfo(
+            aid="D" + "A" * 43,
+            aid_short="DA...",
+            is_trusted_root=False,
+            display_name="Test Corp",
+            lei="549300TEST",
+        )
+        assert issuer.display_name == "Test Corp"
+        assert issuer.lei == "549300TEST"
+
+    def test_issuer_info_display_name_optional(self):
+        """IssuerInfo display_name defaults to None."""
+        issuer = IssuerInfo(
+            aid="D" + "A" * 43,
+            aid_short="DA...",
+            is_trusted_root=False,
+        )
+        assert issuer.display_name is None
+        assert issuer.lei is None
+
+
+class TestVmWithIssuerIdentities:
+    """Tests for build_credential_card_vm with issuer_identities parameter."""
+
+    def test_vm_uses_identity_map(self):
+        """View model uses identity map to populate issuer display_name."""
+        from app.vvp.ui.credential_viewmodel import IssuerIdentity
+
+        issuer_aid = "D" + "I" * 43
+
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=issuer_aid,
+            schema_said="E" + "S" * 43,
+            attributes={"role": "Operator"},
+            edges=None,
+            variant="full",
+        )
+
+        issuer_identities = {
+            issuer_aid: IssuerIdentity(
+                aid=issuer_aid,
+                legal_name="Issuer Corp",
+                lei="549300ISSUER",
+            )
+        }
+
+        vm = build_credential_card_vm(acdc, issuer_identities=issuer_identities)
+
+        assert vm.issuer.display_name == "Issuer Corp"
+        assert vm.issuer.lei == "549300ISSUER"
+
+    def test_vm_without_identity_map(self):
+        """View model works without identity map."""
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={"role": "Operator"},
+            edges=None,
+            variant="full",
+        )
+
+        vm = build_credential_card_vm(acdc)
+
+        assert vm.issuer.display_name is None
+        assert vm.issuer.lei is None
+
+    def test_vm_with_unknown_issuer(self):
+        """View model handles issuer not in identity map."""
+        from app.vvp.ui.credential_viewmodel import IssuerIdentity
+
+        other_aid = "D" + "O" * 43
+
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={"role": "Operator"},
+            edges=None,
+            variant="full",
+        )
+
+        # Identity map has different AID
+        issuer_identities = {
+            other_aid: IssuerIdentity(
+                aid=other_aid,
+                legal_name="Other Corp",
+            )
+        }
+
+        vm = build_credential_card_vm(acdc, issuer_identities=issuer_identities)
+
+        # Should not have display_name since issuer not in map
+        assert vm.issuer.display_name is None

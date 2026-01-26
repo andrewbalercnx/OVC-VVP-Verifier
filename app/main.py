@@ -639,7 +639,7 @@ async def ui_fetch_dossier(
     """
     from app.vvp.dossier.parser import parse_dossier
     from app.vvp.acdc import parse_acdc
-    from app.vvp.ui.credential_viewmodel import build_credential_card_vm
+    from app.vvp.ui.credential_viewmodel import build_credential_card_vm, build_issuer_identity_map_async
     from app.vvp.keri.tel_client import TELClient, CredentialStatus
 
     start_time = time.time()
@@ -682,7 +682,9 @@ async def ui_fetch_dossier(
         # Build view-models for each credential (Sprint 21/22 enhanced display)
         credential_vms = []
         acdcs_for_graph = []  # Keep raw dicts for graph building
+        parsed_acdcs = []  # Parsed ACDCs for identity map
 
+        # First pass: parse all ACDCs and build raw dicts
         for node in nodes:
             # Build raw dict for backwards compatibility and graph
             acdc_dict = node.raw.copy() if node.raw else {}
@@ -695,23 +697,44 @@ async def ui_fetch_dossier(
                 acdc_dict["e"] = node.edges
             acdcs_for_graph.append(acdc_dict)
 
-            # Get revocation result if available
-            revocation_result = revocation_cache.get(node.said)
-
-            # Parse ACDC and build view-model
+            # Parse ACDC
             try:
                 acdc = parse_acdc(acdc_dict)
-                vm = build_credential_card_vm(
-                    acdc=acdc,
-                    chain_result=None,  # No chain validation at fetch time
-                    revocation_result=revocation_result,
-                    available_saids=all_saids,
-                )
-                credential_vms.append(vm)
+                parsed_acdcs.append((acdc, acdc_dict, node.said))
             except Exception as e:
-                log.warning(f"Failed to build view-model for {node.said[:16]}: {e}")
-                # Fall back to including raw dict (will use legacy template path)
+                log.warning(f"Failed to parse ACDC {node.said[:16]}: {e}")
+                # Keep dict for fallback
                 acdc_dict["type"] = _infer_credential_type(node.attributes)
+                parsed_acdcs.append((None, acdc_dict, node.said))
+
+        # Build issuer identity map from LE credentials with OOBI fallback
+        issuer_identities = await build_issuer_identity_map_async(
+            [acdc for acdc, _, _ in parsed_acdcs if acdc is not None],
+            oobi_url=kid_url if kid_url else None,
+            discover_missing=True,
+        )
+
+        # Second pass: build view-models with issuer identities
+        for acdc, acdc_dict, said in parsed_acdcs:
+            # Get revocation result if available
+            revocation_result = revocation_cache.get(said)
+
+            if acdc is not None:
+                try:
+                    vm = build_credential_card_vm(
+                        acdc=acdc,
+                        chain_result=None,  # No chain validation at fetch time
+                        revocation_result=revocation_result,
+                        available_saids=all_saids,
+                        issuer_identities=issuer_identities,
+                    )
+                    credential_vms.append(vm)
+                except Exception as e:
+                    log.warning(f"Failed to build view-model for {said[:16]}: {e}")
+                    # Fall back to including raw dict (will use legacy template path)
+                    credential_vms.append(acdc_dict)
+            else:
+                # Already have fallback dict with type
                 credential_vms.append(acdc_dict)
 
         total_elapsed = time.time() - start_time
@@ -846,7 +869,7 @@ async def ui_credential_graph(
         credential_graph_to_dict,
         parse_acdc,
     )
-    from app.vvp.ui.credential_viewmodel import build_credential_card_vm
+    from app.vvp.ui.credential_viewmodel import build_credential_card_vm, build_issuer_identity_map_async
 
     try:
         # Unescape HTML entities (form value may have &quot; etc. from template escaping)
@@ -870,6 +893,13 @@ async def ui_credential_graph(
                 {"request": request, "error": "No valid ACDCs parsed"},
             )
 
+        # Build issuer identity map from LE credentials (no OOBI URL available here)
+        issuer_identities = await build_issuer_identity_map_async(
+            list(dossier_acdcs.values()),
+            oobi_url=None,  # No kid_url available at graph render time
+            discover_missing=False,  # Skip OOBI discovery since no URL
+        )
+
         graph = build_credential_graph(
             dossier_acdcs=dossier_acdcs,
             trusted_roots=set(TRUSTED_ROOT_AIDS),
@@ -888,6 +918,7 @@ async def ui_credential_graph(
                     chain_result=None,
                     revocation_result=None,
                     available_saids=all_saids,
+                    issuer_identities=issuer_identities,
                 )
                 credential_vms[said] = vm
             except Exception as e:

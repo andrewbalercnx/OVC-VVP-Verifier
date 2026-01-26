@@ -54,11 +54,15 @@ class IssuerInfo:
         aid: Full issuer AID string.
         aid_short: Truncated AID for display (first 16 chars + "...").
         is_trusted_root: True if this AID is in TRUSTED_ROOT_AIDS.
+        display_name: Human-readable name from LE credential (if available).
+        lei: Legal Entity Identifier from LE credential (if available).
     """
 
     aid: str
     aid_short: str
     is_trusted_root: bool
+    display_name: Optional[str] = None
+    lei: Optional[str] = None
 
 
 @dataclass
@@ -878,6 +882,201 @@ def _parse_vcard_lines(vcard_lines: List[str]) -> VCardInfo:
 
 
 # =============================================================================
+# Issuer Identity Resolution
+# =============================================================================
+
+# Well-known AIDs for root of trust organizations
+# These provide fallback identity when LE credentials aren't in dossier
+# Source: vLEI Governance Framework
+WELLKNOWN_AIDS: Dict[str, tuple[str, Optional[str]]] = {
+    # GLEIF External (production vLEI root of trust)
+    "EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao": ("GLEIF", "5493001KJTIIGC8Y1R12"),
+    # Provenant Global QVI (multiple AIDs observed)
+    "ELW1FqnJZgOBR43USMu1RfVE6U1BXl6UFecIDPmJnscQ": ("Provenant Global", None),
+    "ELW1FqnJZgOBR43UqAXCCFF6Zyz_EXaunivemMEkhRLy": ("Provenant Global", None),
+    # GLEIF Internal Issuer (multiple AIDs observed)
+    "EPI6riUghhZcrzeRvP2w94LKmPYplMVUXgpj2m5sJOzL": ("GLEIF Internal Issuer", None),
+    "EPI6riUghhZcrzeRrf4qxOSgMvqL97LKxMSaxcDUciub": ("GLEIF Internal Issuer", None),
+    # Test roots (for development)
+    "EDP1vHcw_wc4M__Fj53-cJaBnZZASd-aMTaSyWvOPUbo": ("Test QVI Root", None),
+}
+
+
+@dataclass
+class IssuerIdentity:
+    """Resolved identity for an AID from LE credentials.
+
+    Attributes:
+        aid: The AID this identity is about.
+        legal_name: Legal name from LE credential.
+        lei: Legal Entity Identifier from LE credential.
+        source_said: SAID of the LE credential this came from.
+    """
+
+    aid: str
+    legal_name: Optional[str] = None
+    lei: Optional[str] = None
+    source_said: Optional[str] = None
+
+
+def build_issuer_identity_map(
+    acdcs: List[ACDC],
+) -> Dict[str, IssuerIdentity]:
+    """Build AID→identity mapping from LE credentials in a dossier.
+
+    Scans all credentials for Legal Entity (LE) credentials which contain
+    identity information (legalName, LEI) for their issuee AID.
+
+    Args:
+        acdcs: List of parsed ACDC credentials from a dossier.
+
+    Returns:
+        Dict mapping AID strings to IssuerIdentity objects.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    identity_map: Dict[str, IssuerIdentity] = {}
+
+    for acdc in acdcs:
+        # LE credentials have legalName or LEI in attributes
+        if not isinstance(acdc.attributes, dict):
+            continue
+
+        # Check if this is an LE credential with identity info
+        legal_name = acdc.attributes.get("legalName")
+        lei = acdc.attributes.get("LEI")
+
+        # Also check 'lids' field (vLEI Legal Identity Data Source)
+        # May contain LEI directly as string or as structured data
+        lids = acdc.attributes.get("lids")
+        if lids:
+            # lids might be direct LEI string (20-character alphanumeric)
+            if isinstance(lids, str):
+                if len(lids) == 20 and lids.isalnum() and not lei:
+                    lei = lids
+            # lids might be a dict with nested identity fields
+            elif isinstance(lids, dict):
+                if not lei:
+                    lei = lids.get("LEI") or lids.get("lei")
+                if not legal_name:
+                    legal_name = lids.get("legalName") or lids.get("name") or lids.get("legalname")
+            # lids might be a list of identity sources
+            elif isinstance(lids, list):
+                for item in lids:
+                    if isinstance(item, dict):
+                        if not lei:
+                            lei = item.get("LEI") or item.get("lei")
+                        if not legal_name:
+                            legal_name = item.get("legalName") or item.get("name") or item.get("legalname")
+                        if lei or legal_name:
+                            break
+
+        # Also check vCard data for organization name
+        vcard_data = acdc.attributes.get("vcard")
+        if isinstance(vcard_data, list) and not legal_name:
+            for line in vcard_data:
+                if isinstance(line, str) and line.upper().startswith("ORG:"):
+                    legal_name = line[4:].strip()
+                    break
+
+        if not legal_name and not lei:
+            continue
+
+        # The issuee (subject) of the LE credential is the AID being identified
+        issuee = acdc.attributes.get("issuee") or acdc.attributes.get("i")
+
+        # If no explicit issuee, the credential identifies its own issuer
+        # (self-issued LE credentials)
+        if not issuee:
+            issuee = acdc.issuer_aid
+
+        if issuee:
+            identity_map[issuee] = IssuerIdentity(
+                aid=issuee,
+                legal_name=legal_name,
+                lei=lei,
+                source_said=acdc.said,
+            )
+            log.debug(f"Identity from dossier: {issuee[:16]}... = {legal_name or 'LEI:' + str(lei)}")
+
+    # Add well-known AIDs as fallback for issuers not found in dossier
+    all_issuer_aids = {acdc.issuer_aid for acdc in acdcs}
+    for aid in all_issuer_aids:
+        if aid not in identity_map and aid in WELLKNOWN_AIDS:
+            name, lei = WELLKNOWN_AIDS[aid]
+            identity_map[aid] = IssuerIdentity(
+                aid=aid,
+                legal_name=name,
+                lei=lei,
+                source_said=None,  # No credential source, from static registry
+            )
+            log.debug(f"Identity from well-known: {aid[:16]}... = {name}")
+
+    return identity_map
+
+
+async def build_issuer_identity_map_async(
+    acdcs: List[ACDC],
+    oobi_url: Optional[str] = None,
+    discover_missing: bool = True,
+) -> Dict[str, IssuerIdentity]:
+    """Build AID-to-identity mapping with OOBI discovery fallback.
+
+    Two-tier resolution:
+    1. Tier 1: Extract identities from LE credentials in acdcs (synchronous)
+    2. Tier 2: If discover_missing=True, query OOBI for AIDs without identity
+
+    Note: OOBI discovery is disabled by default because current KERI witnesses
+    serve KEL data only, not ACDC credentials. Enable via VVP_IDENTITY_DISCOVERY_ENABLED
+    when witness implementations support credential queries.
+
+    Args:
+        acdcs: Parsed ACDC credentials from dossier.
+        oobi_url: OOBI URL for witness discovery (e.g., kid_url from PASSporT).
+        discover_missing: If True, query OOBI for missing identities.
+
+    Returns:
+        Dict mapping AID strings to IssuerIdentity objects.
+    """
+    from app.core.config import IDENTITY_DISCOVERY_ENABLED, IDENTITY_DISCOVERY_TIMEOUT_SECONDS
+
+    # Tier 1: Dossier-based resolution (existing sync logic)
+    identity_map = build_issuer_identity_map(acdcs)
+
+    if not discover_missing or not IDENTITY_DISCOVERY_ENABLED:
+        return identity_map
+
+    # Collect all issuer AIDs not yet resolved
+    all_issuer_aids = {acdc.issuer_aid for acdc in acdcs}
+    missing_aids = all_issuer_aids - set(identity_map.keys())
+
+    if not missing_aids:
+        return identity_map
+
+    # Tier 2: OOBI-based discovery for missing AIDs (parallel queries)
+    from app.vvp.keri.identity_resolver import discover_identities_parallel
+
+    discovered = await discover_identities_parallel(
+        list(missing_aids),
+        oobi_url=oobi_url,
+        timeout=IDENTITY_DISCOVERY_TIMEOUT_SECONDS,
+    )
+
+    # Merge discovered identities into the map
+    for aid, disc_identity in discovered.items():
+        if disc_identity.legal_name or disc_identity.lei:
+            identity_map[aid] = IssuerIdentity(
+                aid=aid,
+                legal_name=disc_identity.legal_name,
+                lei=disc_identity.lei,
+                source_said=disc_identity.source_said,
+            )
+
+    return identity_map
+
+
+# =============================================================================
 # Main Adapter Function
 # =============================================================================
 
@@ -887,6 +1086,7 @@ def build_credential_card_vm(
     chain_result: Optional[ACDCChainResult] = None,
     revocation_result: Optional[dict] = None,
     available_saids: Optional[Set[str]] = None,
+    issuer_identities: Optional[Dict[str, IssuerIdentity]] = None,
 ) -> CredentialCardViewModel:
     """Build view model from raw ACDC and validation results.
 
@@ -903,6 +1103,9 @@ def build_credential_card_vm(
             - error: Optional error message
         available_saids: Set of credential SAIDs available in dossier
             (for determining which edge links can be expanded).
+        issuer_identities: Optional mapping of AID→IssuerIdentity from
+            build_issuer_identity_map(). Used to display issuer names
+            instead of truncated AIDs.
 
     Returns:
         CredentialCardViewModel ready for template rendering.
@@ -930,12 +1133,15 @@ def build_credential_card_vm(
     else:
         revocation = RevocationStatus()
 
-    # Build issuer info
+    # Build issuer info with resolved identity if available
     issuer_aid = acdc.issuer_aid
+    issuer_identity = (issuer_identities or {}).get(issuer_aid)
     issuer = IssuerInfo(
         aid=issuer_aid,
         aid_short=_truncate_aid(issuer_aid),
         is_trusted_root=issuer_aid in TRUSTED_ROOT_AIDS,
+        display_name=issuer_identity.legal_name if issuer_identity else None,
+        lei=issuer_identity.lei if issuer_identity else None,
     )
 
     # Build primary attribute

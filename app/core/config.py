@@ -195,3 +195,30 @@ GEO_CONSTRAINTS_ENFORCED: bool = os.getenv("VVP_GEO_CONSTRAINTS_ENFORCED", "true
 ALLOW_AGGREGATE_DOSSIERS: bool = os.getenv(
     "VVP_ALLOW_AGGREGATE_DOSSIERS", "false"
 ).lower() == "true"
+
+
+# =============================================================================
+# SPRINT 23: OOBI-BASED ISSUER IDENTITY RESOLUTION
+# =============================================================================
+
+# Enable OOBI-based identity discovery for unknown issuers
+# When True: Query witness endpoints for LE credentials
+# When False (default): Only use identities from dossier LE credentials
+#
+# NOTE: Currently disabled by default because KERI witnesses serve KEL data
+# only, not ACDC credentials. Enable when witness implementations support
+# credential queries at /credentials?issuer={aid} endpoints.
+IDENTITY_DISCOVERY_ENABLED: bool = os.getenv(
+    "VVP_IDENTITY_DISCOVERY_ENABLED", "false"
+).lower() == "true"
+
+# Timeout for identity discovery queries (per-request)
+# Lower than dossier timeout since this is enhancement, not requirement
+IDENTITY_DISCOVERY_TIMEOUT_SECONDS: float = float(
+    os.getenv("VVP_IDENTITY_DISCOVERY_TIMEOUT", "3.0")
+)
+
+# Cache TTL for discovered identities (positive and negative results)
+IDENTITY_CACHE_TTL_SECONDS: float = float(
+    os.getenv("VVP_IDENTITY_CACHE_TTL", "300.0")
+)

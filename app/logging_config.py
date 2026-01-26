@@ -17,10 +17,17 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False)
 
 def configure_logging():
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter())
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(JsonFormatter())
+
+    # File handler for debugging (always append)
+    log_file = os.getenv("VVP_LOG_FILE", "vvp_debug.log")
+    file_handler = logging.FileHandler(log_file, mode='a')
+    file_handler.setFormatter(JsonFormatter())
+
     root = logging.getLogger()
     # Allow DEBUG level via environment variable (default: INFO)
     log_level = os.getenv("VVP_LOG_LEVEL", "INFO").upper()
     root.setLevel(getattr(logging, log_level, logging.INFO))
-    root.handlers = [handler]
+    root.handlers = [console_handler, file_handler]
