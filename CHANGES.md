@@ -1,5 +1,83 @@
 # VVP Verifier Change Log
 
+## Sprint 23: URL-Keyed Dossier Cache with SAID Index
+
+**Date:** 2026-01-26
+**Commit:** 7e49dc6
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/vvp/dossier/cache.py` | Created | DossierCache with URL primary key, SAID→URL secondary index, LRU eviction |
+| `app/vvp/dossier/__init__.py` | Modified | Export DossierCache, CachedDossier, CacheMetrics |
+| `app/vvp/verify.py` | Modified | Cache lookup before fetch, store after parse, invalidation on revocation |
+| `app/vvp/keri/cache.py` | Modified | Added CacheMetrics dataclass for consistent metrics |
+| `app/vvp/keri/tel_client.py` | Modified | Added cache_metrics() method |
+| `app/core/config.py` | Modified | Added DOSSIER_CACHE_TTL_SECONDS, DOSSIER_CACHE_MAX_ENTRIES |
+| `app/main.py` | Modified | Added cache metrics to /admin endpoint |
+| `pyproject.toml` | Modified | Added blake3>=0.3.0 dependency |
+| `tests/conftest.py` | Created | Root fixture to reset cache before each test |
+| `tests/test_dossier_cache.py` | Created | 51 tests for cache operations and verify_vvp integration |
+| `tests/vectors/conftest.py` | Modified | Added cache reset fixture for test vectors |
+| `tests/vectors/runner.py` | Modified | Added KEY_ROTATED_BEFORE_T mock handler |
+| `tests/vectors/data/v12_key_rotated_before_t.json` | Created | Tier 2 test vector for key rotation scenario |
+| `app/Documentation/VVP_Implementation_Checklist.md` | Modified | Updated to 99% (180/182 items) |
+
+### Summary
+
+Implemented Phase 14 caching requirements (14.2, 14.6, 14.7) per VVP spec §5C.2.
+
+**Key Features:**
+
+1. **URL-Keyed Dossier Cache (14.2):**
+   - Primary index: URL → CachedDossier (URL available pre-fetch)
+   - Secondary index: credential SAID → set of URLs containing it
+   - LRU eviction with configurable max_entries (default: 100)
+   - TTL-based expiration (default: 300s per §5C.2 freshness)
+   - Thread-safe with asyncio.Lock
+
+2. **Cache Invalidation on Revocation (14.6):**
+   - `invalidate_by_said()` uses secondary index to find affected dossiers
+   - Integrated into `check_dossier_revocations()` flow
+   - Cascading invalidation when credential revoked
+
+3. **Cache Metrics/Logging (14.7):**
+   - CacheMetrics dataclass: hits, misses, evictions, invalidations
+   - `hit_rate()` calculation for monitoring
+   - Metrics exposed via /admin endpoint
+
+4. **verify_vvp Integration:**
+   - Cache lookup before `fetch_dossier()` call
+   - Cache store after successful parse
+   - Evidence trail: `cache_hit={url}` in claims
+
+5. **Test Vector v12 (15.7):**
+   - Key rotated before reference time T scenario
+   - Mock via `mock_key_state_error: "KEY_ROTATED_BEFORE_T"`
+   - Expected: INVALID with `KERI_STATE_INVALID`
+
+### Checklist Items Completed
+
+- 14.2: SAID-based dossier cache (URL-keyed with SAID secondary index)
+- 14.6: Cache invalidation on revocation
+- 14.7: Cache metrics/logging
+- 15.7: Key rotated before T test vector
+
+### Test Results
+
+```
+1103 passed in 6.12s
+```
+
+### Review History
+
+- Rev 0: CHANGES_REQUESTED - verify.py doesn't use cache (get/put missing)
+- Rev 1: CHANGES_REQUESTED - Integration tests don't exercise verify_vvp directly
+- Rev 2: APPROVED - verify_vvp integration tests exercise cache behavior
+
+---
+
 ## Sprint 22: Credential Card & Chain Graph Enhancements (Completion)
 
 **Date:** 2026-01-26
