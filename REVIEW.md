@@ -1,10 +1,11 @@
-Code Review: Sprint 21 - Enhanced Credential Card UI (Round 2)
+Re-Review: Sprint 22 - Redaction Masking Fixes
 Verdict: APPROVED
 
-Findings Resolution
-[Medium] Redaction detection: RESOLVED
-[Medium] Revocation query: RESOLVED
-[Low] Chain expansion: Acknowledged as intentional
+Finding Resolution
+Redaction masking now applies uniformly via `_is_redacted_value()` and `_format_value()`, and sectioned attributes render “(redacted)” with the new `attr-redacted` class. The added tests cover placeholder variants and section rendering, addressing the previous gaps.
 
-Required Changes (if any)
+Remaining Issues (if any)
 None.
+
+Recommendations
+- Consider adding a small UI test to ensure redacted values appear with the muted styling in rendered HTML (optional).

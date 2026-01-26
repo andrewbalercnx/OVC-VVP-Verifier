@@ -11,6 +11,7 @@ The following commands are pre-authorized and do not require user confirmation:
 - `curl` - HTTP requests for deployment verification
 - `uvicorn` - Running the development server
 - `DYLD_LIBRARY_PATH=* python3 -m pytest` - Test commands with library path
+- `./scripts/run-tests.sh` - Test runner script (pre-configured with library path)
 
 All test-related commands using pytest are pre-authorized, including those that set environment variables like `DYLD_LIBRARY_PATH`.
 
@@ -19,14 +20,17 @@ All test-related commands using pytest are pre-authorized, including those that 
 Tests require libsodium for cryptographic operations. On macOS with Homebrew:
 
 ```bash
-# Run all tests with libsodium path
+# Preferred: Use the test runner script (handles library paths automatically)
+./scripts/run-tests.sh                          # Run all tests
+./scripts/run-tests.sh -v                       # Verbose output
+./scripts/run-tests.sh tests/test_signature.py  # Run specific file
+./scripts/run-tests.sh -k "test_format"         # Run tests matching pattern
+
+# Alternative: Run directly with library path
 DYLD_LIBRARY_PATH="/opt/homebrew/lib" python3 -m pytest tests/ -v
 
-# Run specific test file
-DYLD_LIBRARY_PATH="/opt/homebrew/lib" python3 -m pytest tests/test_signature.py -v
-
 # Run with coverage
-DYLD_LIBRARY_PATH="/opt/homebrew/lib" python3 -m pytest tests/ --cov=app --cov-report=term-missing
+./scripts/run-tests.sh --cov=app --cov-report=term-missing
 ```
 
 If libsodium is installed elsewhere, find it with:

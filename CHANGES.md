@@ -1,6 +1,74 @@
 # VVP Verifier Change Log
 
-## Sprint 22: Enhanced Credential Card UI
+## Sprint 22: Credential Card & Chain Graph Enhancements (Completion)
+
+**Date:** 2026-01-26
+**Commit:** (pending)
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/vvp/ui/credential_viewmodel.py` | Modified | Added AttributeSection, formatting functions, tooltips, raw_contents, redaction detection |
+| `app/vvp/ui/__init__.py` | Modified | Export AttributeSection |
+| `app/templates/partials/credential_card.html` | Modified | Collapsible sections, edge links, tooltips, Raw Contents, inline revocation |
+| `app/templates/partials/credential_graph.html` | Modified | SVG container, edges data attribute |
+| `app/templates/base.html` | Modified | CSS for sections/connectors/tooltips/highlight/redaction, JS functions |
+| `tests/test_credential_viewmodel.py` | Modified | 66 new tests for Sprint 22 features |
+| `scripts/run-tests.sh` | Created | Test runner script with DYLD_LIBRARY_PATH |
+| `app/Documentation/PLAN_Sprint22.md` | Created | Archived implementation plan |
+
+### Summary
+
+Completed Sprint 22 Credential Card & Chain Graph Enhancements per approved plan.
+
+**Key Features:**
+
+1. **Collapsible Attribute Sections:**
+   - Attributes grouped by category (Identity, Dates & Times, Permissions, Numbers & Ranges, Other)
+   - All sections initially expanded with collapsible `<details>` elements
+   - Value formatting: booleans as "Yes"/"No", dates human-readable, nested objects flattened
+
+2. **Clickable Edge Links:**
+   - Edge links scroll to and highlight target credential
+   - `highlightCredential(said)` JS function with 2-second pulse animation
+   - Toast notification when target not in current view
+
+3. **SVG Chain Connectors:**
+   - Bezier curves connecting parent/child credentials
+   - Color-coded by edge type (vetting=green, delegation=blue, issued_by=purple, jl=orange)
+   - Responsive: hidden on mobile (<768px), redraw on resize/toggle
+
+4. **Field Tooltips:**
+   - Normative descriptions from ToIP ACDC specification
+   - `.has-tooltip` CSS class with dotted underline and cursor help
+
+5. **Raw Contents Section:**
+   - Collapsed section with all ACDC fields and tooltips
+   - Recursively flattened nested dicts with dot notation
+
+6. **Redaction Masking:**
+   - ACDC partial disclosure placeholders (`_`, `_:type`, `#`, `[REDACTED]`) → "(redacted)"
+   - `.attr-redacted` CSS class with muted italic styling
+
+7. **Inline Revocation Display:**
+   - Revocation status badges displayed inline (not lazy-loaded via HTMX)
+   - ACTIVE/REVOKED/UNKNOWN with appropriate colors and tooltips
+
+### Test Results
+
+```
+999 passed, 20 warnings in 5.63s
+```
+
+### Review History
+
+- Rev 0: CHANGES_REQUESTED - Redaction masking not applied to `_build_attribute_sections`
+- Rev 1: APPROVED
+
+---
+
+## Sprint 22: Enhanced Credential Card UI (View-Model Foundation)
 
 **Date:** 2026-01-26
 **Commit:** 97b4e98

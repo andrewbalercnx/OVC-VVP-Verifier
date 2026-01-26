@@ -11,6 +11,7 @@ raw ACDC data structures from template rendering, enabling:
 
 from app.vvp.ui.credential_viewmodel import (
     AttributeDisplay,
+    AttributeSection,
     CredentialCardViewModel,
     EdgeLink,
     IssuerInfo,
@@ -23,6 +24,7 @@ from app.vvp.ui.credential_viewmodel import (
 
 __all__ = [
     "AttributeDisplay",
+    "AttributeSection",
     "CredentialCardViewModel",
     "EdgeLink",
     "IssuerInfo",

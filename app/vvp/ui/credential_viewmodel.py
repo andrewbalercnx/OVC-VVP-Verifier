@@ -12,9 +12,10 @@ Per Sprint 21 plan (PLAN_Credential_Card_UI.md):
 - Checks issuer against TRUSTED_ROOT_AIDS for trust anchor display
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.core.config import TRUSTED_ROOT_AIDS
 from app.vvp.acdc.models import ACDC, ACDCChainResult
@@ -67,10 +68,33 @@ class AttributeDisplay:
     Attributes:
         label: Human-readable label (e.g., "Phone Number", "Legal Name").
         value: Display value, or special markers like "—" or "(redacted)".
+        css_class: Optional CSS class for styling (e.g., "attr-bool-true", "attr-date").
+        tooltip: Normative description for mouseover, from FIELD_DESCRIPTIONS.
+        raw_key: Original field key (for Raw Contents display).
     """
 
     label: str
     value: str
+    css_class: str = ""
+    tooltip: str = ""
+    raw_key: str = ""
+
+
+@dataclass
+class AttributeSection:
+    """Group of related attributes for collapsible display.
+
+    Attributes:
+        name: Section header (e.g., "Dates & Times", "Identity").
+        css_class: CSS class for styling (e.g., "section-dates").
+        attributes: List of attributes in this section.
+        initially_open: Whether section should be expanded by default.
+    """
+
+    name: str
+    css_class: str
+    attributes: List[AttributeDisplay]
+    initially_open: bool = True
 
 
 @dataclass
@@ -141,10 +165,12 @@ class CredentialCardViewModel:
         revocation: Revocation state (separate from status).
         issuer: Issuer identity info.
         primary: Primary attribute for prominent display.
-        secondary: Up to 3 secondary attributes.
+        secondary: Up to 3 secondary attributes (for backwards compatibility).
+        sections: Categorized attribute sections for collapsible display.
         edges: Normalized edge links for chain expansion.
         limitations: Variant limitations for UI banners.
         raw: Original data for debug panel.
+        raw_contents: All fields with tooltips for Raw Contents section.
     """
 
     said: str
@@ -156,9 +182,11 @@ class CredentialCardViewModel:
     issuer: IssuerInfo
     primary: AttributeDisplay
     secondary: List[AttributeDisplay]
+    sections: List[AttributeSection]
     edges: Dict[str, EdgeLink]
     limitations: VariantLimitations
     raw: RawACDCData
+    raw_contents: List[AttributeDisplay] = field(default_factory=list)
 
 
 # =============================================================================
@@ -187,6 +215,58 @@ EDGE_LABELS: Dict[str, str] = {
 
 # Fields to exclude from secondary attributes
 EXCLUDED_SECONDARY_FIELDS: Set[str] = {"d", "dt", "i", "s", "v", "n"}
+
+# Attribute category mappings for collapsible sections
+# Maps category key to (display name, list of field names)
+ATTRIBUTE_CATEGORIES: Dict[str, Tuple[str, List[str]]] = {
+    "identity": ("Identity", ["LEI", "legalName", "lids", "issuee", "role", "subject"]),
+    "dates": ("Dates & Times", ["dt", "startDate", "endDate", "issuanceDate", "expirationDate"]),
+    "permissions": ("Permissions", ["c_goal", "channel", "doNotOriginate", "authorized"]),
+    "numbers": ("Numbers & Ranges", ["tn", "phone", "numbers", "rangeStart", "rangeEnd"]),
+}
+
+# Normative field descriptions from ToIP ACDC Specification
+# See: https://github.com/trustoverip/kswg-acdc-specification/blob/main/spec/spec-body.md
+FIELD_DESCRIPTIONS: Dict[str, str] = {
+    # Top-level ACDC fields (normative from ToIP spec)
+    "v": "Version String: Encodes protocol type, version, and serialization kind.",
+    "t": "Message Type: Identifies the ACDC type or purpose.",
+    "d": "SAID (Self-Addressing Identifier): Self-referential cryptographic digest that uniquely identifies this ACDC.",
+    "u": "UUID: Salty nonce for privacy protection, enables compact disclosure.",
+    "i": "Issuer AID: Autonomic Identifier of the issuer, established via KERI Key State.",
+    "rd": "Registry Digest: SAID of the credential registry for revocation status.",
+    "s": "Schema: SAID reference or embedded JSON Schema defining credential structure.",
+    "a": "Attributes: Nested field map containing the credential's payload data.",
+    "A": "Attribute Aggregate: Blinded aggregate of selectively disclosable attributes.",
+    "e": "Edges: References to other ACDCs via SAIDs, establishing the credential chain.",
+    "r": "Rules: Ricardian contract clauses defining legal terms and conditions.",
+    "n": "Node: Target SAID of an edge reference to another ACDC.",
+    "o": "Operator: Edge operator defining relationship semantics (AND, OR, etc.).",
+    "w": "Weight: Edge weight for weighted threshold operators.",
+    "l": "Legal/Liability: Terms, warranties, and conditions for credential use.",
+    # Common attribute fields (descriptive, not normatively defined in ACDC spec)
+    "dt": "Datetime: ISO 8601 / RFC-3339 formatted timestamp.",
+    "LEI": "Legal Entity Identifier: 20-character ISO 17442 identifier for legal entities.",
+    "legalName": "Legal Name: Official registered name of the legal entity.",
+    "lids": "LEI Data Source: Source identifier for LEI data verification.",
+    "issuee": "Issuee: AID or identifier of the credential subject/holder.",
+    "role": "Role: Assigned role or function within the credential context.",
+    "subject": "Subject: The entity or topic this credential describes.",
+    "startDate": "Start Date: Effective start date/time for credential validity.",
+    "endDate": "End Date: Expiration date/time for credential validity.",
+    "issuanceDate": "Issuance Date: Date/time when this credential was issued.",
+    "expirationDate": "Expiration Date: Date/time when this credential expires.",
+    "c_goal": "Credential Goals: Authorized purposes or use cases for this credential.",
+    "channel": "Channel: Communication channel type (voice, data, etc.).",
+    "doNotOriginate": "Do Not Originate: Flag indicating call origination restrictions.",
+    "authorized": "Authorized: Boolean flag for authorization status.",
+    "tn": "Telephone Number: E.164 formatted telephone number or number block.",
+    "phone": "Phone: Telephone number in E.164 or national format.",
+    "numbers": "Numbers: Range or set of telephone numbers.",
+    "rangeStart": "Range Start: First number in an allocated telephone number range.",
+    "rangeEnd": "Range End: Last number in an allocated telephone number range.",
+    "vcard": "vCard: Contact information in vCard format (RFC 6350).",
+}
 
 
 # =============================================================================
@@ -234,6 +314,301 @@ def _truncate_aid(aid: str, length: int = 16) -> str:
     if len(aid) <= length:
         return aid
     return f"{aid[:length]}..."
+
+
+def _is_iso_date(value: str) -> bool:
+    """Check if string looks like ISO 8601 date.
+
+    Args:
+        value: String to check.
+
+    Returns:
+        True if value matches YYYY-MM-DD pattern at start.
+    """
+    if len(value) < 10:
+        return False
+    return bool(re.match(r"^\d{4}-\d{2}-\d{2}", value))
+
+
+def _format_date(iso_string: str) -> str:
+    """Format ISO date to human-readable.
+
+    Args:
+        iso_string: ISO 8601 date string.
+
+    Returns:
+        Formatted date like "Nov 25, 2024 08:20 PM", or original if parse fails.
+    """
+    try:
+        dt = datetime.fromisoformat(iso_string.replace("Z", "+00:00"))
+        return dt.strftime("%b %d, %Y %I:%M %p")
+    except (ValueError, AttributeError):
+        return iso_string
+
+
+def _is_redacted_value(value: Any) -> bool:
+    """Check if a value is a redaction placeholder.
+
+    ACDC partial disclosure uses specific placeholder values:
+    - "_" : Full redaction placeholder
+    - "_:type" : Typed placeholder (e.g., "_:string", "_:date")
+    - "" : Empty string
+    - "#" : Hash marker
+    - "[REDACTED]" : Explicit redaction marker
+
+    Args:
+        value: The value to check.
+
+    Returns:
+        True if the value appears to be a redaction placeholder.
+    """
+    if value is None:
+        return False
+    if not isinstance(value, str):
+        return False
+    # ACDC partial disclosure placeholders
+    if value == "_":
+        return True
+    if value.startswith("_:"):
+        return True
+    # Common redaction patterns
+    if value in ("", "#", "[REDACTED]"):
+        return True
+    return False
+
+
+def _format_value(value: Any, key: str = "") -> Tuple[str, str]:
+    """Format a single attribute value for display.
+
+    Args:
+        value: The raw attribute value.
+        key: The attribute key (unused, for future extension).
+
+    Returns:
+        Tuple of (formatted_value, css_class).
+    """
+    if value is None:
+        return "—", "attr-null"
+
+    # Check for redaction placeholders BEFORE other formatting
+    if _is_redacted_value(value):
+        return "(redacted)", "attr-redacted"
+
+    if isinstance(value, bool):
+        return ("Yes" if value else "No"), ("attr-bool-true" if value else "attr-bool-false")
+
+    if isinstance(value, str):
+        if _is_iso_date(value):
+            return _format_date(value), "attr-date"
+        return value, ""
+
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value), "attr-array"
+
+    return str(value), ""
+
+
+def _get_field_tooltip(key: str) -> str:
+    """Get normative description for a field key.
+
+    Looks up the field in FIELD_DESCRIPTIONS, trying both the full key
+    and the base key (for nested fields like "numbers.rangeStart").
+
+    Args:
+        key: Field key, possibly with dot notation for nested fields.
+
+    Returns:
+        Description string, or empty string if not found.
+    """
+    # Try exact match first
+    if key in FIELD_DESCRIPTIONS:
+        return FIELD_DESCRIPTIONS[key]
+
+    # Try base key (before first dot)
+    base_key = key.split(".")[0]
+    if base_key in FIELD_DESCRIPTIONS:
+        return FIELD_DESCRIPTIONS[base_key]
+
+    # Try last segment (for nested keys like "numbers.rangeStart")
+    last_key = key.split(".")[-1]
+    if last_key in FIELD_DESCRIPTIONS:
+        return FIELD_DESCRIPTIONS[last_key]
+
+    return ""
+
+
+def _flatten_nested(
+    attributes: Dict[str, Any],
+    parent_key: str = "",
+) -> List[Tuple[str, Any]]:
+    """Flatten nested dicts to list of (dotted_key, value) pairs.
+
+    Args:
+        attributes: Dictionary of attributes, possibly nested.
+        parent_key: Prefix for nested keys (used in recursion).
+
+    Returns:
+        List of (key, value) tuples with nested keys using dot notation.
+    """
+    items: List[Tuple[str, Any]] = []
+    for key, value in attributes.items():
+        if key.startswith("_") or key in EXCLUDED_SECONDARY_FIELDS:
+            continue
+        full_key = f"{parent_key}.{key}" if parent_key else key
+        if isinstance(value, dict):
+            items.extend(_flatten_nested(value, full_key))
+        else:
+            items.append((full_key, value))
+    return items
+
+
+def _build_attribute_sections(
+    attributes: Any,
+    primary_field: Optional[str] = None,
+) -> List[AttributeSection]:
+    """Build categorized attribute sections for collapsible display.
+
+    Groups attributes into predefined categories (Identity, Dates, etc.)
+    and formats values appropriately.
+
+    Args:
+        attributes: ACDC attributes dict.
+        primary_field: Field used for primary display (excluded from sections).
+
+    Returns:
+        List of AttributeSection with categorized attributes.
+    """
+    if not isinstance(attributes, dict):
+        return []
+
+    # Flatten all attributes including nested
+    flat = _flatten_nested(attributes)
+
+    # Categorize each attribute
+    categorized: Dict[str, List[AttributeDisplay]] = {
+        "identity": [],
+        "dates": [],
+        "permissions": [],
+        "numbers": [],
+        "other": [],
+    }
+
+    for key, value in flat:
+        if key == primary_field:
+            continue
+
+        # Skip empty values
+        if value is None or value == "":
+            continue
+
+        formatted, css_class = _format_value(value, key)
+        attr = AttributeDisplay(
+            label=key.replace("_", " ").replace(".", " › ").title(),
+            value=formatted,
+            css_class=css_class,
+            tooltip=_get_field_tooltip(key),
+            raw_key=key,
+        )
+
+        # Find category based on base key (before any dots)
+        category_found = "other"
+        base_key = key.split(".")[0]
+        for cat_key, (_, fields) in ATTRIBUTE_CATEGORIES.items():
+            if base_key in fields or key in fields:
+                category_found = cat_key
+                break
+
+        categorized[category_found].append(attr)
+
+    # Build sections (only non-empty)
+    sections: List[AttributeSection] = []
+    for cat_key, (cat_name, _) in ATTRIBUTE_CATEGORIES.items():
+        if categorized[cat_key]:
+            sections.append(
+                AttributeSection(
+                    name=cat_name,
+                    css_class=f"section-{cat_key}",
+                    attributes=categorized[cat_key],
+                )
+            )
+
+    if categorized["other"]:
+        sections.append(
+            AttributeSection(
+                name="Other Attributes",
+                css_class="section-other",
+                attributes=categorized["other"],
+            )
+        )
+
+    return sections
+
+
+def _build_raw_contents(acdc_dict: Dict[str, Any]) -> List[AttributeDisplay]:
+    """Build raw contents list with tooltips for all ACDC fields.
+
+    This provides a complete view of all fields in the credential,
+    with normative descriptions from the ToIP ACDC specification.
+
+    Args:
+        acdc_dict: Full ACDC dictionary including top-level fields.
+
+    Returns:
+        List of AttributeDisplay for all fields with tooltips.
+    """
+    result: List[AttributeDisplay] = []
+
+    def add_field(key: str, value: Any, prefix: str = "") -> None:
+        """Recursively add fields, flattening nested dicts."""
+        full_key = f"{prefix}.{key}" if prefix else key
+
+        if isinstance(value, dict):
+            # Add the dict itself as a container
+            result.append(
+                AttributeDisplay(
+                    label=full_key,
+                    value="{...}",
+                    css_class="attr-object",
+                    tooltip=_get_field_tooltip(key),
+                    raw_key=full_key,
+                )
+            )
+            # Recursively add nested fields
+            for nested_key, nested_value in value.items():
+                add_field(nested_key, nested_value, full_key)
+        elif isinstance(value, list):
+            # Format list as JSON-like representation
+            if len(value) <= 3:
+                display_val = "[" + ", ".join(repr(v) for v in value) + "]"
+            else:
+                display_val = "[" + ", ".join(repr(v) for v in value[:3]) + ", ...]"
+            result.append(
+                AttributeDisplay(
+                    label=full_key,
+                    value=display_val,
+                    css_class="attr-array",
+                    tooltip=_get_field_tooltip(key),
+                    raw_key=full_key,
+                )
+            )
+        else:
+            # Format scalar value
+            formatted, css_class = _format_value(value, key)
+            result.append(
+                AttributeDisplay(
+                    label=full_key,
+                    value=formatted,
+                    css_class=css_class,
+                    tooltip=_get_field_tooltip(key),
+                    raw_key=full_key,
+                )
+            )
+
+    # Add all top-level fields in order
+    for key, value in acdc_dict.items():
+        add_field(key, value)
+
+    return result
 
 
 def _get_primary_attribute(
@@ -495,8 +870,11 @@ def build_credential_card_vm(
                 primary_field = field_name
                 break
 
-    # Build secondary attributes
+    # Build secondary attributes (for backwards compatibility)
     secondary = _get_secondary_attributes(acdc.attributes, primary_field)
+
+    # Build attribute sections (new categorized display)
+    sections = _build_attribute_sections(acdc.attributes, primary_field)
 
     # Build edges
     edges, missing_edges = _build_edges(acdc.edges, available_saids)
@@ -529,6 +907,27 @@ def build_credential_card_vm(
         source_format="cesr" if acdc.signature else "json",
     )
 
+    # Build raw contents for "Raw Contents" collapsible section with tooltips
+    # Include all top-level ACDC fields
+    acdc_full_dict: Dict[str, Any] = {
+        "d": acdc.said,
+        "i": acdc.issuer_aid,
+        "s": acdc.schema_said,
+    }
+    if isinstance(acdc.attributes, dict):
+        acdc_full_dict["a"] = acdc.attributes
+    elif acdc.attributes:
+        acdc_full_dict["a"] = acdc.attributes  # SAID string for compact
+    if acdc.edges:
+        acdc_full_dict["e"] = acdc.edges
+    # Include any additional fields from the raw ACDC
+    if hasattr(acdc, "raw") and isinstance(acdc.raw, dict):
+        for key in ("v", "t", "u", "rd", "r"):
+            if key in acdc.raw:
+                acdc_full_dict[key] = acdc.raw[key]
+
+    raw_contents = _build_raw_contents(acdc_full_dict)
+
     return CredentialCardViewModel(
         said=said,
         schema_said=schema_said,
@@ -539,7 +938,9 @@ def build_credential_card_vm(
         issuer=issuer,
         primary=primary,
         secondary=secondary,
+        sections=sections,
         edges=edges,
         limitations=limitations,
         raw=raw,
+        raw_contents=raw_contents,
     )

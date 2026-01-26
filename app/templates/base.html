@@ -160,6 +160,136 @@
             border-color: var(--vvp-warning);
         }
 
+        /* Sprint 22: Attribute section styling */
+        .credential-attributes {
+            margin: 0.5em 0;
+        }
+        .credential-attributes details {
+            margin-bottom: 0.5em;
+            padding: 0.25em;
+            background: rgba(0, 0, 0, 0.02);
+            border-radius: 0.25em;
+        }
+        .credential-attributes summary {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.25em;
+        }
+        .credential-attributes summary .badge {
+            margin-left: 0.5em;
+        }
+
+        /* Attribute value styling by type */
+        .attr-bool-true {
+            color: var(--vvp-success);
+            font-weight: 600;
+        }
+        .attr-bool-false {
+            color: var(--vvp-danger);
+            font-weight: 600;
+        }
+        .attr-date {
+            font-style: italic;
+        }
+        .attr-array {
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        .attr-null {
+            color: var(--vvp-muted);
+            font-style: italic;
+        }
+        .attr-redacted {
+            color: var(--vvp-muted);
+            font-style: italic;
+        }
+
+        /* Sprint 22: Field tooltips */
+        .has-tooltip {
+            cursor: help;
+            border-bottom: 1px dotted var(--vvp-muted);
+        }
+        .has-tooltip:hover {
+            color: var(--vvp-info);
+        }
+
+        /* Sprint 22: Raw Contents section */
+        .raw-contents-section {
+            background: rgba(0, 0, 0, 0.02);
+            border-radius: 0.25em;
+            padding: 0.5em;
+            margin-top: 0.5rem;
+        }
+        .raw-contents-section summary {
+            font-weight: 600;
+            color: var(--vvp-muted);
+        }
+        .raw-contents-grid {
+            margin-top: 0.5em;
+            font-size: 0.9em;
+        }
+        .raw-contents-grid dt {
+            font-family: monospace;
+            color: var(--vvp-info);
+        }
+        .raw-contents-grid dd {
+            margin-bottom: 0.25em;
+        }
+        .attr-object-marker {
+            color: var(--vvp-muted);
+            font-style: italic;
+        }
+
+        /* Sprint 22: Edge links */
+        .edge-link {
+            color: var(--vvp-info);
+            text-decoration: none;
+        }
+        .edge-link:hover {
+            text-decoration: underline;
+        }
+
+        /* Sprint 22: Credential highlight animation */
+        .credential-highlight {
+            animation: highlight-pulse 2s ease-out;
+        }
+        @keyframes highlight-pulse {
+            0% { box-shadow: 0 0 0 4px var(--vvp-info); }
+            100% { box-shadow: none; }
+        }
+
+        /* Sprint 22: Graph container and SVG connectors */
+        .credential-graph-container {
+            position: relative;
+            padding: 1rem;
+        }
+        .graph-connectors {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+        }
+        .graph-layer {
+            position: relative;
+            z-index: 1;
+            margin-bottom: 2rem;
+        }
+        .layer-cards {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            justify-content: center;
+        }
+        .layer-label {
+            margin: 0 0 0.5rem 0;
+            color: var(--vvp-muted);
+            text-align: center;
+        }
+
         /* Responsive: stack on mobile */
         @media (max-width: 600px) {
             .credential-card header {
@@ -168,6 +298,11 @@
             }
             .attrs-grid {
                 grid-template-columns: 1fr;
+            }
+        }
+        @media (max-width: 768px) {
+            .graph-connectors {
+                display: none;
             }
         }
     </style>
@@ -210,6 +345,145 @@
             container.appendChild(toast);
             setTimeout(() => toast.remove(), 5000);
         });
+
+        // Show a toast notification
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-' + type;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 5000);
+        }
+
+        // Sprint 22: Scroll to and highlight a credential card
+        function highlightCredential(said) {
+            const target = document.getElementById('cred-' + said);
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                target.classList.add('credential-highlight');
+                setTimeout(() => target.classList.remove('credential-highlight'), 2000);
+            } else {
+                showToast('Credential not in current view', 'warning');
+            }
+        }
+
+        // Sprint 22: Draw SVG connectors between credential cards
+        function drawGraphConnectors() {
+            const svg = document.getElementById('graph-connectors');
+            if (!svg) return;
+
+            // Clear existing paths (keep defs)
+            const paths = svg.querySelectorAll('path');
+            paths.forEach(p => p.remove());
+
+            const container = document.getElementById('graph-container');
+            if (!container) return;
+
+            const containerRect = container.getBoundingClientRect();
+
+            // Set SVG size to match container
+            svg.setAttribute('width', container.scrollWidth);
+            svg.setAttribute('height', container.scrollHeight);
+
+            // Get edges from data attribute
+            const edgesJson = container.dataset.edges;
+            if (!edgesJson) return;
+
+            let edges;
+            try {
+                edges = JSON.parse(edgesJson);
+            } catch (e) {
+                console.error('Failed to parse graph edges:', e);
+                return;
+            }
+
+            // Edge type colors
+            const edgeColors = {
+                'vetting': '#28a745',
+                'delegation': '#007bff',
+                'issued_by': '#6f42c1',
+                'jl': '#fd7e14',
+                'default': '#6c757d'
+            };
+
+            edges.forEach(edge => {
+                const fromEl = document.getElementById('cred-' + edge.from);
+                const toEl = document.getElementById('cred-' + edge.to);
+
+                if (fromEl && toEl) {
+                    const fromRect = fromEl.getBoundingClientRect();
+                    const toRect = toEl.getBoundingClientRect();
+
+                    // Calculate connector points (bottom of from → top of to)
+                    const x1 = fromRect.left - containerRect.left + fromRect.width / 2 + container.scrollLeft;
+                    const y1 = fromRect.bottom - containerRect.top + container.scrollTop;
+                    const x2 = toRect.left - containerRect.left + toRect.width / 2 + container.scrollLeft;
+                    const y2 = toRect.top - containerRect.top + container.scrollTop;
+
+                    // Create bezier curve path
+                    const midY = (y1 + y2) / 2;
+                    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                    path.setAttribute('d', `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`);
+                    path.setAttribute('stroke', edgeColors[edge.type] || edgeColors.default);
+                    path.setAttribute('stroke-width', '2');
+                    path.setAttribute('fill', 'none');
+                    path.setAttribute('marker-end', 'url(#arrowhead)');
+
+                    svg.appendChild(path);
+                }
+            });
+        }
+
+        // Create arrow marker for SVG connectors
+        function createArrowMarker(svg) {
+            if (svg.querySelector('#arrowhead')) return; // Already exists
+
+            const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+            marker.setAttribute('id', 'arrowhead');
+            marker.setAttribute('markerWidth', '10');
+            marker.setAttribute('markerHeight', '7');
+            marker.setAttribute('refX', '9');
+            marker.setAttribute('refY', '3.5');
+            marker.setAttribute('orient', 'auto');
+
+            const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+            polygon.setAttribute('points', '0 0, 10 3.5, 0 7');
+            polygon.setAttribute('fill', '#6c757d');
+
+            marker.appendChild(polygon);
+            defs.appendChild(marker);
+            svg.appendChild(defs);
+        }
+
+        // Initialize graph connectors on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            const svg = document.getElementById('graph-connectors');
+            if (svg) {
+                createArrowMarker(svg);
+                // Delay drawing to allow layout to settle
+                setTimeout(drawGraphConnectors, 100);
+            }
+        });
+
+        // Redraw connectors on window resize
+        window.addEventListener('resize', () => {
+            const svg = document.getElementById('graph-connectors');
+            if (svg) {
+                drawGraphConnectors();
+            }
+        });
+
+        // Redraw connectors when details sections expand/collapse
+        document.addEventListener('toggle', (evt) => {
+            if (evt.target.tagName === 'DETAILS') {
+                const container = document.getElementById('graph-container');
+                if (container && container.contains(evt.target)) {
+                    setTimeout(drawGraphConnectors, 50);
+                }
+            }
+        }, true);
     </script>
 
     {% block scripts %}{% endblock %}

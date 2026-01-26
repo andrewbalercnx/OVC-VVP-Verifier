@@ -6,6 +6,11 @@ Per Sprint 21 plan (PLAN_Credential_Card_UI.md), tests cover:
 - Variant detection (compact/partial)
 - Trusted root checking
 - Missing data handling
+
+Per Sprint 22 plan, additional tests cover:
+- Attribute formatting (booleans, dates, arrays)
+- Nested dict flattening
+- Attribute section categorization
 """
 
 import pytest
@@ -13,12 +18,19 @@ import pytest
 from app.vvp.acdc.models import ACDC, ACDCChainResult
 from app.vvp.ui.credential_viewmodel import (
     AttributeDisplay,
+    AttributeSection,
     CredentialCardViewModel,
     EdgeLink,
     IssuerInfo,
     RawACDCData,
     RevocationStatus,
     VariantLimitations,
+    _build_attribute_sections,
+    _flatten_nested,
+    _format_date,
+    _format_value,
+    _is_iso_date,
+    _is_redacted_value,
     build_credential_card_vm,
     normalize_edge,
 )
@@ -536,3 +548,586 @@ class TestRawData:
         )
         vm = build_credential_card_vm(acdc)
         assert vm.raw.source_format == "json"
+
+
+# =============================================================================
+# Sprint 22: Attribute Formatting Tests
+# =============================================================================
+
+
+class TestIsIsoDate:
+    """Tests for ISO date detection."""
+
+    def test_valid_iso_date(self):
+        """Valid ISO date is detected."""
+        assert _is_iso_date("2024-11-25T20:20:39+00:00") is True
+
+    def test_valid_iso_date_short(self):
+        """Date without time is detected."""
+        assert _is_iso_date("2024-11-25") is True
+
+    def test_valid_iso_date_with_z(self):
+        """Date with Z timezone is detected."""
+        assert _is_iso_date("2024-11-25T20:20:39Z") is True
+
+    def test_short_string_not_date(self):
+        """Short string is not a date."""
+        assert _is_iso_date("2024-11") is False
+
+    def test_invalid_format(self):
+        """Invalid format is not a date."""
+        assert _is_iso_date("not-a-date") is False
+        assert _is_iso_date("11-25-2024") is False
+
+    def test_empty_string(self):
+        """Empty string is not a date."""
+        assert _is_iso_date("") is False
+
+
+class TestFormatDate:
+    """Tests for date formatting."""
+
+    def test_format_iso_date(self):
+        """ISO date is formatted to human-readable."""
+        result = _format_date("2024-11-25T20:20:39+00:00")
+        assert "Nov" in result
+        assert "25" in result
+        assert "2024" in result
+
+    def test_format_iso_date_with_z(self):
+        """Z timezone is handled."""
+        result = _format_date("2024-11-25T20:20:39Z")
+        assert "Nov" in result
+
+    def test_invalid_date_returns_original(self):
+        """Invalid date returns original string."""
+        result = _format_date("not-a-date")
+        assert result == "not-a-date"
+
+
+class TestIsRedactedValue:
+    """Tests for redaction placeholder detection."""
+
+    def test_underscore_is_redacted(self):
+        """Single underscore is a redaction placeholder."""
+        assert _is_redacted_value("_") is True
+
+    def test_typed_placeholder_is_redacted(self):
+        """Typed placeholders like _:string are redacted."""
+        assert _is_redacted_value("_:string") is True
+        assert _is_redacted_value("_:date") is True
+        assert _is_redacted_value("_:datetime") is True
+
+    def test_hash_is_redacted(self):
+        """Hash marker is a redaction placeholder."""
+        assert _is_redacted_value("#") is True
+
+    def test_explicit_redacted_is_redacted(self):
+        """Explicit [REDACTED] marker is redacted."""
+        assert _is_redacted_value("[REDACTED]") is True
+
+    def test_empty_string_is_redacted(self):
+        """Empty string is treated as redacted."""
+        assert _is_redacted_value("") is True
+
+    def test_normal_values_not_redacted(self):
+        """Normal values are not redaction placeholders."""
+        assert _is_redacted_value("hello") is False
+        assert _is_redacted_value("549300EXAMPLE") is False
+        assert _is_redacted_value("+1-555-0100") is False
+
+    def test_none_not_redacted(self):
+        """None is not a redaction placeholder (handled separately)."""
+        assert _is_redacted_value(None) is False
+
+    def test_non_string_not_redacted(self):
+        """Non-string values are not redaction placeholders."""
+        assert _is_redacted_value(42) is False
+        assert _is_redacted_value(True) is False
+        assert _is_redacted_value(["a", "b"]) is False
+
+
+class TestFormatValue:
+    """Tests for attribute value formatting."""
+
+    def test_format_boolean_true(self):
+        """True boolean is formatted as 'Yes' with class."""
+        value, css_class = _format_value(True, "key")
+        assert value == "Yes"
+        assert css_class == "attr-bool-true"
+
+    def test_format_boolean_false(self):
+        """False boolean is formatted as 'No' with class."""
+        value, css_class = _format_value(False, "key")
+        assert value == "No"
+        assert css_class == "attr-bool-false"
+
+    def test_format_none(self):
+        """None is formatted as em dash."""
+        value, css_class = _format_value(None, "key")
+        assert value == "—"
+        assert css_class == "attr-null"
+
+    def test_format_iso_date_string(self):
+        """ISO date string is formatted with class."""
+        value, css_class = _format_value("2024-11-25T20:20:39+00:00", "key")
+        assert "Nov" in value
+        assert css_class == "attr-date"
+
+    def test_format_regular_string(self):
+        """Regular string is returned as-is."""
+        value, css_class = _format_value("hello world", "key")
+        assert value == "hello world"
+        assert css_class == ""
+
+    def test_format_list(self):
+        """List is joined with commas."""
+        value, css_class = _format_value(["a", "b", "c"], "key")
+        assert value == "a, b, c"
+        assert css_class == "attr-array"
+
+    def test_format_number(self):
+        """Number is converted to string."""
+        value, css_class = _format_value(42, "key")
+        assert value == "42"
+        assert css_class == ""
+
+    def test_format_redacted_underscore(self):
+        """Underscore placeholder is formatted as redacted."""
+        value, css_class = _format_value("_", "key")
+        assert value == "(redacted)"
+        assert css_class == "attr-redacted"
+
+    def test_format_redacted_typed(self):
+        """Typed placeholder is formatted as redacted."""
+        value, css_class = _format_value("_:string", "key")
+        assert value == "(redacted)"
+        assert css_class == "attr-redacted"
+
+    def test_format_redacted_hash(self):
+        """Hash marker is formatted as redacted."""
+        value, css_class = _format_value("#", "key")
+        assert value == "(redacted)"
+        assert css_class == "attr-redacted"
+
+    def test_format_redacted_explicit(self):
+        """Explicit [REDACTED] is formatted as redacted."""
+        value, css_class = _format_value("[REDACTED]", "key")
+        assert value == "(redacted)"
+        assert css_class == "attr-redacted"
+
+
+class TestFlattenNested:
+    """Tests for nested dict flattening."""
+
+    def test_flatten_simple_dict(self):
+        """Simple dict is returned as list of tuples."""
+        result = _flatten_nested({"a": 1, "b": 2})
+        assert ("a", 1) in result
+        assert ("b", 2) in result
+
+    def test_flatten_nested_dict(self):
+        """Nested dict is flattened with dot notation."""
+        result = _flatten_nested({"numbers": {"rangeStart": "+1234", "rangeEnd": "+5678"}})
+        assert ("numbers.rangeStart", "+1234") in result
+        assert ("numbers.rangeEnd", "+5678") in result
+
+    def test_flatten_deeply_nested(self):
+        """Deeply nested dict is flattened."""
+        result = _flatten_nested({"a": {"b": {"c": "deep"}}})
+        assert ("a.b.c", "deep") in result
+
+    def test_flatten_skips_excluded_fields(self):
+        """Excluded fields (d, dt, i, s, v, n) are skipped."""
+        result = _flatten_nested({"d": "x", "dt": "y", "visible": "show"})
+        keys = [k for k, v in result]
+        assert "d" not in keys
+        assert "dt" not in keys
+        assert "visible" in keys
+
+    def test_flatten_skips_underscore_fields(self):
+        """Fields starting with underscore are skipped."""
+        result = _flatten_nested({"_internal": "hidden", "visible": "show"})
+        keys = [k for k, v in result]
+        assert "_internal" not in keys
+        assert "visible" in keys
+
+
+class TestBuildAttributeSections:
+    """Tests for attribute section building."""
+
+    def test_categorizes_dates(self):
+        """Date fields are categorized in Dates section."""
+        sections = _build_attribute_sections({
+            "startDate": "2024-11-25T00:00:00Z",
+            "endDate": "2024-12-25T00:00:00Z",
+        })
+        dates_section = next((s for s in sections if s.name == "Dates & Times"), None)
+        assert dates_section is not None
+        assert len(dates_section.attributes) == 2
+
+    def test_categorizes_identity(self):
+        """Identity fields are categorized in Identity section."""
+        sections = _build_attribute_sections({
+            "LEI": "549300EXAMPLE",
+            "legalName": "Acme Corp",
+        })
+        identity_section = next((s for s in sections if s.name == "Identity"), None)
+        assert identity_section is not None
+        labels = [a.label.lower() for a in identity_section.attributes]
+        assert any("lei" in l for l in labels)
+        assert any("legal" in l for l in labels)
+
+    def test_categorizes_permissions(self):
+        """Permission fields are categorized in Permissions section."""
+        sections = _build_attribute_sections({
+            "doNotOriginate": False,
+            "channel": "voice",
+        })
+        perms_section = next((s for s in sections if s.name == "Permissions"), None)
+        assert perms_section is not None
+        assert len(perms_section.attributes) == 2
+
+    def test_categorizes_numbers(self):
+        """Number/phone fields are categorized in Numbers section."""
+        sections = _build_attribute_sections({
+            "tn": "+1-555-0100",
+        })
+        numbers_section = next((s for s in sections if s.name == "Numbers & Ranges"), None)
+        assert numbers_section is not None
+
+    def test_unknown_fields_go_to_other(self):
+        """Unknown fields are categorized in Other section."""
+        sections = _build_attribute_sections({
+            "customField": "value",
+            "anotherCustom": "data",
+        })
+        other_section = next((s for s in sections if s.name == "Other Attributes"), None)
+        assert other_section is not None
+        assert len(other_section.attributes) == 2
+
+    def test_empty_for_non_dict(self):
+        """Non-dict attributes return empty sections."""
+        sections = _build_attribute_sections("E" + "A" * 43)
+        assert sections == []
+
+    def test_empty_for_empty_dict(self):
+        """Empty dict returns empty sections."""
+        sections = _build_attribute_sections({})
+        assert sections == []
+
+    def test_primary_field_excluded(self):
+        """Primary field is excluded from sections."""
+        sections = _build_attribute_sections(
+            {"tn": "+1-555-0100", "channel": "voice"},
+            primary_field="tn",
+        )
+        all_attrs = [a for s in sections for a in s.attributes]
+        labels = [a.label.lower() for a in all_attrs]
+        assert not any("tn" in l for l in labels)
+
+    def test_flattens_nested_objects(self):
+        """Nested objects are flattened into sections."""
+        sections = _build_attribute_sections({
+            "numbers": {"rangeStart": "+1234", "rangeEnd": "+5678"},
+        })
+        numbers_section = next((s for s in sections if s.name == "Numbers & Ranges"), None)
+        assert numbers_section is not None
+        labels = [a.label for a in numbers_section.attributes]
+        # Dot notation converted to arrow separator
+        assert any("›" in l for l in labels)
+
+    def test_redacted_placeholder_masked(self):
+        """Redaction placeholders are displayed as '(redacted)'."""
+        sections = _build_attribute_sections({
+            "LEI": "_",  # Full redaction placeholder
+            "legalName": "_:string",  # Typed placeholder
+        })
+        identity_section = next((s for s in sections if s.name == "Identity"), None)
+        assert identity_section is not None
+        for attr in identity_section.attributes:
+            assert attr.value == "(redacted)"
+            assert attr.css_class == "attr-redacted"
+
+    def test_redacted_hash_marker_masked(self):
+        """Hash marker redaction is displayed as '(redacted)'."""
+        sections = _build_attribute_sections({
+            "customField": "#",
+        })
+        other_section = next((s for s in sections if s.name == "Other Attributes"), None)
+        assert other_section is not None
+        attr = other_section.attributes[0]
+        assert attr.value == "(redacted)"
+        assert attr.css_class == "attr-redacted"
+
+    def test_redacted_explicit_marker_masked(self):
+        """Explicit [REDACTED] marker is displayed as '(redacted)'."""
+        sections = _build_attribute_sections({
+            "customField": "[REDACTED]",
+        })
+        other_section = next((s for s in sections if s.name == "Other Attributes"), None)
+        assert other_section is not None
+        attr = other_section.attributes[0]
+        assert attr.value == "(redacted)"
+        assert attr.css_class == "attr-redacted"
+
+
+class TestViewModelSections:
+    """Tests for sections field in CredentialCardViewModel."""
+
+    def test_vm_has_sections_field(self):
+        """CredentialCardViewModel has sections populated."""
+        acdc = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "LEI": "549300EXAMPLE",
+                "startDate": "2024-01-01T00:00:00Z",
+            },
+            edges=None,
+            variant="full",
+        )
+        vm = build_credential_card_vm(acdc)
+
+        assert hasattr(vm, "sections")
+        assert isinstance(vm.sections, list)
+        assert len(vm.sections) > 0
+
+    def test_vm_sections_empty_for_compact(self):
+        """Compact variant has empty sections."""
+        acdc = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="E" + "S" * 43,
+            attributes="E" + "X" * 43,  # Compact variant
+            edges=None,
+            variant="compact",
+        )
+        vm = build_credential_card_vm(acdc)
+
+        assert vm.sections == []
+
+    def test_vm_secondary_still_populated(self):
+        """Secondary field is still populated for backwards compatibility."""
+        acdc = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={"field1": "a", "field2": "b", "field3": "c", "field4": "d"},
+            edges=None,
+            variant="full",
+        )
+        vm = build_credential_card_vm(acdc)
+
+        assert hasattr(vm, "secondary")
+        assert len(vm.secondary) <= 3  # Limited for backwards compat
+
+
+# =============================================================================
+# Sprint 22 Part 2: Tooltip and Raw Contents Tests
+# =============================================================================
+
+
+from app.vvp.ui.credential_viewmodel import (
+    FIELD_DESCRIPTIONS,
+    _get_field_tooltip,
+    _build_raw_contents,
+)
+
+
+class TestFieldDescriptions:
+    """Tests for field description mapping."""
+
+    def test_core_acdc_fields_have_descriptions(self):
+        """Core ACDC fields (v, d, i, s, a, e, r) have descriptions."""
+        core_fields = ["v", "d", "i", "s", "a", "e", "r"]
+        for field in core_fields:
+            assert field in FIELD_DESCRIPTIONS, f"Missing description for {field}"
+            assert len(FIELD_DESCRIPTIONS[field]) > 10, f"Description for {field} too short"
+
+    def test_common_attribute_fields_have_descriptions(self):
+        """Common attribute fields have descriptions."""
+        common_fields = ["LEI", "legalName", "dt", "tn", "channel"]
+        for field in common_fields:
+            assert field in FIELD_DESCRIPTIONS, f"Missing description for {field}"
+
+
+class TestGetFieldTooltip:
+    """Tests for tooltip lookup function."""
+
+    def test_exact_match(self):
+        """Exact key match returns description."""
+        tooltip = _get_field_tooltip("LEI")
+        assert "Legal Entity Identifier" in tooltip
+
+    def test_base_key_match(self):
+        """Nested key matches on base key."""
+        tooltip = _get_field_tooltip("numbers.rangeStart")
+        # Should match either "numbers" or "rangeStart"
+        assert tooltip != ""
+
+    def test_last_segment_match(self):
+        """Nested key matches on last segment when base key not found."""
+        # Use a key where base is not in FIELD_DESCRIPTIONS but last segment is
+        tooltip = _get_field_tooltip("custom.nested.dt")
+        assert "Datetime" in tooltip or "datetime" in tooltip.lower()
+
+    def test_unknown_key_returns_empty(self):
+        """Unknown key returns empty string."""
+        tooltip = _get_field_tooltip("xyz_unknown_field_abc")
+        assert tooltip == ""
+
+    def test_core_field_descriptions(self):
+        """Core ACDC fields return appropriate descriptions."""
+        assert "SAID" in _get_field_tooltip("d")
+        assert "Issuer" in _get_field_tooltip("i")
+        assert "Schema" in _get_field_tooltip("s")
+
+
+class TestBuildRawContents:
+    """Tests for raw contents builder."""
+
+    def test_builds_list_of_attribute_displays(self):
+        """Returns list of AttributeDisplay objects."""
+        result = _build_raw_contents({"d": "E" + "A" * 43, "i": "D" + "B" * 43})
+        assert isinstance(result, list)
+        assert all(isinstance(a, AttributeDisplay) for a in result)
+
+    def test_includes_all_top_level_fields(self):
+        """All top-level fields are included."""
+        result = _build_raw_contents({"d": "x", "i": "y", "s": "z"})
+        labels = [a.label for a in result]
+        assert "d" in labels
+        assert "i" in labels
+        assert "s" in labels
+
+    def test_flattens_nested_dicts(self):
+        """Nested dicts are flattened with dot notation."""
+        result = _build_raw_contents({
+            "a": {"nested": {"deep": "value"}}
+        })
+        labels = [a.label for a in result]
+        # Should have "a", "a.nested", and "a.nested.deep"
+        assert any("a.nested.deep" in l for l in labels)
+
+    def test_formats_arrays(self):
+        """Arrays are formatted appropriately."""
+        result = _build_raw_contents({"goals": ["a", "b", "c"]})
+        goals_attr = next((a for a in result if a.label == "goals"), None)
+        assert goals_attr is not None
+        assert "a" in goals_attr.value
+        assert goals_attr.css_class == "attr-array"
+
+    def test_includes_tooltips(self):
+        """Attributes have tooltips where available."""
+        result = _build_raw_contents({"d": "E" + "A" * 43, "i": "D" + "B" * 43})
+        d_attr = next((a for a in result if a.label == "d"), None)
+        assert d_attr is not None
+        assert d_attr.tooltip != ""
+        assert "SAID" in d_attr.tooltip
+
+    def test_raw_key_preserved(self):
+        """Raw key is preserved in AttributeDisplay."""
+        result = _build_raw_contents({"LEI": "549300EXAMPLE"})
+        lei_attr = next((a for a in result if a.label == "LEI"), None)
+        assert lei_attr is not None
+        assert lei_attr.raw_key == "LEI"
+
+
+class TestViewModelRawContents:
+    """Tests for raw_contents field in CredentialCardViewModel."""
+
+    def test_vm_has_raw_contents_field(self):
+        """CredentialCardViewModel has raw_contents populated."""
+        acdc = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={"LEI": "549300EXAMPLE"},
+            edges=None,
+            variant="full",
+        )
+        vm = build_credential_card_vm(acdc)
+
+        assert hasattr(vm, "raw_contents")
+        assert isinstance(vm.raw_contents, list)
+        assert len(vm.raw_contents) > 0
+
+    def test_raw_contents_includes_core_fields(self):
+        """Raw contents includes d, i, s fields."""
+        acdc = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={},
+            edges=None,
+            variant="full",
+        )
+        vm = build_credential_card_vm(acdc)
+
+        labels = [a.label for a in vm.raw_contents]
+        assert "d" in labels
+        assert "i" in labels
+        assert "s" in labels
+
+    def test_raw_contents_attributes_have_tooltips(self):
+        """Raw contents attributes have tooltips for known fields."""
+        acdc = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={"LEI": "549300EXAMPLE"},
+            edges=None,
+            variant="full",
+        )
+        vm = build_credential_card_vm(acdc)
+
+        d_attr = next((a for a in vm.raw_contents if a.label == "d"), None)
+        assert d_attr is not None
+        assert d_attr.tooltip != ""
+
+
+class TestAttributeDisplayTooltip:
+    """Tests for tooltip field in AttributeDisplay from sections."""
+
+    def test_sections_attributes_have_tooltips(self):
+        """Attributes in sections have tooltips for known fields."""
+        sections = _build_attribute_sections({
+            "LEI": "549300EXAMPLE",
+            "legalName": "Acme Corp",
+        })
+        identity_section = next((s for s in sections if s.name == "Identity"), None)
+        assert identity_section is not None
+
+        lei_attr = next((a for a in identity_section.attributes if "LEI" in a.label.upper()), None)
+        assert lei_attr is not None
+        assert lei_attr.tooltip != ""
+        assert "Legal Entity Identifier" in lei_attr.tooltip
+
+    def test_sections_attributes_have_raw_key(self):
+        """Attributes in sections preserve raw_key."""
+        sections = _build_attribute_sections({
+            "LEI": "549300EXAMPLE",
+        })
+        identity_section = next((s for s in sections if s.name == "Identity"), None)
+        lei_attr = next((a for a in identity_section.attributes if "LEI" in a.label.upper()), None)
+        assert lei_attr is not None
+        assert lei_attr.raw_key == "LEI"
+
+    def test_unknown_fields_have_empty_tooltip(self):
+        """Unknown fields have empty tooltip."""
+        sections = _build_attribute_sections({
+            "xyz_custom_field": "value",
+        })
+        other_section = next((s for s in sections if s.name == "Other Attributes"), None)
+        assert other_section is not None
+        custom_attr = next((a for a in other_section.attributes), None)
+        assert custom_attr is not None
+        assert custom_attr.tooltip == ""
