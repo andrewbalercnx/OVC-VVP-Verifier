@@ -250,6 +250,7 @@ def verify_sip_context_alignment(
     passport,  # Passport type from passport.py
     sip_context,  # Optional[SipContext]
     timing_tolerance: int = 30,
+    context_required: bool = False,
 ) -> ClaimBuilder:
     """Verify SIP contextual alignment per §5A Step 2.
 
@@ -257,15 +258,20 @@ def verify_sip_context_alignment(
         passport: Parsed PASSporT object
         sip_context: Optional SIP context from request
         timing_tolerance: Timing tolerance in seconds (default 30)
+        context_required: If True, missing context is INVALID (from config)
 
     Returns:
         ClaimBuilder for `context_aligned` claim
     """
     claim = ClaimBuilder("context_aligned")
 
-    # If SIP context not provided, mark as INDETERMINATE per §4.4
+    # If SIP context not provided, check policy per §4.4
     if sip_context is None:
-        claim.fail(ClaimStatus.INDETERMINATE, "SIP context not provided")
+        if context_required:
+            # Per Sprint 18 fix A1: CONTEXT_ALIGNMENT_REQUIRED=True means missing context is INVALID
+            claim.fail(ClaimStatus.INVALID, "SIP context required but not provided")
+        else:
+            claim.fail(ClaimStatus.INDETERMINATE, "SIP context not provided")
         claim.add_evidence("sip_context:absent")
         return claim
 

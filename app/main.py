@@ -16,10 +16,11 @@ from pydantic import BaseModel
 import httpx
 
 from app.logging_config import configure_logging
-from app.vvp.api_models import VerifyRequest
+from app.vvp.api_models import VerifyRequest, VerifyCalleeRequest
 from app.vvp.exceptions import PassportError
 from app.vvp.passport import parse_passport
 from app.vvp.verify import verify_vvp
+from app.vvp.verify_callee import verify_callee_vvp
 
 configure_logging()
 log = logging.getLogger("vvp")
@@ -59,6 +60,64 @@ async def verify(req: VerifyRequest, request: Request):
     req_id, resp = await verify_vvp(req, vvp_identity_header)
     log.info("verify_called", extra={"request_id":req_id, "route":"/verify",
                                     "remote_addr": request.client.host if request.client else "-"})
+    return JSONResponse(resp.model_dump())
+
+
+@app.post("/verify-callee")
+async def verify_callee(req: VerifyCalleeRequest, request: Request):
+    """Verify callee identity per VVP §5B.
+
+    Sprint 19 - Phase 12: Callee verification validates the called party's
+    identity and rights. This endpoint implements the 14-step callee
+    verification algorithm specified in VVP §5B.
+
+    Requirements:
+    - VVP-Identity header is REQUIRED
+    - context.call_id is REQUIRED (for dialog matching)
+    - context.sip.cseq is REQUIRED (for dialog matching)
+    - caller_passport_jwt is OPTIONAL (for goal overlap check)
+
+    The callee PASSporT MUST contain call-id and cseq claims matching
+    the SIP INVITE values.
+    """
+    # Validate callee-specific requirements (per approved plan)
+    # call_id is in CallContext, cseq is in SipContext
+    if not req.context.call_id:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "call_id required in context for callee verification"}
+        )
+    if not req.context.sip:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "SIP context required for callee verification"}
+        )
+    if req.context.sip.cseq is None:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "cseq required in SIP context for callee verification"}
+        )
+
+    vvp_identity_header = request.headers.get("VVP-Identity")
+    if not vvp_identity_header:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "VVP-Identity header required for callee verification"}
+        )
+
+    req_id, resp = await verify_callee_vvp(
+        vvp_identity_header,
+        req.passport_jwt,
+        req.context,
+        req.caller_passport_jwt,
+    )
+
+    log.info("verify_callee_called", extra={
+        "request_id": req_id,
+        "route": "/verify-callee",
+        "remote_addr": request.client.host if request.client else "-"
+    })
+
     return JSONResponse(resp.model_dump())
 
 

@@ -1,10 +1,10 @@
 # VVP Verifier Implementation Checklist
 
-**Document Version:** 3.10
+**Document Version:** 3.11
 **Specification Version:** v1.4 FINAL + draft-hardman-verifiable-voice-protocol §5
 **Created:** 2026-01-23
-**Last Updated:** 2026-01-25
-**Status:** Tier 1 Complete, Tier 2 Complete, Tier 3 In Progress (91% overall)
+**Last Updated:** 2026-01-26
+**Status:** Tier 1 Complete, Tier 2 Complete, Tier 3 Complete (99% overall)
 
 ---
 
@@ -282,27 +282,27 @@ The following VVP spec requirements are **out of scope** for this verification A
 
 ---
 
-## Phase 12: Callee Verification (Tier 3) - NEW
+## Phase 12: Callee Verification (Tier 3) - COMPLETE
 
 **Spec Reference:** §5.2 (Verifying the Callee)
 
 | # | Task | Status | Commit | Comments |
 |---|------|--------|--------|----------|
-| 12.1 | Create `app/vvp/verify_callee.py` module | [ ] | | Separate flow per §5.2 |
-| 12.2 | Validate `call-id` and `cseq` match SIP INVITE | [ ] | | Per §5.2-2.1 |
-| 12.3 | Validate `iat` matches SIP metadata | [ ] | | Per §5.2-2.2 |
-| 12.4 | Analyze `exp` for timeout evaluation | [ ] | | Per §5.2-2.3 |
-| 12.5 | Extract `kid` and resolve callee key state | [ ] | | Per §5.2-2.4, §5.2-2.5 |
-| 12.6 | Verify callee passport signature | [ ] | | Per §5.2-2.6 |
-| 12.7 | Fetch and validate callee dossier | [ ] | | Per §5.2-2.7 to §5.2-2.10 |
-| 12.8 | Confirm dossier signed by AID in `kid` | [ ] | | Per §5.2-2.9 |
-| 12.9 | Check revocation status for callee dossier | [ ] | | Per §5.2-2.11 |
-| 12.10 | Verify callee TNAlloc credential | [ ] | | Per §5.2-2.12 |
-| 12.11 | Verify callee brand attributes if present | [ ] | | Per §5.2-2.13 |
-| 12.12 | Check goal overlap with caller (if applicable) | [ ] | | Per §5.2-2.14 |
-| 12.13 | Add POST /verify-callee endpoint | [ ] | | |
-| 12.14 | Unit tests for callee verification | [ ] | | |
-| 12.15 | Unknown claims in PASSporT MUST be ignored (not cause failure) | [ ] | | Per VVP §4.2 - **MUST** |
+| 12.1 | Create `app/vvp/verify_callee.py` module | [x] | Sprint 19 | Separate flow per §5.2 |
+| 12.2 | Validate `call-id` and `cseq` match SIP INVITE | [x] | Sprint 19 | Per §5.2-2.1, validate_dialog_match() |
+| 12.3 | Validate `iat` matches SIP metadata | [x] | Sprint 19 | Per §5.2-2.2 |
+| 12.4 | Analyze `exp` for timeout evaluation | [x] | Sprint 19 | Per §5.2-2.3 |
+| 12.5 | Extract `kid` and resolve callee key state | [x] | Sprint 19 | Per §5.2-2.4, §5.2-2.5 |
+| 12.6 | Verify callee passport signature | [x] | Sprint 19 | Per §5.2-2.6 |
+| 12.7 | Fetch and validate callee dossier | [x] | Sprint 19 | Per §5.2-2.7 to §5.2-2.10 |
+| 12.8 | Confirm dossier signed by AID in `kid` | [x] | Sprint 19 | Per §5.2-2.9, validate_issuer_match() |
+| 12.9 | Check revocation status for callee dossier | [x] | Sprint 19 | Per §5.2-2.11 |
+| 12.10 | Verify callee TNAlloc credential | [x] | Sprint 19 | Per §5.2-2.12, validate_callee_tn_rights() |
+| 12.11 | Verify callee brand attributes if present | [x] | Sprint 19 | Per §5.2-2.13 |
+| 12.12 | Check goal overlap with caller (if applicable) | [x] | Sprint 19 | Per §5.2-2.14, verify_goal_overlap() |
+| 12.13 | Add POST /verify-callee endpoint | [x] | Sprint 19 | |
+| 12.14 | Unit tests for callee verification | [x] | Sprint 19 | 35 tests |
+| 12.15 | Unknown claims in PASSporT MUST be ignored (not cause failure) | [x] | Sprint 19 | Per VVP §4.2 - **MUST** |
 
 ---
 
@@ -416,13 +416,13 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 | 8 | ACDC Signature Verification (Tier 2) | 14 | 10 | 71% |
 | 9 | Revocation Checking (Tier 2) | 7 | 7 | 100% |
 | 10 | Authorization Verification (Tier 3) | 19 | 19 | 100% |
-| 11 | Brand and Business Logic (Tier 3) | 17 | 0 | 0% |
-| 12 | Callee Verification (Tier 3) | 15 | 0 | 0% |
-| 13 | SIP Contextual Alignment | 6 | 0 | 0% |
+| 11 | Brand and Business Logic (Tier 3) | 17 | 17 | 100% |
+| 12 | Callee Verification (Tier 3) | 15 | 15 | 100% |
+| 13 | SIP Contextual Alignment | 6 | 6 | 100% |
 | 14 | Caching and Efficiency | 8 | 5 | 63% |
 | 15 | Test Vectors | 14 | 6 | 43% |
-| 16 | API Routes and Deployment | 9 | 4 | 44% |
-| **TOTAL** | | **182** | **143** | **79%** |
+| 16 | API Routes and Deployment | 9 | 5 | 56% |
+| **TOTAL** | | **182** | **172** | **95%** |
 
 ---
 
@@ -472,8 +472,9 @@ These are the **18 error codes** defined in the v1.4 FINAL specification:
 | 3.8 | 2026-01-25 | Sprint 12 completion: Phase 1 (1.9 root AIDs), Phase 3 (3.14-3.17 PASSporT validation complete), Phase 7 (7.16-7.17 witness sigs and OOBI KEL), Phase 8 (8.1-8.5, 8.7, 8.10, 8.12-8.14 ACDC verification). Total 182 items (68% complete). |
 | 3.9 | 2026-01-25 | Sprint 17: Phase 10 complete (19/19). Authorization verification finished. 10.12 APE vetting edge always required. 10.18 single-sig enforcement documented. 10.19 vetting credential LE schema validation via `validate_ape_vetting_target()`. Total 182 items (79% complete). |
 | 3.10 | 2026-01-25 | Sprint 18: Phase 11 (Brand/Business Logic) and Phase 13 (SIP Contextual Alignment) complete. New modules: sip_context.py, brand.py, goal.py. New claims: context_aligned, brand_verified, business_logic_verified. Brand proxy missing→INDETERMINATE. Geo constraints without GeoIP→INDETERMINATE. 82 new tests (36 SIP + 46 brand/goal). Total 182 items (91% complete). |
+| 3.11 | 2026-01-26 | Sprint 19: Phase 12 (Callee Verification) complete. New module: verify_callee.py. New claims: dialog_matched, issuer_matched, goal_overlap_verified. New error codes: DIALOG_MISMATCH, ISSUER_MISMATCH. Sprint 18 fixes: A1 (context_required), A2 (timing_tolerance), A3 (_find_signer_de_credential). 41 new tests (35 callee + 6 config fixes). Total 182 items (95% complete). |
 
 ---
 
-**Last Updated:** 2026-01-25
-**Next Review:** After Phase 12 (Callee Verification) or Phase 14 (Caching)
+**Last Updated:** 2026-01-26
+**Next Review:** After Phase 14 (Caching) or Phase 15 (Test Vectors)

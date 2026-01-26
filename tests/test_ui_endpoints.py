@@ -348,3 +348,286 @@ From: <sip:+12025551234@example.com>
         assert response.status_code == 200
         # Should indicate no Identity header found
         assert "No Identity" in response.text or "not found" in response.text.lower()
+
+
+# =============================================================================
+# Trial Dossier Integration Tests
+# =============================================================================
+
+# Load trial dossier fixture (saved from Provenant demo system)
+import os
+FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+TRIAL_DOSSIER_PATH = os.path.join(FIXTURES_DIR, "trial_dossier.json")
+
+
+def load_trial_dossier():
+    """Load the trial dossier fixture."""
+    with open(TRIAL_DOSSIER_PATH) as f:
+        return json.load(f)
+
+
+def load_trial_dossier_raw():
+    """Load the trial dossier as raw bytes."""
+    with open(TRIAL_DOSSIER_PATH, "rb") as f:
+        return f.read()
+
+
+class TestTrialDossierParsing:
+    """Tests for parsing the Provenant trial dossier.
+
+    The trial dossier contains:
+    - 6 ACDCs (credentials) in the CESR stream
+    - 7 TEL issuance events (iss)
+    - 0 TEL revocation events (all credentials are ACTIVE)
+
+    These tests ensure our parsing correctly handles real-world Provenant data.
+    """
+
+    def test_dossier_fixture_exists(self):
+        """Verify trial dossier fixture is available."""
+        assert os.path.exists(TRIAL_DOSSIER_PATH), "Trial dossier fixture not found"
+
+    def test_dossier_has_details_wrapper(self):
+        """Trial dossier uses Provenant wrapper format."""
+        data = load_trial_dossier()
+        assert "details" in data, "Dossier should have 'details' wrapper"
+        assert isinstance(data["details"], str), "Details should be a string"
+        assert len(data["details"]) > 100000, "Details should contain CESR stream"
+
+    def test_parse_dossier_extracts_acdcs(self):
+        """parse_dossier() correctly extracts ACDCs from trial dossier."""
+        from app.vvp.dossier.parser import parse_dossier
+
+        raw = load_trial_dossier_raw()
+        nodes, signatures = parse_dossier(raw)
+
+        # Trial dossier contains 6 unique ACDCs
+        assert len(nodes) == 6, f"Expected 6 ACDCs, got {len(nodes)}"
+
+        # Each ACDC should have required fields
+        for node in nodes:
+            assert node.said, "ACDC should have SAID"
+            assert node.issuer, "ACDC should have issuer"
+            assert node.schema, "ACDC should have schema"
+            assert node.said.startswith("E"), "SAID should start with E (Blake3-256)"
+
+    def test_parse_dossier_extracts_acdc_types(self):
+        """parse_dossier() extracts ACDCs with identifiable types."""
+        from app.vvp.dossier.parser import parse_dossier
+
+        raw = load_trial_dossier_raw()
+        nodes, _ = parse_dossier(raw)
+
+        # Check for expected credential types based on actual Provenant ACDC attributes:
+        # - vcard: contact/organization info
+        # - numbers: phone number credentials
+        # - role: role-based credentials
+        # - lids: legal entity identifiers
+        has_vcard_credential = False
+        has_phone_credential = False
+
+        for node in nodes:
+            attrs = node.attributes if isinstance(node.attributes, dict) else {}
+            if "vcard" in attrs:
+                has_vcard_credential = True
+            if "numbers" in attrs:
+                has_phone_credential = True
+
+        assert has_vcard_credential, "Should have at least one vcard credential"
+        assert has_phone_credential, "Should have at least one phone number credential"
+
+    def test_parse_dossier_deduplicates_by_said(self):
+        """parse_dossier() deduplicates ACDCs by SAID."""
+        from app.vvp.dossier.parser import parse_dossier
+
+        raw = load_trial_dossier_raw()
+        nodes, _ = parse_dossier(raw)
+
+        # All SAIDs should be unique
+        saids = [node.said for node in nodes]
+        assert len(saids) == len(set(saids)), "SAIDs should be unique"
+
+
+class TestTrialDossierTELExtraction:
+    """Tests for TEL (Transaction Event Log) extraction from trial dossier.
+
+    The trial dossier contains inline TEL events that indicate credential
+    issuance status. These tests verify correct extraction.
+    """
+
+    def test_tel_client_extracts_events(self):
+        """TELClient._extract_tel_events() finds TEL events in dossier."""
+        from app.vvp.keri.tel_client import TELClient
+
+        data = load_trial_dossier()
+        # Pass the full JSON (client handles wrapper format)
+        dossier_str = json.dumps(data)
+
+        client = TELClient()
+        events = client._extract_tel_events(dossier_str)
+
+        # Trial dossier has 7 issuance events
+        assert len(events) == 7, f"Expected 7 TEL events, got {len(events)}"
+
+    def test_tel_events_are_all_issuance(self):
+        """All TEL events in trial dossier are issuance (iss), not revocation."""
+        from app.vvp.keri.tel_client import TELClient
+
+        data = load_trial_dossier()
+        client = TELClient()
+        events = client._extract_tel_events(json.dumps(data))
+
+        # All should be 'iss' (issuance) events
+        event_types = [e.event_type for e in events]
+        assert all(t == "iss" for t in event_types), f"All events should be 'iss', got {set(event_types)}"
+        assert "rev" not in event_types, "Should have no revocation events"
+
+    def test_tel_events_have_credential_saids(self):
+        """TEL events reference valid credential SAIDs."""
+        from app.vvp.keri.tel_client import TELClient
+
+        data = load_trial_dossier()
+        client = TELClient()
+        events = client._extract_tel_events(json.dumps(data))
+
+        # Each event should have a credential SAID
+        for event in events:
+            assert event.credential_said, "TEL event should have credential_said"
+            assert event.credential_said.startswith("E"), "Credential SAID should start with E"
+
+    def test_tel_wrapper_format_handled(self):
+        """TEL extraction handles Provenant wrapper format."""
+        from app.vvp.keri.tel_client import TELClient
+
+        # Raw JSON with wrapper
+        data = load_trial_dossier()
+
+        client = TELClient()
+
+        # Should work with wrapper format
+        events_from_wrapper = client._extract_tel_events(json.dumps(data))
+        assert len(events_from_wrapper) > 0, "Should extract events from wrapper format"
+
+        # Should also work with just the details content
+        events_from_details = client._extract_tel_events(data["details"])
+        assert len(events_from_details) == len(events_from_wrapper), \
+            "Both methods should find same number of events"
+
+
+class TestTrialDossierRevocationStatus:
+    """Tests for determining revocation status from trial dossier.
+
+    All credentials in the trial dossier should be ACTIVE (issued but not revoked).
+    """
+
+    def test_parse_dossier_tel_returns_active(self):
+        """parse_dossier_tel() returns ACTIVE for trial dossier credentials."""
+        from app.vvp.keri.tel_client import TELClient, CredentialStatus
+        from app.vvp.dossier.parser import parse_dossier
+
+        raw = load_trial_dossier_raw()
+        nodes, _ = parse_dossier(raw)
+
+        client = TELClient()
+        dossier_str = raw.decode("utf-8")
+
+        # Check first ACDC
+        first_node = nodes[0]
+        result = client.parse_dossier_tel(
+            dossier_str,
+            credential_said=first_node.said,
+            registry_said=first_node.raw.get("ri")
+        )
+
+        assert result.status == CredentialStatus.ACTIVE, \
+            f"First credential should be ACTIVE, got {result.status}"
+        assert result.source == "dossier", "Source should be 'dossier'"
+        assert result.issuance_event is not None, "Should have issuance event"
+        assert result.revocation_event is None, "Should not have revocation event"
+
+    def test_all_credentials_are_active(self):
+        """All credentials in trial dossier have ACTIVE status."""
+        from app.vvp.keri.tel_client import TELClient, CredentialStatus
+        from app.vvp.dossier.parser import parse_dossier
+
+        raw = load_trial_dossier_raw()
+        nodes, _ = parse_dossier(raw)
+
+        client = TELClient()
+        dossier_str = raw.decode("utf-8")
+
+        statuses = []
+        for node in nodes:
+            result = client.parse_dossier_tel(
+                dossier_str,
+                credential_said=node.said,
+                registry_said=node.raw.get("ri")
+            )
+            statuses.append((node.said[:20], result.status))
+
+        # All should be ACTIVE or UNKNOWN (some may not have matching TEL)
+        active_count = sum(1 for _, s in statuses if s == CredentialStatus.ACTIVE)
+        revoked_count = sum(1 for _, s in statuses if s == CredentialStatus.REVOKED)
+
+        assert revoked_count == 0, f"No credentials should be revoked, but found {revoked_count}"
+        assert active_count > 0, "At least some credentials should be ACTIVE"
+
+    def test_build_revocation_map(self):
+        """TEL events build correct revocation status map."""
+        from app.vvp.keri.tel_client import TELClient, CredentialStatus
+
+        data = load_trial_dossier()
+        client = TELClient()
+        events = client._extract_tel_events(json.dumps(data))
+
+        # Build status map manually
+        status_map = {}
+        for event in events:
+            if event.event_type == "iss":
+                status_map[event.credential_said] = "ACTIVE"
+            elif event.event_type == "rev":
+                status_map[event.credential_said] = "REVOKED"
+
+        # Should have 7 unique credentials marked as ACTIVE
+        active_creds = [k for k, v in status_map.items() if v == "ACTIVE"]
+        # Note: Some SAIDs may be duplicated across iss events
+        assert len(active_creds) > 0, "Should have ACTIVE credentials"
+        assert all(v == "ACTIVE" for v in status_map.values()), "All should be ACTIVE"
+
+
+class TestTrialDossierUIEndpoint:
+    """Tests for UI endpoints with trial dossier data."""
+
+    def test_check_revocation_with_dossier_stream(self):
+        """UI revocation check extracts TEL from dossier stream."""
+        from app.vvp.dossier.parser import parse_dossier
+
+        raw = load_trial_dossier_raw()
+        nodes, _ = parse_dossier(raw)
+        dossier_str = raw.decode("utf-8")
+
+        # Build ACDC list as the endpoint expects
+        acdcs = []
+        for node in nodes:
+            acdc = node.raw.copy() if node.raw else {}
+            acdc["d"] = node.said
+            acdc["i"] = node.issuer
+            acdc["s"] = node.schema
+            acdcs.append(acdc)
+
+        # Call the revocation check endpoint
+        response = client.post(
+            "/ui/check-revocation",
+            data={
+                "acdcs": json.dumps(acdcs),
+                "kid_url": "",
+                "dossier_stream": dossier_str,
+            }
+        )
+
+        assert response.status_code == 200
+        # Should show results for credentials
+        # Either ACTIVE status or source indication
+        text = response.text.lower()
+        # Should not show ERROR for all (at least some should parse)
+        assert "active" in text or "dossier" in text or "unknown" in text

@@ -470,3 +470,204 @@ Case B now only triggers when a DE is actually issued to the signer, and chain v
 
 Required Changes (if not APPROVED)
 None.
+
+## Code Review: Sprint 17 - APE Vetting Edge & Schema Validation
+
+**Verdict:** APPROVED
+
+### Implementation Assessment
+APE vetting edges are now enforced even for root issuers, and vetting targets are validated as LE with known vLEI schema in strict mode. Case 10.18 is documented and remains enforced via single‑sig B/D parsing in `key_parser.py`.
+
+### Code Quality
+Changes are small and focused. The new `validate_ape_vetting_target()` helper is clear and its use in `validate_edge_semantics()` keeps the policy localized.
+
+### Test Coverage
+New Sprint 17 tests cover missing vetting target for root issuers, unknown/known LE schema validation, and non‑LE vetting targets. Coverage is sufficient for the new behavior.
+
+### Findings
+- [Low]: None.
+
+### Required Changes (if not APPROVED)
+None.
+
+### Plan Revisions (if PLAN_REVISION_REQUIRED)
+None.
+
+## Plan Review: Sprint 18 - Brand/Business Logic & SIP Contextual Alignment
+
+**Verdict:** CHANGES_REQUESTED
+
+### Spec Compliance
+The plan covers SIP context fields, brand attributes, and business logic checks at a high level, but several spec‑mandated behaviors are deferred or made non‑blocking in ways that appear to conflict with §5.1.1‑2.12/2.13 and §6.3.7. Those sections read as MUST‑level verification steps, so warnings/optional claims may not satisfy compliance unless explicitly documented as a policy deviation.
+
+### Design Assessment
+Modularizing SIP, brand, and goal validation is sound. Optional context alignment by default is reasonable per §4.4 as long as “if context is provided, it must be checked” remains enforced. However, making brand/business checks OPTIONAL claim nodes that don’t affect parent status risks under‑reporting failures that should flip caller_authorised to INVALID/INDETERMINATE.
+
+### Findings
+- [High]: Brand proxy validation (delegation) is deferred with warnings only. §6.3.4 appears to require this for delegated scenarios; if not enforced, a non‑compliant delegation could still be marked VALID. This should be blocking (INVALID or INDETERMINATE) or explicitly documented as a policy deviation with Tier gating. `PLAN.md` summary.
+- [High]: Geographic constraints are deferred with warnings only, but §5.1.1‑2.12/2.13 likely treat these as MUST for brand/business claims. If skipped, the associated claim should become INDETERMINATE (not VALID) and propagate accordingly, or be documented as a policy deviation.
+- [Medium]: “Three new OPTIONAL claim nodes that don’t invalidate parent when failed” conflicts with §3.3A if these checks are REQUIRED for authorization/brand validity. Consider making them REQUIRED children under a brand/business node to ensure failure affects overall status.
+
+### Answers to Open Questions
+1. Unknown vCard fields: warn only, but do not mark INVALID; treat as informational unless the spec explicitly forbids unknown fields.
+2. SIP timing tolerance: make configurable; 30 seconds is fine as default, but document and expose in config.
+3. Brand proxy deferral: not acceptable as warning‑only; should be INDETERMINATE (recoverable) or INVALID, or be explicitly gated as a policy deviation in compliance docs.
+
+### Required Changes (if CHANGES_REQUESTED)
+1. Define failure semantics for brand proxy and geographic constraints that affect claim status (INVALID/INDETERMINATE), or explicitly document as a policy deviation with Tier gating.
+2. Reclassify brand/business claim nodes to REQUIRED children (or equivalent) so failures propagate per §3.3A, unless the spec allows them to be optional.
+
+### Recommendations
+- Add a “policy deviation” section for any MUSTs deferred (brand proxy, geo constraints) and map to claim status outcomes.
+- Include explicit tests for “context provided but mismatch” to ensure alignment enforcement even when context is optional.
+
+## Plan Review: Sprint 18 Revision 1
+
+**Verdict:** APPROVED
+
+### Issue Resolution
+- [High] Brand proxy: FIXED
+- [High] Geographic constraints: FIXED
+- [Medium] Claim node semantics: FIXED
+
+### Additional Findings
+None.
+
+## Code Review: Sprint 18 - Brand/Business Logic & SIP Contextual Alignment
+
+**Verdict:** CHANGES_REQUESTED
+
+### Implementation Assessment
+Core modules are in place and wired into the claim tree. However, two configuration‑driven behaviors from the approved plan are not enforced: context alignment requiredness and SIP timing tolerance. This means runtime configuration does not change validation outcomes as intended.
+
+### Code Quality
+Modules are clean and readable, and the claim builders follow existing patterns. Error mapping is consistent. The only notable design gap is that delegation‑specific brand/goal checks use the first DE in the dossier rather than the DE actually linked to the signer.
+
+### Test Coverage
+Unit coverage is solid for parsing and validation logic. There are no tests for `CONTEXT_ALIGNMENT_REQUIRED` changing missing‑context behavior or for a non‑default SIP timing tolerance, so the configuration gaps aren’t caught.
+
+### Findings
+- [High]: `CONTEXT_ALIGNMENT_REQUIRED` is never applied. `verify_sip_context_alignment()` always returns INDETERMINATE when SIP context is absent, even when config says it should be required. This conflicts with the plan. `app/vvp/sip_context.py`, `app/vvp/verify.py`.
+- [Medium]: `SIP_TIMING_TOLERANCE_SECONDS` is defined but never used; `verify_sip_context_alignment()` always uses the default 30s. This breaks configurability. `app/vvp/sip_context.py`, `app/vvp/verify.py`.
+- [Medium]: Brand/goal checks pull a DE via `_find_de_credential()` which returns the first DE in the dossier, not necessarily the DE tied to the signer’s delegation chain. This can produce false positives/negatives for brand proxy and business constraints when multiple DEs exist. `app/vvp/verify.py`.
+
+### Required Changes (if not APPROVED)
+1. Plumb `CONTEXT_ALIGNMENT_REQUIRED` and `SIP_TIMING_TOLERANCE_SECONDS` into `verify_sip_context_alignment()` and add tests that verify both behaviors.
+2. Use the DE from the signer’s delegation chain (if present) rather than the first DE in the dossier for brand proxy and business‑logic constraints.
+
+### Plan Revisions (if PLAN_REVISION_REQUIRED)
+None.
+
+## Plan Review: Sprint 19 - Callee Verification (Phase 12)
+
+**Verdict:** CHANGES_REQUESTED
+
+### Spec Compliance
+The plan captures the major §5B steps (dialog matching, issuer match, TN rights, goal overlap) and reuses existing components appropriately. However, several spec‑mandated elements are either mis-modeled or treated as optional in a way that conflicts with §5.2 callee verification requirements.
+
+### Design Assessment
+Separating callee verification into `verify_callee.py` is reasonable, and the reuse matrix is sensible. The claim tree is clear, but brand/goal overlap are marked OPTIONAL regardless of presence, which risks suppressing required failures. The new request model for callee introduces `caller_passport_jwt` cleanly for goal overlap.
+
+### Open Questions Resolution
+The plan’s answers for call-id/cseq requirements, goal overlap, and callee TN rights align with draft‑04 §5.2 at a high level. The SIP evidence transport note is correctly marked as out of scope.
+
+### Findings
+- [High]: Brand/goal claims are marked OPTIONAL in the claim tree even when `card`/`goal` are present. §5B steps indicate these checks are required when the claims are present; they should be REQUIRED children when present, mirroring caller behavior.
+- [Medium]: `DIALOG_MISMATCH` and `ISSUER_MISMATCH` are assumed to exist in §4.2A, but they are not currently in the error registry. The plan must either add them to `ErrorCode` or map to existing codes and document the mapping.
+- [Medium]: `context.sip.cseq` is required for callee verification, but the current `SipContext` model defines `cseq` as optional. The plan should include explicit validation (or a callee‑specific context model) that enforces presence of both `call_id` and `cseq` for the callee endpoint.
+
+### Required Changes (if CHANGES_REQUESTED)
+1. Make `brand_verified` and `goal_overlap_verified` REQUIRED when the corresponding `card`/`goal` claims are present, with failure propagation per §3.3A.
+2. Add `DIALOG_MISMATCH` and `ISSUER_MISMATCH` to the error registry (or document a strict mapping to existing codes), and update tests accordingly.
+3. Enforce required `call_id` and `cseq` for callee requests (via model or explicit validation).
+
+### Recommendations
+- Consider reusing `authorization.py` TN validation with a callee‑specific binding helper to avoid divergence.
+- Add tests that cover multiple DEs/APE in dossier and ensure issuer match uses the callee’s kid, not the caller’s.
+
+## Plan Review: Sprint 19 (Revision 2)
+
+**Verdict:** CHANGES_REQUESTED
+
+### Sprint 19 Plan Issues (from Revision 1)
+- [High] Brand/goal conditional REQUIRED: FIXED
+- [Medium] Error code registry: FIXED
+- [Medium] Callee SIP context validation: FIXED
+
+### Sprint 18 Code Fixes (Part A)
+- [High] CONTEXT_ALIGNMENT_REQUIRED: Needs clarification
+- [Medium] SIP_TIMING_TOLERANCE_SECONDS: Needs clarification
+- [Medium] DE selection by signer: Properly specified
+
+### Additional Findings
+- [High]: The Part A fix for `verify_sip_context_alignment()` changes its return type to a tuple of `(ClaimStatus, reasons, evidence)`, but the current system expects a ClaimBuilder. This will cause integration drift unless you also plan to refactor the caller path. Specify how the new signature integrates with existing claim construction, or keep the ClaimBuilder pattern and just pass config into it. `~/.claude/plans/sequential-meandering-truffle.md`.
+- [High]: The plan requires `context.sip.call_id`, but `SipContext` currently has no `call_id` field. You need to add it to the model (and ensure it’s populated in requests), or adjust validation to use a different field name. `app/vvp/api_models.py`.
+- [Medium]: The Test Strategy section still says “Brand and goal overlap as OPTIONAL claims,” which contradicts the revised conditional‑REQUIRED semantics. Update the test plan wording to reflect required‑when‑present behavior.
+
+### Required Changes (if CHANGES_REQUESTED)
+1. Clarify/adjust the `verify_sip_context_alignment()` signature so it remains compatible with the existing ClaimBuilder flow, or explicitly plan the refactor and its call‑sites.
+2. Add `call_id` to `SipContext` (or document a different field) and update the validation/tests accordingly.
+3. Align the test strategy language with the conditional REQUIRED semantics for brand/goal overlap.
+
+### Recommendations
+- Consider making callee‑specific validation reuse the same SIP alignment function to avoid divergent behavior between caller/callee paths.
+
+## Plan Review: Sprint 19 (Revision 3)
+
+**Verdict:** APPROVED
+
+### Revision 2 Findings Resolution
+- [High] ClaimBuilder return type: RESOLVED
+- [High] call_id location: RESOLVED
+- [Medium] Test Strategy wording: RESOLVED
+
+### Additional Findings
+None.
+
+### Recommendations
+- Keep the SIP alignment helper signature aligned between caller and callee to avoid divergence.
+
+## Code Review: Sprint 19 - Callee Verification + Sprint 18 Fixes
+
+Verdict: CHANGES_REQUESTED
+
+Part A: Sprint 18 Fixes Assessment
+A1 (CONTEXT_ALIGNMENT_REQUIRED): Plumbed correctly; `verify_sip_context_alignment()` now takes `context_required` and `verify.py` passes config.
+A2 (SIP_TIMING_TOLERANCE_SECONDS): Plumbed correctly; `verify.py` passes `SIP_TIMING_TOLERANCE_SECONDS`.
+A3 (DE selection by signer): Implemented via `_find_signer_de_credential()` and used for brand/goal checks.
+
+Part B: Phase 12 Implementation Assessment
+Dialog matching (§5B Step 1): Implemented with call-id/cseq checks and DIALOG_MISMATCH error mapping.
+Issuer verification (§5B Step 9): Implemented using dossier root issuer vs kid AID with ISSUER_MISMATCH mapping.
+Goal overlap (§5B Step 14): Implemented with hierarchical subset logic and conditional claim omission.
+Endpoint validation: Enforces call_id and sip.cseq presence for callee requests.
+
+Code Quality
+Modules are readable and consistent with existing patterns. Error conversion and claim builders follow the project conventions.
+
+Test Coverage
+Dialog matching, issuer matching, goal overlap, and endpoint validation are covered. There is no direct unit coverage for callee TN rights logic or for the new claim tree requirements (timing/signature children), so regressions there are possible.
+
+Findings
+- [High]: Callee TN rights validation is not bound to the accountable party and uses ad‑hoc matching (string equality / last‑10‑digits), bypassing `tn_utils` allocation parsing and issuee binding. This can incorrectly accept rights and does not reflect the authorization logic used elsewhere. `app/vvp/verify_callee.py` (`validate_callee_tn_rights`).
+- [High]: The callee claim tree omits required `timing_valid` and `signature_valid` children under `passport_verified` and omits structure/acdc signature children under `dossier_verified`, diverging from the approved plan’s claim tree. This affects status propagation and traceability. `app/vvp/verify_callee.py` (claim construction).
+- [Medium]: `validate_callee_tn_rights()` does not validate E.164 formats or TNAlloc ranges and ignores DNO semantics beyond a comment. This should reuse `tn_utils` for consistency and correctness. `app/vvp/verify_callee.py`.
+
+Required Changes (if not APPROVED)
+1. Rework callee TN rights to reuse `tn_utils` allocation parsing and bind rights to the accountable party (APE issuee) or a verified delegation chain, not just the signer AID.
+2. Align the callee claim tree with the approved plan by adding required `timing_valid` and `signature_valid` (and dossier structure/signature) nodes or update the plan accordingly and adjust propagation/tests.
+
+## Code Review: Sprint 19 Revision 1 - Callee Verification Fixes
+
+Verdict: APPROVED
+
+Issue Resolution
+[High] Callee TN rights: FIXED
+[High] Callee claim tree: FIXED
+[Medium] E.164 validation: FIXED
+
+Additional Findings
+None.
+
+Required Changes (if not APPROVED)
+None.

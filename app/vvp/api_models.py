@@ -73,6 +73,22 @@ class VerifyRequest(BaseModel):
     context: CallContext  # Required per spec §4.1
 
 
+class VerifyCalleeRequest(BaseModel):
+    """Request body for /verify-callee endpoint per §5B.
+
+    Sprint 19 - Phase 12: Callee verification requires:
+    - passport_jwt: Callee's PASSporT (includes call-id, cseq claims)
+    - context: Call context with call_id (REQUIRED) and sip.cseq (REQUIRED)
+    - caller_passport_jwt: Optional caller's passport for goal overlap check
+
+    Note: call_id is in CallContext, cseq is in SipContext.cseq
+    Both are required for callee verification (enforced at endpoint level).
+    """
+    passport_jwt: str  # Callee's PASSporT JWT
+    context: CallContext  # Call context (call_id required, sip.cseq required for callee)
+    caller_passport_jwt: Optional[str] = None  # Caller's passport for goal overlap
+
+
 # =============================================================================
 # §4.2 Error Models
 # =============================================================================
@@ -125,6 +141,10 @@ class ErrorCode:
     BRAND_CREDENTIAL_INVALID = "BRAND_CREDENTIAL_INVALID"
     GOAL_REJECTED = "GOAL_REJECTED"
 
+    # Callee verification layer (Sprint 19 - Phase 12)
+    DIALOG_MISMATCH = "DIALOG_MISMATCH"  # call-id/cseq don't match SIP INVITE
+    ISSUER_MISMATCH = "ISSUER_MISMATCH"  # dossier issuer != passport kid
+
     # Verifier layer
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -154,6 +174,8 @@ ERROR_RECOVERABILITY: Dict[str, bool] = {
     ErrorCode.CONTEXT_MISMATCH: False,       # Non-recoverable (Sprint 18)
     ErrorCode.BRAND_CREDENTIAL_INVALID: False,  # Non-recoverable (Sprint 18)
     ErrorCode.GOAL_REJECTED: False,          # Non-recoverable (Sprint 18)
+    ErrorCode.DIALOG_MISMATCH: False,        # Non-recoverable (Sprint 19)
+    ErrorCode.ISSUER_MISMATCH: False,        # Non-recoverable (Sprint 19)
     ErrorCode.INTERNAL_ERROR: True,          # Recoverable
 }
 

@@ -1,5 +1,109 @@
 # VVP Verifier Change Log
 
+## Sprint 19: Callee Verification (Phase 12) + Sprint 18 Fixes
+
+**Date:** 2026-01-26
+**Commit:** (pending)
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/vvp/verify_callee.py` | Created | Callee verification module implementing VVP §5B (14 steps) |
+| `app/vvp/goal.py` | Modified | Added goal overlap validation (`is_goal_subset()`, `validate_goal_overlap()`, `verify_goal_overlap()`) |
+| `app/vvp/api_models.py` | Modified | Added `VerifyCalleeRequest`, `DIALOG_MISMATCH`, `ISSUER_MISMATCH` error codes |
+| `app/vvp/sip_context.py` | Modified | Added `context_required` and `timing_tolerance` parameters (Sprint 18 fixes A1/A2) |
+| `app/vvp/verify.py` | Modified | Added `_find_signer_de_credential()`, `_get_acdc_issuee()`, plumbed config values (Sprint 18 fix A3) |
+| `app/main.py` | Modified | Added POST /verify-callee endpoint with callee-specific SIP context validation |
+| `tests/test_verify_callee.py` | Created | 35 unit tests for callee verification |
+| `tests/test_verify.py` | Modified | Added 6 tests for Sprint 18 config fixes |
+| `tests/test_models.py` | Modified | Updated error code count (24→26) |
+
+### Summary
+
+Completed Phase 12 (Callee Verification per VVP §5B) and Sprint 18 code review fixes.
+
+**Part A: Sprint 18 Code Review Fixes:**
+
+1. **A1: CONTEXT_ALIGNMENT_REQUIRED not applied** (High)
+   - Added `context_required` parameter to `verify_sip_context_alignment()`
+   - When `True`, missing SIP context returns INVALID (not INDETERMINATE)
+
+2. **A2: SIP_TIMING_TOLERANCE_SECONDS not used** (Medium)
+   - Plumbed `SIP_TIMING_TOLERANCE_SECONDS` config through to verification
+   - Custom timing tolerance now respected (default 30s)
+
+3. **A3: DE selection uses first DE instead of signer's DE** (Medium)
+   - Created `_find_signer_de_credential()` to find DE by signer AID
+   - Prevents false positives/negatives with multiple DEs in dossier
+
+**Part B: Phase 12 Callee Verification (15 items):**
+
+1. **Dialog Matching (§5B Step 1)**
+   - `validate_dialog_match()` validates call-id and cseq against SIP INVITE
+   - Missing or mismatched values return INVALID (DIALOG_MISMATCH)
+
+2. **Issuer Verification (§5B Step 9)**
+   - `validate_issuer_match()` ensures dossier issuer AID matches PASSporT kid
+   - Mismatched issuer returns INVALID (ISSUER_MISMATCH)
+
+3. **Goal Overlap Verification (§5B Step 14)**
+   - `is_goal_subset()` - hierarchical goal comparison (e.g., "billing.payment" ⊂ "billing")
+   - `validate_goal_overlap()` - one goal must be subset of the other
+   - `verify_goal_overlap()` - returns ClaimBuilder, REQUIRED when both goals present
+
+4. **Callee TN Rights (§5B Step 12)**
+   - `validate_callee_tn_rights()` validates callee can RECEIVE at the number
+   - Uses existing `_find_credentials_by_type()` infrastructure
+
+5. **New Error Codes**
+   - `DIALOG_MISMATCH` - call-id/cseq don't match SIP INVITE (non-recoverable)
+   - `ISSUER_MISMATCH` - dossier issuer != passport kid (non-recoverable)
+
+6. **Claim Tree (per §3.3B)**
+   ```
+   callee_verified (root)
+   ├── passport_verified (REQUIRED)
+   │   ├── dialog_matched (REQUIRED)
+   │   ├── timing_valid (REQUIRED)
+   │   └── signature_valid (REQUIRED)
+   ├── dossier_verified (REQUIRED)
+   │   ├── structure_valid (REQUIRED)
+   │   ├── acdc_signatures_valid (REQUIRED)
+   │   ├── revocation_clear (REQUIRED)
+   │   └── issuer_matched (REQUIRED)
+   ├── tn_rights_valid (REQUIRED)
+   ├── brand_verified (REQUIRED when card present)
+   └── goal_overlap_verified (REQUIRED when both goals present)
+   ```
+
+### Checklist Items Completed
+
+**Phase 12 (15/15):** 12.1-12.15 (Callee Verification)
+- 12.1: Created verify_callee.py module
+- 12.2: Dialog matching (call-id, cseq)
+- 12.3: Timing alignment (iat validation)
+- 12.4: Expiration analysis (exp policy)
+- 12.5: Key identifier extraction (kid)
+- 12.6: Signature verification
+- 12.7: Dossier fetch and validation
+- 12.8: Issuer verification (dossier issuer == kid)
+- 12.9: Revocation status check
+- 12.10: Phone number rights (callee receiving)
+- 12.11: Brand attributes verification
+- 12.12: Goal overlap verification
+- 12.13: Added POST /verify-callee endpoint
+- 12.14: Unit tests (35 tests)
+- 12.15: Unknown claims in passport ignored
+
+### Test Results
+
+```
+875 passed in 5.00s
+```
+
+---
+
 ## Sprint 18: Brand/Business Logic & SIP Contextual Alignment
 
 **Date:** 2026-01-25

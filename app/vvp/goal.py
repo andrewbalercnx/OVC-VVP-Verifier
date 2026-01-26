@@ -247,6 +247,120 @@ def verify_signer_constraints(
     return status, evidence
 
 
+def is_goal_subset(potential_subset: str, potential_superset: str) -> bool:
+    """Check if one goal is a subset of another.
+
+    Goals are hierarchical codes separated by '.' (e.g., "billing.payment.confirm").
+    A goal is a subset if it's a more specific version of the superset.
+
+    Examples:
+    - "billing.payment" is subset of "billing"
+    - "billing.payment.confirm" is subset of "billing.payment"
+    - "billing" is superset of "billing.payment"
+
+    Args:
+        potential_subset: The more specific goal
+        potential_superset: The more general goal
+
+    Returns:
+        True if potential_subset is a subset (equal or more specific) of potential_superset
+    """
+    # Equal goals are considered subsets of each other
+    if potential_subset == potential_superset:
+        return True
+
+    # Check if subset starts with superset followed by '.'
+    # e.g., "billing.payment" starts with "billing."
+    return potential_subset.startswith(potential_superset + ".")
+
+
+def validate_goal_overlap(
+    callee_goal: Optional[str],
+    caller_goal: Optional[str],
+) -> Tuple[ClaimStatus, List[str]]:
+    """Validate caller and callee goals overlap appropriately.
+
+    Per VVP §5.2 (draft-04):
+    - "if the passport includes a non-null value for the optional goal claim,
+       and the preceding INVITE included a VVP passport that also declared a goal,
+       confirm that the callee's and caller's goals overlap
+       (one must be a subset of the other)"
+
+    Subset rules (hierarchical goals like "billing.payment.confirm"):
+    - If callee_goal is subset of caller_goal → VALID
+    - If caller_goal is subset of callee_goal → VALID
+    - If neither is subset → INVALID
+    - If either is None → VALID (no overlap required)
+
+    Args:
+        callee_goal: Goal from callee's PASSporT (may be None)
+        caller_goal: Goal from caller's PASSporT (may be None)
+
+    Returns:
+        Tuple of (ClaimStatus, list of evidence/reasons)
+    """
+    # If either goal is missing, overlap check is not required
+    if callee_goal is None:
+        return ClaimStatus.VALID, ["goal_overlap:callee_goal_absent(not_required)"]
+
+    if caller_goal is None:
+        return ClaimStatus.VALID, ["goal_overlap:caller_goal_absent(not_required)"]
+
+    # Both goals present - check for subset relationship
+    if is_goal_subset(callee_goal, caller_goal):
+        # Callee goal is equal to or more specific than caller goal
+        return ClaimStatus.VALID, [f"goal_overlap:callee({callee_goal})_subset_of_caller({caller_goal})"]
+
+    if is_goal_subset(caller_goal, callee_goal):
+        # Caller goal is more specific than callee goal (callee is superset)
+        return ClaimStatus.VALID, [f"goal_overlap:caller({caller_goal})_subset_of_callee({callee_goal})"]
+
+    # Goals don't overlap - neither is subset of the other
+    return ClaimStatus.INVALID, [
+        f"Goal mismatch: callee '{callee_goal}' and caller '{caller_goal}' do not overlap"
+    ]
+
+
+def verify_goal_overlap(
+    callee_passport,  # Passport type
+    caller_passport,  # Optional Passport type
+) -> Optional[ClaimBuilder]:
+    """Verify goal overlap between callee and caller PASSporTs.
+
+    Per §5B Step 14: If both passports have goals, verify they overlap.
+    This claim is REQUIRED when both goals are present, omitted otherwise.
+
+    Args:
+        callee_passport: Parsed callee PASSporT
+        caller_passport: Parsed caller PASSporT (may be None)
+
+    Returns:
+        ClaimBuilder for goal_overlap_verified claim, or None if not applicable
+    """
+    callee_goal = getattr(callee_passport.payload, "goal", None) if callee_passport else None
+    caller_goal = getattr(caller_passport.payload, "goal", None) if caller_passport else None
+
+    # If either goal is absent, overlap check is not required (omit claim)
+    if callee_goal is None or caller_goal is None:
+        return None
+
+    # Both goals present - this claim is REQUIRED
+    claim = ClaimBuilder("goal_overlap_verified")
+    claim.add_evidence(f"callee_goal:{callee_goal}")
+    claim.add_evidence(f"caller_goal:{caller_goal}")
+
+    status, results = validate_goal_overlap(callee_goal, caller_goal)
+
+    if status == ClaimStatus.VALID:
+        for ev in results:
+            claim.add_evidence(ev)
+    else:
+        for reason in results:
+            claim.fail(ClaimStatus.INVALID, reason)
+
+    return claim
+
+
 def verify_business_logic(
     passport,  # Passport type
     dossier_acdcs: Dict[str, Any],

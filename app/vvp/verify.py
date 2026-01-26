@@ -249,15 +249,8 @@ def _find_de_credential(dossier_acdcs: Dict[str, "ACDC"]) -> Optional["ACDC"]:
     Returns:
         DE ACDC if found, None otherwise
     """
-    from app.vvp.acdc import ACDCCredentialType
-
     for said, acdc in dossier_acdcs.items():
-        # Check credential type if available
-        cred_type = getattr(acdc, "credential_type", None)
-        if cred_type == ACDCCredentialType.DE:
-            return acdc
-
-        # Fallback: look for DE-indicative edges
+        # Look for DE-indicative edges
         edges = getattr(acdc, "edges", None)
         if edges is None:
             raw = getattr(acdc, "raw", {})
@@ -271,6 +264,74 @@ def _find_de_credential(dossier_acdcs: Dict[str, "ACDC"]) -> Optional["ACDC"]:
         for edge_name in edges.keys():
             if edge_name.lower() in de_edge_names:
                 return acdc
+
+    return None
+
+
+def _get_acdc_issuee(acdc: "ACDC") -> Optional[str]:
+    """Extract issuee AID from ACDC attributes.
+
+    Per §6.3.4, DE credentials have an 'i' (issuee) field in attributes
+    that identifies the delegated signer.
+
+    Args:
+        acdc: ACDC credential object
+
+    Returns:
+        Issuee AID if found, None otherwise
+    """
+    attrs = getattr(acdc, "attributes", None)
+    if attrs is None:
+        raw = getattr(acdc, "raw", {})
+        attrs = raw.get("a", {})
+
+    if isinstance(attrs, dict):
+        return attrs.get("i")
+    return None
+
+
+def _find_signer_de_credential(
+    dossier_acdcs: Dict[str, "ACDC"],
+    signer_aid: str
+) -> Optional["ACDC"]:
+    """Find DE credential where issuee matches the PASSporT signer AID.
+
+    Sprint 18 fix A3: The original _find_de_credential() returns the first DE
+    in the dossier, which causes false positives/negatives when multiple DEs
+    exist. This function filters DEs by the signer's delegation chain.
+
+    Per §6.3.4, DE credentials authorize delegated signers. The issuee ('i')
+    field in the DE attributes identifies who is authorized to sign.
+
+    Args:
+        dossier_acdcs: Dict mapping SAID to ACDC objects
+        signer_aid: AID of the PASSporT signer (from kid)
+
+    Returns:
+        DE ACDC where issuee matches signer_aid, or None if not found
+    """
+    for said, acdc in dossier_acdcs.items():
+        # Check if this is a DE credential by looking for DE-indicative edges
+        is_de = False
+        edges = getattr(acdc, "edges", None)
+        if edges is None:
+            raw = getattr(acdc, "raw", {})
+            edges = raw.get("e", {})
+
+        if isinstance(edges, dict):
+            de_edge_names = {"auth", "delegate", "delegation", "proxy"}
+            for edge_name in edges.keys():
+                if edge_name.lower() in de_edge_names:
+                    is_de = True
+                    break
+
+        if not is_de:
+            continue
+
+        # Check if issuee matches signer AID
+        issuee = _get_acdc_issuee(acdc)
+        if issuee == signer_aid:
+            return acdc
 
     return None
 
@@ -898,13 +959,20 @@ async def verify_vvp(
     # context_aligned is REQUIRED or OPTIONAL per policy (default: OPTIONAL)
     from app.core.config import (
         CONTEXT_ALIGNMENT_REQUIRED,
+        SIP_TIMING_TOLERANCE_SECONDS,
         ACCEPTED_GOALS,
         REJECT_UNKNOWN_GOALS,
         GEO_CONSTRAINTS_ENFORCED,
     )
 
     sip_context = req.context.sip if req.context else None
-    context_claim = verify_sip_context_alignment(passport, sip_context)
+    # Sprint 18 fix A1/A2: Pass config values for context requirement and timing tolerance
+    context_claim = verify_sip_context_alignment(
+        passport,
+        sip_context,
+        timing_tolerance=SIP_TIMING_TOLERANCE_SECONDS,
+        context_required=CONTEXT_ALIGNMENT_REQUIRED,
+    )
 
     # Add errors for context alignment failures
     if context_claim.status == ClaimStatus.INVALID:
@@ -920,10 +988,14 @@ async def verify_vvp(
     # brand_verified is REQUIRED when card is present (failures propagate)
     brand_claim = None
     if passport and getattr(passport.payload, "card", None):
-        # Find DE credential for brand proxy check (if delegation present)
+        # Sprint 18 fix A3: Find DE credential for the signer's delegation chain
+        # Using signer AID ensures we get the correct DE when multiple DEs exist
         de_credential = None
-        if dag is not None:
-            de_credential = _find_de_credential(dossier_acdcs)
+        if dag is not None and pss_signer_aid:
+            de_credential = _find_signer_de_credential(dossier_acdcs, pss_signer_aid)
+            if de_credential is None:
+                # Fallback to first DE if signer-specific not found (no delegation case)
+                de_credential = _find_de_credential(dossier_acdcs)
 
         brand_claim = verify_brand(passport, dossier_acdcs if dag else {}, de_credential)
 
@@ -948,10 +1020,14 @@ async def verify_vvp(
             geo_enforced=GEO_CONSTRAINTS_ENFORCED,
         )
 
-        # Find DE credential for signer constraints (if delegation present)
+        # Sprint 18 fix A3: Find DE credential for the signer's delegation chain
+        # Using signer AID ensures we get the correct DE when multiple DEs exist
         de_credential = None
-        if dag is not None:
-            de_credential = _find_de_credential(dossier_acdcs)
+        if dag is not None and pss_signer_aid:
+            de_credential = _find_signer_de_credential(dossier_acdcs, pss_signer_aid)
+            if de_credential is None:
+                # Fallback to first DE if signer-specific not found (no delegation case)
+                de_credential = _find_de_credential(dossier_acdcs)
 
         # No caller_geo available currently - results in INDETERMINATE if geo enforced
         business_claim = verify_business_logic(

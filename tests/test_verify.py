@@ -633,3 +633,187 @@ class TestVerifyVVPIntegration:
             # Dossier evidence
             assert any("fetched=" in e for e in dossier_claim.evidence)
             assert any("dag_valid" in e for e in dossier_claim.evidence)
+
+
+# =============================================================================
+# Sprint 18 Fix Tests
+# =============================================================================
+
+
+class TestSIPContextAlignmentConfig:
+    """Tests for Sprint 18 fix A1/A2: Config-driven SIP context alignment."""
+
+    def test_context_required_true_missing_context_returns_invalid(self):
+        """A1: CONTEXT_ALIGNMENT_REQUIRED=True with missing context → INVALID."""
+        from app.vvp.sip_context import verify_sip_context_alignment
+
+        mock_passport = MagicMock()
+        mock_passport.payload.orig = {"tn": "+15551234567"}
+        mock_passport.payload.dest = {"tn": ["+15559876543"]}
+        mock_passport.payload.iat = 1700000000
+
+        # context_required=True, no SIP context
+        result = verify_sip_context_alignment(
+            mock_passport,
+            sip_context=None,
+            timing_tolerance=30,
+            context_required=True,
+        )
+
+        assert result.status == ClaimStatus.INVALID
+        assert "required but not provided" in result.reasons[0]
+
+    def test_context_required_false_missing_context_returns_indeterminate(self):
+        """Baseline: CONTEXT_ALIGNMENT_REQUIRED=False with missing context → INDETERMINATE."""
+        from app.vvp.sip_context import verify_sip_context_alignment
+
+        mock_passport = MagicMock()
+        mock_passport.payload.orig = {"tn": "+15551234567"}
+        mock_passport.payload.dest = {"tn": ["+15559876543"]}
+        mock_passport.payload.iat = 1700000000
+
+        # context_required=False (default), no SIP context
+        result = verify_sip_context_alignment(
+            mock_passport,
+            sip_context=None,
+            timing_tolerance=30,
+            context_required=False,
+        )
+
+        assert result.status == ClaimStatus.INDETERMINATE
+        assert "not provided" in result.reasons[0]
+
+    def test_timing_tolerance_custom_value_allows_larger_drift(self):
+        """A2: SIP_TIMING_TOLERANCE_SECONDS=60 with 45s drift → VALID."""
+        from app.vvp.sip_context import verify_sip_context_alignment
+        from app.vvp.api_models import SipContext
+        from datetime import datetime, timezone
+
+        # Set up passport with iat
+        invite_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        passport_iat = int(invite_time.timestamp()) + 45  # 45 second drift
+
+        mock_passport = MagicMock()
+        mock_passport.payload.orig = {"tn": "+15551234567"}
+        mock_passport.payload.dest = {"tn": ["+15559876543"]}
+        mock_passport.payload.iat = passport_iat
+
+        # SIP context with matching URIs
+        sip_context = SipContext(
+            from_uri="sip:+15551234567@example.com",
+            to_uri="sip:+15559876543@example.com",
+            invite_time="2024-01-01T12:00:00Z",
+        )
+
+        # With default 30s tolerance, 45s drift would fail
+        result_default = verify_sip_context_alignment(
+            mock_passport,
+            sip_context=sip_context,
+            timing_tolerance=30,
+            context_required=False,
+        )
+        assert result_default.status == ClaimStatus.INVALID
+
+        # With 60s tolerance, 45s drift should pass
+        result_custom = verify_sip_context_alignment(
+            mock_passport,
+            sip_context=sip_context,
+            timing_tolerance=60,
+            context_required=False,
+        )
+        assert result_custom.status == ClaimStatus.VALID
+
+
+class TestSignerDESelection:
+    """Tests for Sprint 18 fix A3: DE selection by signer AID."""
+
+    def test_find_signer_de_credential_matches_by_issuee(self):
+        """A3: _find_signer_de_credential returns DE where issuee matches signer AID."""
+        from app.vvp.verify import _find_signer_de_credential
+        from app.vvp.acdc import ACDC
+
+        signer_aid = "ESignerAID123456789"
+        other_aid = "EOtherAID987654321"
+
+        # Create two DE credentials with different issuees
+        de1 = ACDC(
+            version="ACDC10JSON00011c_",
+            said="SAID_DE1",
+            issuer_aid="EIssuer1",
+            schema_said="ESchema1",
+            attributes={"i": other_aid},  # Different AID
+            edges={"delegate": {"n": "SAID_APE"}},
+            rules={},
+            raw={"a": {"i": other_aid}, "e": {"delegate": {"n": "SAID_APE"}}},
+        )
+        de2 = ACDC(
+            version="ACDC10JSON00011c_",
+            said="SAID_DE2",
+            issuer_aid="EIssuer2",
+            schema_said="ESchema2",
+            attributes={"i": signer_aid},  # Matches signer AID
+            edges={"delegate": {"n": "SAID_APE"}},
+            rules={},
+            raw={"a": {"i": signer_aid}, "e": {"delegate": {"n": "SAID_APE"}}},
+        )
+
+        dossier_acdcs = {
+            "SAID_DE1": de1,
+            "SAID_DE2": de2,
+        }
+
+        # Should find DE2 (matches signer AID), not DE1
+        result = _find_signer_de_credential(dossier_acdcs, signer_aid)
+
+        assert result is not None
+        assert result.said == "SAID_DE2"
+
+    def test_find_signer_de_credential_returns_none_when_no_match(self):
+        """A3: _find_signer_de_credential returns None when no DE matches signer."""
+        from app.vvp.verify import _find_signer_de_credential
+        from app.vvp.acdc import ACDC
+
+        signer_aid = "ESignerAID123456789"
+
+        # Create DE with different issuee
+        de = ACDC(
+            version="ACDC10JSON00011c_",
+            said="SAID_DE",
+            issuer_aid="EIssuer",
+            schema_said="ESchema",
+            attributes={"i": "EOtherAID987654321"},  # Different AID
+            edges={"delegate": {"n": "SAID_APE"}},
+            rules={},
+            raw={"a": {"i": "EOtherAID987654321"}, "e": {"delegate": {"n": "SAID_APE"}}},
+        )
+
+        dossier_acdcs = {"SAID_DE": de}
+
+        result = _find_signer_de_credential(dossier_acdcs, signer_aid)
+
+        assert result is None
+
+    def test_find_signer_de_credential_ignores_non_de_credentials(self):
+        """A3: _find_signer_de_credential ignores non-DE credentials."""
+        from app.vvp.verify import _find_signer_de_credential
+        from app.vvp.acdc import ACDC
+
+        signer_aid = "ESignerAID123456789"
+
+        # Create non-DE credential (APE - no delegate edges)
+        ape = ACDC(
+            version="ACDC10JSON00011c_",
+            said="SAID_APE",
+            issuer_aid="EIssuer",
+            schema_said="ESchema",
+            attributes={"i": signer_aid},  # Has matching issuee but not a DE
+            edges={},  # No delegate edges
+            rules={},
+            raw={"a": {"i": signer_aid}, "e": {}},
+        )
+
+        dossier_acdcs = {"SAID_APE": ape}
+
+        result = _find_signer_de_credential(dossier_acdcs, signer_aid)
+
+        assert result is None
