@@ -4,14 +4,14 @@ Per VVP §6.3.x, credentials must use recognized schema SAIDs from the
 vLEI governance framework. This module provides a versioned registry
 of known schema SAIDs for validation.
 
-Registry Version: 1.0.0
-Last Updated: 2026-01-25
+Registry Version: 1.1.0
+Last Updated: 2026-01-27
 """
 
 from typing import Dict, FrozenSet
 
 # Registry version for tracking updates
-SCHEMA_REGISTRY_VERSION = "1.0.0"
+SCHEMA_REGISTRY_VERSION = "1.1.0"
 
 # Known vLEI governance schema SAIDs
 # These are the official schema SAIDs from the vLEI ecosystem
@@ -20,6 +20,7 @@ KNOWN_SCHEMA_SAIDS: Dict[str, FrozenSet[str]] = {
     # Source: vLEI Governance Framework v1.0
     "LE": frozenset({
         "EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao",  # vLEI QVI LE schema
+        "EJrcLKzq4d1PFtlnHLb9tl4zGwPAjO6v0dec4CiJMZk6",  # Provenant demo LE schema
     }),
 
     # Auth Phone Entity (APE)
@@ -40,7 +41,7 @@ KNOWN_SCHEMA_SAIDS: Dict[str, FrozenSet[str]] = {
 
 # Schema source documentation for audit/compliance
 SCHEMA_SOURCE: Dict[str, str] = {
-    "LE": "vLEI Governance Framework v1.0",
+    "LE": "vLEI Governance Framework v1.0; Provenant demo (EJrcLKzq...)",
     "APE": "Pending - accept any until governance publishes",
     "DE": "Pending - accept any until governance publishes",
     "TNAlloc": "Pending - accept any until governance publishes",
