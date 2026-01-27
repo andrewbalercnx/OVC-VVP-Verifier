@@ -45,6 +45,8 @@ from .dossier import (
     FetchError,
     ParseError,
     GraphError,
+    get_dossier_cache,
+    CachedDossier,
 )
 from .exceptions import VVPIdentityError, PassportError
 from .brand import verify_brand
@@ -616,49 +618,83 @@ async def verify_callee_vvp(
     # -------------------------------------------------------------------------
     # Dossier Fetch and Validation (§5B Steps 7-8)
     # -------------------------------------------------------------------------
+    import time as _time
     raw_dossier: Optional[bytes] = None
     dag: Optional[DossierDAG] = None
     acdc_signatures: Dict[str, bytes] = {}
     dossier_acdcs: Dict[str, "ACDC"] = {}
+    dossier_cache = get_dossier_cache()
+    cache_hit = False
 
     # Per approved plan: structure_valid and acdc_signatures_valid are REQUIRED children
     structure_claim = ClaimBuilder("structure_valid")
     acdc_sigs_claim = ClaimBuilder("acdc_signatures_valid")
 
     if vvp_identity and not passport_fatal:
-        try:
-            raw_dossier = await fetch_dossier(vvp_identity.evd)
-            dossier_claim.add_evidence(f"fetched={vvp_identity.evd[:40]}...")
-        except FetchError as e:
-            errors.append(to_error_detail(e))
-            dossier_claim.fail(ClaimStatus.INDETERMINATE, e.message)
-            structure_claim.fail(ClaimStatus.INDETERMINATE, "Cannot verify: dossier fetch failed")
-            acdc_sigs_claim.fail(ClaimStatus.INDETERMINATE, "Cannot verify: dossier fetch failed")
+        evd_url = vvp_identity.evd
 
-        if raw_dossier is not None:
+        # §5.1.1-2.7: Check cache first (URL available pre-fetch)
+        cached = await dossier_cache.get(evd_url)
+        if cached:
+            # Cache hit - use cached data
+            cache_hit = True
+            dag = cached.dag
+            raw_dossier = cached.raw_content
+            dossier_claim.add_evidence(f"cache_hit={evd_url[:40]}...")
+            dossier_claim.add_evidence(f"dag_valid,root={dag.root_said}")
+            dossier_acdcs = _convert_dag_to_acdcs(dag)
+            structure_claim.add_evidence(f"nodes:{len(dag.nodes)}")
+            structure_claim.add_evidence(f"root_said:{dag.root_said[:16]}...")
+            structure_claim.add_evidence("cache_hit")
+            acdc_sigs_claim.add_evidence("cache_hit")
+            log.info(f"Dossier cache hit: {evd_url[:50]}...")
+        else:
+            # Cache miss - fetch from network
             try:
-                nodes, acdc_signatures = parse_dossier(raw_dossier)
-                dag = build_dag(nodes)
-                validate_dag(dag)
-                dossier_claim.add_evidence(f"dag_valid,root={dag.root_said}")
-                dossier_acdcs = _convert_dag_to_acdcs(dag)
-                structure_claim.add_evidence(f"nodes:{len(nodes)}")
-                structure_claim.add_evidence(f"root_said:{dag.root_said[:16]}...")
-            except (ParseError, GraphError) as e:
+                raw_dossier = await fetch_dossier(evd_url)
+                dossier_claim.add_evidence(f"fetched={evd_url[:40]}...")
+            except FetchError as e:
                 errors.append(to_error_detail(e))
-                dossier_claim.fail(ClaimStatus.INVALID, e.message)
-                structure_claim.fail(ClaimStatus.INVALID, e.message)
-                acdc_sigs_claim.fail(ClaimStatus.INDETERMINATE, "Cannot verify: structure invalid")
-                dag = None
+                dossier_claim.fail(ClaimStatus.INDETERMINATE, e.message)
+                structure_claim.fail(ClaimStatus.INDETERMINATE, "Cannot verify: dossier fetch failed")
+                acdc_sigs_claim.fail(ClaimStatus.INDETERMINATE, "Cannot verify: dossier fetch failed")
 
-            # Validate ACDC signatures if structure is valid
-            if dag is not None and acdc_signatures:
-                acdc_sigs_claim.add_evidence(f"signature_count:{len(acdc_signatures)}")
-                # ACDC signature verification is done as part of chain validation
-                # Mark as valid here; chain_verified will catch any issues
-                acdc_sigs_claim.add_evidence("deferred_to_chain_verification")
-            elif dag is not None:
-                acdc_sigs_claim.add_evidence("no_attached_signatures")
+            if raw_dossier is not None:
+                try:
+                    nodes, acdc_signatures = parse_dossier(raw_dossier)
+                    dag = build_dag(nodes)
+                    validate_dag(dag)
+                    dossier_claim.add_evidence(f"dag_valid,root={dag.root_said}")
+                    dossier_acdcs = _convert_dag_to_acdcs(dag)
+                    structure_claim.add_evidence(f"nodes:{len(nodes)}")
+                    structure_claim.add_evidence(f"root_said:{dag.root_said[:16]}...")
+
+                    # §5.1.1-2.7: Store in cache on successful parse/validate
+                    contained_saids = set(dag.nodes.keys())
+                    cached_dossier = CachedDossier(
+                        dag=dag,
+                        raw_content=raw_dossier,
+                        fetch_timestamp=_time.time(),
+                        content_type="application/json+cesr",
+                        contained_saids=contained_saids,
+                    )
+                    await dossier_cache.put(evd_url, cached_dossier)
+                    log.info(f"Dossier cached: {evd_url[:50]}... (saids={len(contained_saids)})")
+                except (ParseError, GraphError) as e:
+                    errors.append(to_error_detail(e))
+                    dossier_claim.fail(ClaimStatus.INVALID, e.message)
+                    structure_claim.fail(ClaimStatus.INVALID, e.message)
+                    acdc_sigs_claim.fail(ClaimStatus.INDETERMINATE, "Cannot verify: structure invalid")
+                    dag = None
+
+                # Validate ACDC signatures if structure is valid
+                if dag is not None and acdc_signatures:
+                    acdc_sigs_claim.add_evidence(f"signature_count:{len(acdc_signatures)}")
+                    # ACDC signature verification is done as part of chain validation
+                    # Mark as valid here; chain_verified will catch any issues
+                    acdc_sigs_claim.add_evidence("deferred_to_chain_verification")
+                elif dag is not None:
+                    acdc_sigs_claim.add_evidence("no_attached_signatures")
     elif passport_fatal:
         dossier_claim.fail(
             ClaimStatus.INDETERMINATE,
