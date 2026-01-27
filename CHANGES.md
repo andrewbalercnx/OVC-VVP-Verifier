@@ -1,5 +1,90 @@
 # VVP Verifier Change Log
 
+## Sprint 24: UI Enhancement - Evidence, Validation & Schema Visibility
+
+**Date:** 2026-01-27
+**Commit:** 57d9bfa
+
+### Files Changed
+
+| File | Action | Description |
+|------|--------|-------------|
+| `app/vvp/ui/credential_viewmodel.py` | Modified | Added EvidenceStatus enum, 10 new dataclasses (ValidationCheckResult, ValidationSummary, ErrorBucketItem, ErrorBucket, SchemaValidationInfo, EvidenceFetchRecord, EvidenceTimeline, DelegationNode, DelegationChainInfo, DossierViewModel), extended VariantLimitations and CredentialCardViewModel, added build_schema_info/build_validation_summary/build_error_buckets helpers |
+| `app/templates/base.html` | Modified | Added ~60 lines CSS for validation summary strip, error buckets, schema panel, evidence timeline, delegation chain |
+| `app/templates/partials/validation_summary.html` | Created | Validation dashboard strip with check icons and status badges |
+| `app/templates/partials/error_buckets.html` | Created | INVALID/INDETERMINATE separation per §2.2 with remediation hints |
+| `app/templates/partials/schema_panel.html` | Created | Schema validation details with registry source and field errors |
+| `app/templates/partials/evidence_timeline.html` | Created | Fetch timeline with cache metrics and status legend |
+| `app/templates/partials/delegation_chain.html` | Created | Multi-level delegation chain visualization |
+| `app/templates/partials/credential_card.html` | Modified | Added per-credential validation checks, schema panel include, delegation chain include, enhanced limitation banner |
+| `app/templates/partials/dossier.html` | Modified | Added dossier-level validation summary, error buckets, evidence timeline includes |
+| `app/main.py` | Modified | Evidence collection in `/ui/fetch-dossier`, wired build_schema_info, populated validation_checks per credential |
+| `app/Documentation/PLAN_Sprint24_UI.md` | Created | Archived implementation plan |
+
+### Summary
+
+Enhanced VVP Verifier UI to surface new backend capabilities from Sprint 24, improving verification transparency and user experience.
+
+**Key Features:**
+
+1. **Validation Summary Dashboard (§2.2):**
+   - Per-credential validation check strip showing Chain/Schema/Revocation status
+   - Color-coded severity indicators (success/warning/error)
+   - Spec reference tooltips on hover
+
+2. **Error/Warning Buckets (§2.2):**
+   - Clear separation of INVALID (errors) vs INDETERMINATE (warnings)
+   - Remediation hints for actionable guidance
+   - Auto-expands when errors present
+
+3. **Schema Validation Panel (§6.3):**
+   - Registry source display (GLEIF governance vs fetched)
+   - Validation status with field error details
+   - Collapsible with auto-expand on errors
+
+4. **Evidence Fetch Timeline:**
+   - Records for DOSSIER, SCHEMA, TEL fetch operations
+   - EvidenceStatus enum: SUCCESS, FAILED, CACHED, INDETERMINATE
+   - Cache hit rate and total fetch time metrics
+   - Status legend for clarity
+
+5. **Delegation Chain Visualization:**
+   - Multi-level chain from leaf to root
+   - Node authorization status badges
+   - Auto-expand when chain validation fails
+   - (Note: delegation_info populated during /verify, not /ui/fetch-dossier)
+
+6. **Enhanced Variant Limitations:**
+   - `verification_impact` field for spec-compliant messaging
+   - `remediation_hints` list for user guidance
+
+**View Model Extensions:**
+- `EvidenceStatus` enum for consistent status values across components
+- `chain_status` field on CredentialCardViewModel for accurate per-category reporting
+- `DossierViewModel` for top-level dossier display context
+
+### Checklist Items Completed
+
+- UI: Validation summary dashboard
+- UI: Error/warning bucket separation (§2.2)
+- UI: Schema validation panel
+- UI: Evidence fetch timeline with cache metrics
+- UI: Delegation chain visualization (template ready, data from /verify)
+- UI: Enhanced variant limitation display
+
+### Test Results
+
+```
+1178 passed in 66.78s
+```
+
+### Review History
+
+- Rev 0: CHANGES_REQUESTED - build_schema_info never called, validation_checks not populated, delegation_info N/A
+- Rev 1: APPROVED - schema_info wired, validation_checks built, delegation_info accepted as N/A for fetch path
+
+---
+
 ## Sprint 23: URL-Keyed Dossier Cache with SAID Index
 
 **Date:** 2026-01-26
