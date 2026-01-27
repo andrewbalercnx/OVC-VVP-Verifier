@@ -135,6 +135,42 @@ def _find_delegation_target(
     return None
 
 
+def _find_ape_referencing_de(
+    de_said: str,
+    dossier_acdcs: Dict[str, ACDC]
+) -> Optional[ACDC]:
+    """Find an APE credential that references a DE credential via any edge.
+
+    This handles terminal DEs that don't have their own delegation edge
+    but are referenced by the APE (e.g., via "alloc", "delsig" edges).
+
+    Args:
+        de_said: The SAID of the DE credential to look for.
+        dossier_acdcs: All credentials in the dossier.
+
+    Returns:
+        The APE credential that references this DE, or None if not found.
+    """
+    ape_credentials = _find_credentials_by_type(dossier_acdcs, "APE")
+
+    for ape in ape_credentials:
+        if not ape.edges:
+            continue
+
+        # Check all edges of the APE for references to this DE
+        for edge_name, edge_ref in ape.edges.items():
+            target_said = None
+            if isinstance(edge_ref, str):
+                target_said = edge_ref
+            elif isinstance(edge_ref, dict):
+                target_said = edge_ref.get('n') or edge_ref.get('d')
+
+            if target_said == de_said:
+                return ape
+
+    return None
+
+
 def _walk_de_chain(
     starting_de: ACDC,
     dossier_acdcs: Dict[str, ACDC],
@@ -162,6 +198,18 @@ def _walk_de_chain(
         target = _find_delegation_target(current, dossier_acdcs)
 
         if target is None:
+            # DE has no delegation edge - check if it's referenced by an APE
+            # This handles terminal DEs that are directly linked from the APE
+            # (e.g., TN Allocator referenced via APE's "alloc" edge)
+            referencing_ape = _find_ape_referencing_de(current.said, dossier_acdcs)
+            if referencing_ape:
+                evidence.append(f"terminal_de:{current.said[:16]}...")
+                evidence.append(f"ape_said:{referencing_ape.said[:16]}...")
+                accountable_aid = _get_issuee(referencing_ape)
+                if accountable_aid:
+                    evidence.append(f"accountable_party:{accountable_aid[:16]}...")
+                return (True, referencing_ape, None, evidence)
+
             return (
                 False, None,
                 f"DE {current.said[:20]}... delegation edge target not found in dossier",
