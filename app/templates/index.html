@@ -33,6 +33,13 @@
     </div>
 </section>
 
+<section id="verify-section">
+    <h2>Full Verification</h2>
+    <div id="verify-result">
+        <p><em>Parse a JWT first, then run full verification to see the complete claim tree, delegation chain, and validation results.</em></p>
+    </div>
+</section>
+
 <hr>
 
 <details>
@@ -99,6 +106,26 @@
                 `;
                 // Re-process HTMX on new content
                 htmx.process(dossierResult);
+
+                // Store JWT and evdUrl for verification
+                window.vvpJwt = document.getElementById('jwt').value;
+                window.vvpEvdUrl = evdUrl;
+
+                // Update verify section with verify button
+                const verifyResult = document.getElementById('verify-result');
+                verifyResult.innerHTML = `
+                    <p>Run full verification to see claim tree, delegation chain, and validation results.</p>
+                    <form hx-post="/ui/verify-result" hx-target="#verify-result" hx-swap="innerHTML">
+                        <input type="hidden" name="passport_jwt" value="${window.vvpJwt}">
+                        <input type="hidden" name="evd_url" value="${evdUrl}">
+                        <input type="hidden" name="call_id" value="ui-verify-${Date.now()}">
+                        <button type="submit">
+                            <span class="htmx-indicator">Verifying...</span>
+                            <span>Run Full Verification</span>
+                        </button>
+                    </form>
+                `;
+                htmx.process(verifyResult);
             }
         }
 
