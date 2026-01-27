@@ -54,6 +54,13 @@ class ACDC:
         Returns:
             Credential type string (e.g., 'APE', 'DE', 'TNAlloc', 'LE', 'unknown').
         """
+        # Check schema SAID against registry first (most reliable)
+        if self.schema_said:
+            from .schema_registry import KNOWN_SCHEMA_SAIDS
+            for cred_type, saids in KNOWN_SCHEMA_SAIDS.items():
+                if self.schema_said in saids:
+                    return cred_type
+
         # For compact variants, try edge-based detection first
         # (attributes may be SAID reference, not expanded dict)
         if self.variant == "compact" or not isinstance(self.attributes, dict):
