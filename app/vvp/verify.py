@@ -220,6 +220,8 @@ def _find_leaf_credentials(dag: DossierDAG, dossier_acdcs: Dict[str, "ACDC"]) ->
     # Collect all SAIDs referenced as edges by other credentials
     referenced_saids: Set[str] = set()
     for said, node in dag.nodes.items():
+        if not node.edges:
+            continue
         for edge_name, edge_ref in node.edges.items():
             # Skip metadata fields
             if edge_name in ('d', 'n'):
