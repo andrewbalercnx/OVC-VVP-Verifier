@@ -188,6 +188,144 @@ class TestAcdcProperties:
 
         assert acdc.is_root_credential is False
 
+    def test_credential_type_le_from_vcard_lei(self):
+        """Test LE credential type detection from vCard NOTE;LEI field."""
+        acdc = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="",
+            attributes={
+                "vcard": [
+                    "ORG:Rich Connexions",
+                    "NOTE;LEI:984500DEE7537A07Y615",
+                    "LOGO;VALUE=URI:https://example.com/logo.png",
+                ]
+            },
+            raw={}
+        )
+
+        assert acdc.credential_type == "LE"
+
+    def test_credential_type_direct_lei_takes_precedence(self):
+        """Test that direct LEI attribute takes precedence over vCard LEI."""
+        acdc = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="",
+            attributes={
+                "LEI": "1234567890ABCDEFGHIJ",
+                "vcard": ["NOTE;LEI:DIFFERENT_LEI_VALUE"],
+            },
+            raw={}
+        )
+
+        # Should still be LE (direct LEI found first)
+        assert acdc.credential_type == "LE"
+
+    def test_credential_type_vcard_no_lei_unknown(self):
+        """Test credential with vCard but no LEI remains unknown."""
+        acdc = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="",
+            attributes={
+                "vcard": [
+                    "ORG:Some Organization",
+                    "LOGO;VALUE=URI:https://example.com/logo.png",
+                ]
+            },
+            raw={}
+        )
+
+        assert acdc.credential_type == "unknown"
+
+    def test_credential_type_vcard_lei_case_insensitive(self):
+        """Test that vCard LEI extraction is case-insensitive."""
+        acdc = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="",
+            attributes={
+                "vcard": [
+                    "note;lei:984500DEE7537A07Y615",  # lowercase
+                ]
+            },
+            raw={}
+        )
+
+        assert acdc.credential_type == "LE"
+
+    def test_credential_type_vcard_empty_lei_ignored(self):
+        """Test that empty NOTE;LEI value is treated as no LEI."""
+        acdc = ACDC(
+            version="",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "B" * 43,
+            schema_said="",
+            attributes={
+                "vcard": [
+                    "NOTE;LEI:",  # Empty value
+                ]
+            },
+            raw={}
+        )
+
+        assert acdc.credential_type == "unknown"
+
+
+class TestExtractLeiFromVcard:
+    """Tests for the _extract_lei_from_vcard helper function."""
+
+    def test_extract_lei_valid(self):
+        """Test LEI extraction from valid vCard data."""
+        from app.vvp.acdc.models import _extract_lei_from_vcard
+
+        vcard = ["ORG:Test", "NOTE;LEI:984500DEE7537A07Y615"]
+        assert _extract_lei_from_vcard(vcard) == "984500DEE7537A07Y615"
+
+    def test_extract_lei_case_insensitive(self):
+        """Test LEI extraction is case-insensitive."""
+        from app.vvp.acdc.models import _extract_lei_from_vcard
+
+        vcard = ["note;lei:ABC123"]
+        assert _extract_lei_from_vcard(vcard) == "ABC123"
+
+    def test_extract_lei_none_if_not_list(self):
+        """Test returns None if vcard_data is not a list."""
+        from app.vvp.acdc.models import _extract_lei_from_vcard
+
+        assert _extract_lei_from_vcard("not a list") is None
+        assert _extract_lei_from_vcard({"dict": "data"}) is None
+        assert _extract_lei_from_vcard(None) is None
+
+    def test_extract_lei_none_if_no_lei(self):
+        """Test returns None if no NOTE;LEI line."""
+        from app.vvp.acdc.models import _extract_lei_from_vcard
+
+        vcard = ["ORG:Test", "LOGO:url"]
+        assert _extract_lei_from_vcard(vcard) is None
+
+    def test_extract_lei_empty_returns_none(self):
+        """Test returns None if LEI value is empty."""
+        from app.vvp.acdc.models import _extract_lei_from_vcard
+
+        vcard = ["NOTE;LEI:"]
+        assert _extract_lei_from_vcard(vcard) is None
+
+        vcard = ["NOTE;LEI:   "]  # whitespace only
+        assert _extract_lei_from_vcard(vcard) is None
+
+    def test_extract_lei_handles_non_string_lines(self):
+        """Test gracefully handles non-string items in list."""
+        from app.vvp.acdc.models import _extract_lei_from_vcard
+
+        vcard = [123, None, {"dict": "item"}, "NOTE;LEI:ABC123"]
+        assert _extract_lei_from_vcard(vcard) == "ABC123"
+
 
 class TestValidateCredentialChain:
     """Tests for credential chain validation."""

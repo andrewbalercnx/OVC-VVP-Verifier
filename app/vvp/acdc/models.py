@@ -7,6 +7,28 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
+def _extract_lei_from_vcard(vcard_data: Any) -> Optional[str]:
+    """Extract LEI from vCard data if present.
+
+    Parses vCard lines looking for NOTE;LEI: format per RFC 6350 extension.
+    This allows LE credential detection when LEI is embedded in vCard
+    rather than as a direct attribute.
+
+    Args:
+        vcard_data: The vcard attribute value (typically a list of strings).
+
+    Returns:
+        LEI string if found, None otherwise.
+    """
+    if not isinstance(vcard_data, list):
+        return None
+    for line in vcard_data:
+        if isinstance(line, str) and line.upper().startswith("NOTE;LEI:"):
+            lei = line[9:].strip()
+            return lei if lei else None
+    return None
+
+
 @dataclass
 class ACDC:
     """Parsed ACDC credential.
@@ -80,6 +102,10 @@ class ACDC:
         if isinstance(self.attributes, dict):
             if "LEI" in self.attributes:
                 return "LE"  # Legal Entity credential
+            # Check vCard for embedded LEI (NOTE;LEI: format)
+            vcard = self.attributes.get("vcard")
+            if vcard and _extract_lei_from_vcard(vcard):
+                return "LE"  # vCard-based Legal Entity credential
             if "phone" in self.attributes or "tn" in self.attributes:
                 return "TNAlloc"  # TN Allocation credential
 

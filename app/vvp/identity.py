@@ -204,13 +204,16 @@ def build_issuer_identity_map(
                         if lei or legal_name:
                             break
 
-        # Also check vCard data for organization name
+        # Also check vCard data for organization name and LEI
         vcard_data = acdc.attributes.get("vcard")
-        if isinstance(vcard_data, list) and not legal_name:
+        if isinstance(vcard_data, list):
             for line in vcard_data:
-                if isinstance(line, str) and line.upper().startswith("ORG:"):
-                    legal_name = line[4:].strip()
-                    break
+                if isinstance(line, str):
+                    line_upper = line.upper()
+                    if line_upper.startswith("ORG:") and not legal_name:
+                        legal_name = line[4:].strip()
+                    elif line_upper.startswith("NOTE;LEI:") and not lei:
+                        lei = line[9:].strip()
 
         if not legal_name and not lei:
             continue

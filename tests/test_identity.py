@@ -207,6 +207,58 @@ class TestBuildIssuerIdentityMap:
         identity = result["EIssuee12345678901234567890123456789012"]
         assert identity.legal_name == "lowercase org name"
 
+    def test_extract_lei_from_vcard(self):
+        """Extract LEI from vCard NOTE;LEI field."""
+        acdc = self._make_acdc(
+            said="ESAID1234567890123456789012345678901234567",
+            issuer_aid="EIssuer12345678901234567890123456789012",
+            attributes={
+                "vcard": [
+                    "ORG:Rich Connexions",
+                    "NOTE;LEI:984500DEE7537A07Y615",
+                    "LOGO;VALUE=URI:https://example.com/logo.png",
+                ],
+                "issuee": "EIssuee12345678901234567890123456789012",
+            },
+        )
+        result = build_issuer_identity_map([acdc])
+
+        identity = result["EIssuee12345678901234567890123456789012"]
+        assert identity.legal_name == "Rich Connexions"
+        assert identity.lei == "984500DEE7537A07Y615"
+
+    def test_vcard_lei_case_insensitive(self):
+        """vCard NOTE;LEI parsing is case-insensitive."""
+        acdc = self._make_acdc(
+            said="ESAID1234567890123456789012345678901234567",
+            issuer_aid="EIssuer12345678901234567890123456789012",
+            attributes={
+                "vcard": ["note;lei:ABC123DEF456GHI789JK"],
+                "issuee": "EIssuee12345678901234567890123456789012",
+            },
+        )
+        result = build_issuer_identity_map([acdc])
+
+        identity = result["EIssuee12345678901234567890123456789012"]
+        assert identity.lei == "ABC123DEF456GHI789JK"
+
+    def test_direct_lei_takes_precedence_over_vcard(self):
+        """Direct LEI attribute takes precedence over vCard LEI."""
+        acdc = self._make_acdc(
+            said="ESAID1234567890123456789012345678901234567",
+            issuer_aid="EIssuer12345678901234567890123456789012",
+            attributes={
+                "LEI": "DIRECT_LEI_12345678901",
+                "vcard": ["NOTE;LEI:VCARD_LEI_1234567890"],
+                "issuee": "EIssuee12345678901234567890123456789012",
+            },
+        )
+        result = build_issuer_identity_map([acdc])
+
+        identity = result["EIssuee12345678901234567890123456789012"]
+        # Direct LEI should be used (it was set first in the logic)
+        assert identity.lei == "DIRECT_LEI_12345678901"
+
     def test_self_issued_credential_uses_issuer(self):
         """Self-issued credential (no issuee) identifies the issuer."""
         acdc = self._make_acdc(
