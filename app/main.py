@@ -27,6 +27,9 @@ from app.vvp.dossier import get_dossier_cache, CachedDossier, fetch_dossier as c
 configure_logging()
 log = logging.getLogger("vvp")
 
+# Default test JWT for simple verification page
+DEFAULT_TEST_JWT = """eyJhbGciOiJFZERTQSIsInR5cCI6InBhc3Nwb3J0IiwicHB0IjoidnZwIiwia2lkIjoiaHR0cDovL3dpdG5lc3M1LnN0YWdlLnByb3ZlbmFudC5uZXQ6NTYzMS9vb2JpL0VHYXk1dWZCcUFhbmJoRmFfcWUtS01GVVBKSG44SjBNRmJhOTZ5eVdSckxGL3dpdG5lc3MifQ.eyJvcmlnIjp7InRuIjpbIjQ0Nzg4NDY2NjIwMCJdfSwiZGVzdCI6eyJ0biI6WyI0NDc3Njk3MTAyODUiXX0sImlhdCI6MTc2OTE4MzMwMiwiY2FyZCI6WyJDQVRFR09SSUVTOiIsIkxPR087SEFTSD1zaGEyNTYtNDBiYWM2ODZhM2YwYjQ4MjUzZGU1NWIzNGY1NTJjODA3MGJhZjIyZjgxMjU1YWFjNDQ5NzIxYzg3OWM3MTZhNDtWQUxVRT1VUkk6aHR0cHM6Ly9vcmlnaW4tY2VsbC1mcmFua2Z1cnQuczMuZXUtY2VudHJhbC0xLmFtYXpvbmF3cy5jb20vYnJhbmQtYXNzZXRzL3JpY2gtY29ubmV4aW9ucy9sb2dvLnBuZyIsIk5PVEU7TEVJOjk4NDUwMERFRTc1MzdBMDdZNjE1IiwiT1JHOlJpY2ggQ29ubmV4aW9ucyJdLCJjYWxsX3JlYXNvbiI6bnVsbCwiZ29hbCI6bnVsbCwiZXZkIjoiaHR0cHM6Ly9vcmlnaW4uZGVtby5wcm92ZW5hbnQubmV0L3YxL2FnZW50L3B1YmxpYy9FSGxWWFVKLWRZS3F0UGR2enRkQ0ZKRWJreXI2elgyZFgxMmh3ZEU5eDhleS9kb3NzaWVyLmNlc3IiLCJvcmlnSWQiOiIiLCJleHAiOjE3NjkxODM2MDIsInJlcXVlc3RfaWQiOiIifQ.OvoaiAwt1dgPb6gLkK7ufWoL2qzdtmudyyiL38oqB0wfaicGSG4B_QFtHY2vS2w-PYZ6LhN9dWXpsOHtpKAXCw""".strip()
+
 app = FastAPI(title="VVP Verifier", version="0.1.0")
 
 # Template setup
@@ -1608,3 +1611,275 @@ async def ui_credential_card(
             "type": "warning",
         },
     )
+
+
+# =============================================================================
+# Simple Verification Page (Single-step workflow)
+# =============================================================================
+
+
+@app.get("/simple")
+def simple_page(request: Request):
+    """Serve the simple verification page with single-step workflow."""
+    return templates.TemplateResponse("simple.html", {
+        "request": request,
+        "default_jwt": DEFAULT_TEST_JWT,
+    })
+
+
+@app.post("/ui/simple-verify")
+async def ui_simple_verify(
+    request: Request,
+    jwt: str = Form(...),
+    use_jwt_time: str = Form(""),
+):
+    """One-step verification returning graph with click-to-select credential cards.
+
+    Combines JWT parsing, dossier fetching, full verification, and graph building
+    into a single operation. Returns a combined result page with:
+    - Verification status banner
+    - SVG credential graph (click to select)
+    - Full credential cards for each credential
+    """
+    from app.vvp.api_models import (
+        VerifyRequest,
+        CallContext,
+    )
+    from app.vvp.dossier.parser import parse_dossier
+    from app.vvp.acdc import (
+        parse_acdc,
+        build_credential_graph,
+        credential_graph_to_dict,
+    )
+    from app.vvp.ui.credential_viewmodel import (
+        build_credential_card_vm,
+        build_issuer_identity_map_async,
+        build_schema_info,
+        build_delegation_chain_info,
+        ValidationCheckResult,
+    )
+    from app.vvp.keri.tel_client import TELClient, CredentialStatus
+    from app.core.config import TRUSTED_ROOT_AIDS
+
+    try:
+        # Step 1: Parse JWT to extract evd URL, kid, and iat
+        jwt = jwt.strip()
+        if ";" in jwt:
+            jwt = jwt.split(";")[0]
+
+        try:
+            jwt_parts = jwt.split(".")
+            if len(jwt_parts) < 2:
+                raise ValueError("Invalid JWT format")
+
+            header_padded = jwt_parts[0] + "=" * (-len(jwt_parts[0]) % 4)
+            header_bytes = base64.urlsafe_b64decode(header_padded)
+            header_dict = json.loads(header_bytes)
+            passport_kid = header_dict.get("kid")
+
+            payload_padded = jwt_parts[1] + "=" * (-len(jwt_parts[1]) % 4)
+            payload_bytes = base64.urlsafe_b64decode(payload_padded)
+            payload_dict = json.loads(payload_bytes)
+            passport_iat = payload_dict.get("iat")
+            evd_url = payload_dict.get("evd")
+
+            if not evd_url:
+                return templates.TemplateResponse(
+                    "partials/simple_result.html",
+                    {"request": request, "error": "JWT does not contain an 'evd' (evidence) URL"},
+                )
+        except Exception as e:
+            return templates.TemplateResponse(
+                "partials/simple_result.html",
+                {"request": request, "error": f"Failed to parse JWT: {e}"},
+            )
+
+        # Step 2: Build VVP-Identity header from JWT
+        vvp_identity_header = None
+        if passport_kid and evd_url and passport_iat:
+            identity_obj = {
+                "kid": passport_kid,
+                "ppt": "vvp",
+                "evd": evd_url,
+                "iat": passport_iat,
+            }
+            identity_json = json.dumps(identity_obj, separators=(',', ':'))
+            vvp_identity_header = base64.urlsafe_b64encode(
+                identity_json.encode('utf-8')
+            ).decode('utf-8').rstrip('=')
+
+        # Step 3: Run verification
+        verify_req = VerifyRequest(
+            passport_jwt=jwt,
+            context=CallContext(
+                call_id="simple-verify",
+                received_at=datetime.now(timezone.utc).isoformat(),
+            )
+        )
+
+        reference_time = None
+        if use_jwt_time in ("on", "true", "1") and passport_iat:
+            reference_time = passport_iat
+
+        req_id, verify_response = await verify_vvp(verify_req, vvp_identity_header, reference_time=reference_time)
+
+        # Step 4: Fetch dossier and build ACDCs
+        raw_bytes = await cached_fetch_dossier(evd_url)
+        raw_text = raw_bytes.decode("utf-8")
+        nodes, signatures = parse_dossier(raw_bytes)
+
+        # Collect all SAIDs for edge availability checking
+        all_saids = {node.said for node in nodes}
+
+        # Parse TEL data from dossier for revocation status
+        tel_client = TELClient(timeout=2.0)
+        revocation_cache: dict[str, dict] = {}
+        for node in nodes:
+            try:
+                result = tel_client.parse_dossier_tel(
+                    dossier_data=raw_text,
+                    credential_said=node.said,
+                    registry_said=node.raw.get("ri") if node.raw else None,
+                )
+                if result.status != CredentialStatus.UNKNOWN:
+                    revocation_cache[node.said] = {
+                        "status": result.status.value,
+                        "checked_at": datetime.now(timezone.utc).isoformat(),
+                        "source": result.source or "dossier",
+                        "error": result.error,
+                    }
+            except Exception:
+                pass
+
+        # Parse all ACDCs
+        dossier_acdcs = {}
+        parsed_acdcs = []
+        for node in nodes:
+            acdc_dict = node.raw.copy() if node.raw else {}
+            acdc_dict["d"] = node.said
+            acdc_dict["i"] = node.issuer
+            acdc_dict["s"] = node.schema
+            if node.attributes:
+                acdc_dict["a"] = node.attributes
+            if node.edges:
+                acdc_dict["e"] = node.edges
+
+            try:
+                acdc = parse_acdc(acdc_dict)
+                dossier_acdcs[acdc.said] = acdc
+                parsed_acdcs.append((acdc, acdc_dict, node.said))
+            except Exception as e:
+                log.warning(f"Failed to parse ACDC {node.said[:16]}: {e}")
+
+        # Step 5: Build credential graph
+        graph = build_credential_graph(
+            dossier_acdcs=dossier_acdcs,
+            trusted_roots=set(TRUSTED_ROOT_AIDS),
+            revocation_status=None,
+        )
+        graph_dict = credential_graph_to_dict(graph)
+
+        # Step 6: Build view-models for all credentials
+        issuer_identities = await build_issuer_identity_map_async(
+            [acdc for acdc, _, _ in parsed_acdcs if acdc is not None],
+            oobi_url=evd_url,
+            discover_missing=True,
+        )
+
+        delegation_info = build_delegation_chain_info(
+            verify_response.delegation_chain,
+            issuer_identities,
+        ) if verify_response.delegation_chain else None
+
+        credential_vms: dict[str, Any] = {}
+        for acdc, acdc_dict, said in parsed_acdcs:
+            if acdc is None:
+                continue
+
+            revocation_result = revocation_cache.get(said)
+
+            try:
+                vm = build_credential_card_vm(
+                    acdc=acdc,
+                    chain_result=None,
+                    revocation_result=revocation_result,
+                    available_saids=all_saids,
+                    issuer_identities=issuer_identities,
+                )
+
+                schema_info = build_schema_info(acdc, schema_doc=None, errors=[])
+                vm.schema_info = schema_info
+
+                if delegation_info and verify_response.signer_aid:
+                    if vm.issuer.aid == verify_response.signer_aid:
+                        vm.delegation_info = delegation_info
+
+                # Build per-credential validation checks
+                checks = []
+                chain_severity = ("success" if vm.chain_status == "VALID"
+                                 else "error" if vm.chain_status == "INVALID"
+                                 else "warning")
+                checks.append(ValidationCheckResult(
+                    name="Chain",
+                    status=vm.chain_status,
+                    short_reason="Credential chain",
+                    spec_ref="§5.1.1",
+                    severity=chain_severity,
+                ))
+
+                schema_severity = ("success" if schema_info.validation_status == "VALID"
+                                  else "error" if schema_info.validation_status == "INVALID"
+                                  else "warning")
+                checks.append(ValidationCheckResult(
+                    name="Schema",
+                    status=schema_info.validation_status,
+                    short_reason=schema_info.registry_source,
+                    spec_ref="§6.3",
+                    severity=schema_severity,
+                ))
+
+                rev_state = vm.revocation.state
+                rev_severity = ("success" if rev_state == "ACTIVE"
+                               else "error" if rev_state == "REVOKED"
+                               else "warning")
+                rev_status = ("VALID" if rev_state == "ACTIVE"
+                             else "INVALID" if rev_state == "REVOKED"
+                             else "INDETERMINATE")
+                checks.append(ValidationCheckResult(
+                    name="Revocation",
+                    status=rev_status,
+                    short_reason=rev_state,
+                    spec_ref="§5.1.1-2.9",
+                    severity=rev_severity,
+                ))
+
+                vm.validation_checks = checks
+                credential_vms[said] = vm
+
+            except Exception as e:
+                log.warning(f"Failed to build view-model for {said[:16]}: {e}")
+
+        # Convert verify_response to dict for Jinja2 serialization
+        verify_response_dict = verify_response.model_dump(mode='json')
+
+        return templates.TemplateResponse(
+            "partials/simple_result.html",
+            {
+                "request": request,
+                "verify_response": verify_response_dict,
+                "graph": graph_dict,
+                "credential_vms": credential_vms,
+            },
+        )
+
+    except httpx.TimeoutException:
+        return templates.TemplateResponse(
+            "partials/simple_result.html",
+            {"request": request, "error": f"Timeout fetching dossier from {evd_url}"},
+        )
+    except Exception as e:
+        log.error(f"Simple verification failed: {e}")
+        return templates.TemplateResponse(
+            "partials/simple_result.html",
+            {"request": request, "error": str(e)},
+        )

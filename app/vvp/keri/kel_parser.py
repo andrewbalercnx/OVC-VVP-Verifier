@@ -56,13 +56,15 @@ class WitnessReceipt:
     consensus on the event log state.
 
     Attributes:
-        witness_aid: The AID of the witness.
+        witness_aid: The AID of the witness (may be empty for indexed sigs).
         signature: The witness's signature on the event.
         timestamp: Optional timestamp when the witness signed.
+        index: Optional index into the event's witnesses list (for indexed sigs).
     """
     witness_aid: str
     signature: bytes
     timestamp: Optional[datetime] = None
+    index: Optional[int] = None
 
 
 @dataclass
@@ -284,6 +286,10 @@ def _parse_cesr_kel(kel_data: bytes) -> List[KELEvent]:
     CESR is a self-framing binary format. This implementation handles
     the subset needed for VVP verification by delegating to the cesr module.
 
+    Only KEL (Key Event Log) events are parsed: icp, rot, ixn, dip, drt.
+    Other KERI events like rpy (reply), qry (query), exn (exchange) are
+    skipped as they are not part of the KEL.
+
     Returns:
         List of KELEvent objects parsed from the CESR stream.
 
@@ -297,19 +303,28 @@ def _parse_cesr_kel(kel_data: bytes) -> List[KELEvent]:
         # Empty or whitespace-only stream
         return []
 
+    # KEL event types (Key Event Log events)
+    KEL_EVENT_TYPES = {"icp", "rot", "ixn", "dip", "drt"}
+
     events = []
     for msg in cesr_messages:
+        # Skip non-KEL events (rpy, qry, exn, etc.)
+        event_type = msg.event_dict.get("t", "")
+        if event_type not in KEL_EVENT_TYPES:
+            continue
+
         # Convert CESRMessage to KELEvent
         event = _parse_event_dict(msg.event_dict)
 
         # Add signatures from CESR attachments
         event.signatures = msg.controller_sigs
 
-        # Convert CESR witness receipts to KELEvent format
+        # Convert CESR witness receipts to KELEvent format (preserving index for indexed sigs)
         for receipt in msg.witness_receipts:
             event.witness_receipts.append(WitnessReceipt(
                 witness_aid=receipt.witness_aid,
                 signature=receipt.signature,
+                index=receipt.index,
             ))
 
         events.append(event)
@@ -545,14 +560,9 @@ def _validate_event_said(event: KELEvent, use_canonical: bool = False) -> None:
     raw_copy.pop("receipts", None)
     raw_copy.pop("rcts", None)
 
-    # For inception events (icp, dip), the 'i' field equals 'd' (self-addressing).
-    # When computing SAID, both should be placeholders since they're circular.
-    # If i == d, we need to clear 'i' before computing so the SAID matches
-    # what was originally computed before 'i' was set.
-    event_type = raw_copy.get("t", "")
-    if event_type in ("icp", "dip"):
-        # Self-addressing: i == d, so clear i for SAID computation
-        raw_copy["i"] = ""
+    # Note: For inception events (icp, dip) with self-addressing identifiers (i == d),
+    # most_compact_form will automatically placeholder both 'd' and 'i'.
+    # We do NOT modify 'i' here - let most_compact_form handle it correctly.
 
     # Compute expected SAID using appropriate method
     if use_canonical:
@@ -980,8 +990,17 @@ def validate_witness_receipts(
         witness_aid = receipt.witness_aid
         signature = receipt.signature
 
-        # Skip receipts with empty AID (indexed witness sigs need context)
+        # For indexed witness signatures, look up the AID from witnesses list
+        if not witness_aid and receipt.index is not None:
+            if event.witnesses and receipt.index < len(event.witnesses):
+                witness_aid = event.witnesses[receipt.index]
+            else:
+                errors.append(f"Witness index {receipt.index} out of range")
+                continue
+
+        # Skip receipts with empty AID (no context available)
         if not witness_aid:
+            errors.append("Receipt has no witness AID and no valid index")
             continue
 
         # Verify witness is in event's witness list

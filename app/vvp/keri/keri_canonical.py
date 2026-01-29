@@ -113,6 +113,10 @@ def most_compact_form(event: dict[str, Any], said_field: str = "d") -> bytes:
     The placeholder is '#' repeated for the correct SAID length (44 chars
     for Blake3-256 with 'E' derivation code prefix).
 
+    IMPORTANT: For ICP and DIP events with self-addressing identifiers,
+    both 'd' (digest) and 'i' (identifier) must be placeholdered because
+    they have the same value. This matches KERI spec for self-addressing IDs.
+
     IMPORTANT: This function also updates the version string ('v' field) to
     reflect the correct serialized size, matching keripy's saidify behavior.
 
@@ -134,6 +138,21 @@ def most_compact_form(event: dict[str, Any], said_field: str = "d") -> bytes:
     # Create a copy with the placeholder
     event_copy = dict(event)
     event_copy[said_field] = SAID_PLACEHOLDER
+
+    # For ICP and DIP events with self-addressing identifiers (d == i),
+    # the 'i' field must also be placeholdered per KERI spec.
+    # This applies when:
+    # 1. Computing the initial SAID (d and i are both empty or placeholder)
+    # 2. Validating an existing event (d == i already)
+    event_type = event.get("t", "")
+    if event_type in ("icp", "dip"):
+        original_said = event.get(said_field, "")
+        original_id = event.get("i", "")
+        # Placeholder 'i' if:
+        # - Both are equal (including both empty - initial SAID computation)
+        # - Or 'i' is explicitly marked as placeholder
+        if original_said == original_id or not original_id or original_id.startswith("#"):
+            event_copy["i"] = SAID_PLACEHOLDER
 
     # First serialization to determine size
     raw = canonical_serialize(event_copy)

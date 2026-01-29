@@ -114,10 +114,16 @@ class CESRAttachment:
 
 @dataclass
 class WitnessReceipt:
-    """Receipt from a witness confirming an event."""
+    """Receipt from a witness confirming an event.
+
+    For indexed witness signatures (-B code), the witness_aid may be empty
+    and the index field indicates which witness in the event's b[] array
+    signed. The validator should look up witnesses[index] to get the AID.
+    """
 
     witness_aid: str
     signature: bytes
+    index: Optional[int] = None  # Index for indexed witness signatures
 
 
 @dataclass
@@ -254,18 +260,18 @@ def _parse_count_code(data: bytes, offset: int) -> Tuple[str, int, int]:
     return hard, count, offset + fs
 
 
-def _parse_indexed_signature(data: bytes, offset: int) -> Tuple[bytes, int]:
+def _parse_indexed_signature(data: bytes, offset: int) -> Tuple[bytes, int, int]:
     """Parse an indexed signature primitive.
 
     Indexed signatures have a 2-4 character derivation code followed by
-    base64-encoded signature data.
+    base64-encoded signature data. The derivation code encodes the signer index.
 
     Args:
         data: CESR byte stream.
         offset: Current position in stream.
 
     Returns:
-        Tuple of (signature_bytes, new_offset).
+        Tuple of (signature_bytes, new_offset, signer_index).
     """
     if offset + 2 > len(data):
         raise ResolutionFailedError("Truncated signature")
@@ -274,10 +280,16 @@ def _parse_indexed_signature(data: bytes, offset: int) -> Tuple[bytes, int]:
     # Two-char codes like 0A, 0B, AA have different total lengths
     code_2 = data[offset : offset + 2].decode("ascii")
 
-    if code_2 in ("0A", "0B", "0C", "0D", "AA"):
+    if code_2 in ("0A", "0B", "0C", "0D", "AA", "AB", "AC", "AD"):
         # Ed25519 indexed signature: total primitive is 88 qb64 chars
+        # 0A/0B/0C/0D = controller indexed signatures (indices 0-3)
+        # AA/AB/AC/AD = witness indexed signatures (indices 0-3)
+        # The second character encodes the index: A=0, B=1, C=2, D=3
         # CESR encoding: code (2 chars) + index (2 chars) + signature (84 chars)
         # When decoded as a whole, yields 66 bytes with 2 lead bytes for code/index
+        index_char = code_2[1]
+        signer_index = ord(index_char) - ord("A")  # A=0, B=1, C=2, D=3
+
         sig_end = offset + 88
         if sig_end > len(data):
             raise ResolutionFailedError("Truncated Ed25519 signature")
@@ -295,7 +307,7 @@ def _parse_indexed_signature(data: bytes, offset: int) -> Tuple[bytes, int]:
         # Per CESR spec, indexed signatures have ls=2 (lead size)
         sig_bytes = full_decoded[2:]
 
-        return sig_bytes, sig_end
+        return sig_bytes, sig_end, signer_index
 
     # 4-char codes like 1AAA, 2AAA (big indexed signatures)
     if offset + 4 <= len(data):
@@ -303,6 +315,7 @@ def _parse_indexed_signature(data: bytes, offset: int) -> Tuple[bytes, int]:
         if code_4 in ("1AAA", "2AAA"):
             # Ed25519 big indexed: total 88 chars
             # These have 4-char code with larger index range
+            # For big indexed sigs, the index is in the following chars
             sig_end = offset + 88
             if sig_end > len(data):
                 raise ResolutionFailedError("Truncated Ed25519 indexed signature")
@@ -317,9 +330,12 @@ def _parse_indexed_signature(data: bytes, offset: int) -> Tuple[bytes, int]:
                 raise ResolutionFailedError(f"Invalid signature encoding: {e}")
 
             # Strip the 2 lead bytes to get the 64-byte Ed25519 signature
+            # For big indexed, the index is encoded in the lead bytes
+            # The first lead byte has the index
+            signer_index = full_decoded[0] & 0x3F  # Lower 6 bits are index
             sig_bytes = full_decoded[2:]
 
-            return sig_bytes, sig_end
+            return sig_bytes, sig_end, signer_index
 
     raise ResolutionFailedError(f"Unknown signature derivation code at offset {offset}")
 
@@ -367,8 +383,8 @@ def _parse_receipt_couple(data: bytes, offset: int) -> Tuple[WitnessReceipt, int
     else:
         raise CESRMalformedError(f"Invalid AID prefix in receipt couple: {aid_char}")
 
-    # Parse signature
-    sig_bytes, offset = _parse_indexed_signature(data, offset)
+    # Parse signature (index not used for receipt couples - AID is explicit)
+    sig_bytes, offset, _index = _parse_indexed_signature(data, offset)
 
     return WitnessReceipt(witness_aid=witness_aid, signature=sig_bytes), offset
 
@@ -446,8 +462,8 @@ def _parse_trans_receipt_quadruple(
     digest = data[offset : offset + 44].decode("ascii")
     offset += 44
 
-    # Parse signature (88 chars)
-    sig_bytes, offset = _parse_indexed_signature(data, offset)
+    # Parse signature (88 chars) - index not used for transferable receipts
+    sig_bytes, offset, _index = _parse_indexed_signature(data, offset)
 
     return TransferableReceipt(
         prefix=prefix, sequence=sequence, digest=digest, signature=sig_bytes
@@ -672,17 +688,16 @@ def parse_cesr_stream(data: bytes) -> List[CESRMessage]:
                 if code == "-A":
                     # Controller indexed signatures
                     for _ in range(count):
-                        sig, offset = _parse_indexed_signature(data, offset)
+                        sig, offset, _idx = _parse_indexed_signature(data, offset)
                         message.controller_sigs.append(sig)
 
                 elif code == "-B":
                     # Witness indexed signatures (similar to controller)
                     for _ in range(count):
-                        sig, offset = _parse_indexed_signature(data, offset)
-                        # Witness indexed sigs go into receipts with empty AID
-                        # (The AID is known from context)
+                        sig, offset, sig_index = _parse_indexed_signature(data, offset)
+                        # Witness indexed sigs use index to reference event.witnesses[index]
                         message.witness_receipts.append(
-                            WitnessReceipt(witness_aid="", signature=sig)
+                            WitnessReceipt(witness_aid="", signature=sig, index=sig_index)
                         )
 
                 elif code == "-C":
@@ -707,11 +722,63 @@ def parse_cesr_stream(data: bytes) -> List[CESRMessage]:
                             )
                         )
 
-                elif code == "-V" or code == "--V":
-                    # Attachment group - the count is the byte count for the group
-                    # Skip the declared bytes since we don't extract -V group contents
-                    # into the message structure. This is more lenient than strict
-                    # framing validation, which can fail with some witness responses.
+                elif code == "-V":
+                    # Small attachment group - count is in QUADLETS (4-byte groups)
+                    # The -V group wraps other attachment codes (like -A, -B, -C, -D)
+                    # We need to parse the CONTENTS of the group, not skip it
+                    group_size = count * 4
+                    group_end = offset + group_size
+
+                    # Parse attachments inside the -V group
+                    while offset < group_end:
+                        if data[offset : offset + 1] != b"-":
+                            # Not a count code, could be signature data
+                            break
+
+                        inner_code, inner_count, new_offset = _parse_count_code(data, offset)
+                        offset = new_offset
+
+                        if inner_code == "-A":
+                            # Controller indexed signatures inside -V group
+                            for _ in range(inner_count):
+                                sig, offset, _idx = _parse_indexed_signature(data, offset)
+                                message.controller_sigs.append(sig)
+                        elif inner_code == "-B":
+                            # Witness indexed signatures inside -V group
+                            for _ in range(inner_count):
+                                sig, offset, sig_index = _parse_indexed_signature(data, offset)
+                                message.witness_receipts.append(
+                                    WitnessReceipt(witness_aid="", signature=sig, index=sig_index)
+                                )
+                        elif inner_code == "-C":
+                            # Non-transferable receipt couples inside -V group
+                            for _ in range(inner_count):
+                                receipt, offset = _parse_receipt_couple(data, offset)
+                                message.witness_receipts.append(receipt)
+                        elif inner_code == "-D":
+                            # Transferable receipt quadruples inside -V group
+                            for _ in range(inner_count):
+                                trans_receipt, offset = _parse_trans_receipt_quadruple(
+                                    data, offset
+                                )
+                                message.witness_receipts.append(
+                                    WitnessReceipt(
+                                        witness_aid=trans_receipt.prefix,
+                                        signature=trans_receipt.signature,
+                                    )
+                                )
+                        else:
+                            # Unknown inner code, skip to end of group
+                            offset = group_end
+                            break
+
+                    # Ensure we're at or past the group end
+                    if offset < group_end:
+                        offset = group_end
+
+                elif code == "--V":
+                    # Big attachment group - count is in BYTES
+                    # For now, skip --V groups (less common)
                     offset += count
 
                 elif code == "-_AAA":
@@ -731,9 +798,11 @@ def parse_cesr_stream(data: bytes) -> List[CESRMessage]:
             code, count, new_offset = _parse_count_code(data, offset)
             offset = new_offset
 
-            if code in ("-V", "--V"):
-                # Attachment group - skip the declared bytes
-                # We don't extract -V group contents, so skip rather than parse
+            if code == "-V":
+                # Small attachment group - count is in QUADLETS (4-byte groups)
+                offset += count * 4
+            elif code == "--V":
+                # Big attachment group - count is in BYTES
                 offset += count
             # Other standalone codes: just skip (count already consumed)
         else:

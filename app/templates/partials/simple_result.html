@@ -1,0 +1,474 @@
+{# Simple verification result partial - SVG graph with click-to-select #}
+{#
+   Combines verification result, credential graph, and credential cards.
+   Clicking on a graph node shows the full credential card below the graph.
+#}
+
+{% if error %}
+<article aria-invalid="true">
+    <header>Verification Error</header>
+    <p>{{ error }}</p>
+</article>
+{% else %}
+
+{# Overall verification status #}
+{% if verify_response %}
+<article style="padding: 0.75rem 1rem; margin-bottom: 1rem;
+    {% if verify_response.overall_status == 'VALID' %}
+    background: var(--vvp-success); color: white;
+    {% elif verify_response.overall_status == 'INVALID' %}
+    background: var(--vvp-danger); color: white;
+    {% else %}
+    background: var(--vvp-warning); color: black;
+    {% endif %}">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <strong>Verification: {{ verify_response.overall_status }}</strong>
+        {% if verify_response.signer_aid %}
+        <small>Signer: {{ verify_response.signer_aid[:24] }}...</small>
+        {% endif %}
+    </div>
+    {% if verify_response.errors %}
+    <ul style="margin: 0.5rem 0 0 0; padding-left: 1.5rem;">
+        {% for err in verify_response.errors %}
+        <li>{{ err.message if err.message else err }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</article>
+{% endif %}
+
+{# Credential Graph Section #}
+{% if graph and graph.layers and graph.layers | length > 0 %}
+
+<h3>Credential Chain</h3>
+
+{# Trust path indicator #}
+{% if graph.trustPathValid %}
+<div style="background:var(--vvp-success);color:white;padding:0.5rem 1rem;border-radius:0.25rem;margin-bottom:1rem;">
+    Valid trust path to root
+</div>
+{% else %}
+<div aria-invalid="true" style="padding:0.5rem 1rem;border-radius:0.25rem;margin-bottom:1rem;">
+    No valid trust path to root (issuer not in trusted roots list)
+</div>
+{% endif %}
+
+{# SVG Graph Container #}
+<div class="svg-graph-wrapper" style="position:relative;">
+    <svg id="credential-graph-svg" class="credential-graph-svg"></svg>
+</div>
+
+{# Selected Credential Card Container #}
+<div id="selected-credential" style="margin-top:1.5rem;">
+    <div id="card-nav" style="display:none;margin-bottom:0.5rem;">
+        <button id="back-btn" onclick="navigateBack()" style="display:inline-flex;align-items:center;gap:0.25rem;padding:0.25rem 0.5rem;font-size:0.9em;">
+            &larr; Back
+        </button>
+        <span id="nav-breadcrumb" style="margin-left:0.5rem;color:var(--vvp-muted);font-size:0.85em;"></span>
+    </div>
+    <div id="card-content">
+        <p style="color:var(--vvp-muted);text-align:center;"><em>Click on a credential in the graph above to view its details.</em></p>
+    </div>
+</div>
+
+{# Hidden credential cards for selection content #}
+<div id="credential-cards-data" style="display:none;">
+    {% for node in graph.nodes %}
+    <div data-node-id="{{ node.id }}">
+        {% if credential_vms and node.id in credential_vms %}
+            {% set vm = credential_vms[node.id] %}
+            {% include "partials/credential_card.html" %}
+        {% else %}
+            {% set acdc = {
+                'd': node.id,
+                'i': node.issuer,
+                's': node.schemaSaid,
+                'type': node.type,
+                'displayName': node.displayName,
+                'status': node.status or 'UNKNOWN',
+                'a': node.attributes or {},
+                'e': node.edges or {}
+            } %}
+            {% include "partials/credential_card.html" %}
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+{# Graph rendering script #}
+<script>
+(function() {
+    const graphData = {
+        nodes: {{ graph.nodes | tojson }},
+        edges: {{ graph.edges | tojson }},
+        layers: {{ graph.layers | tojson }},
+        trustPathValid: {{ graph.trustPathValid | tojson }}
+    };
+
+    // Layout constants
+    const BOX_WIDTH = 160;
+    const BOX_HEIGHT = 60;
+    const LAYER_GAP = 100;
+    const NODE_GAP = 40;
+    const PADDING = 40;
+
+    // Color scheme by credential type
+    const typeColors = {
+        'ROOT': '#6f42c1',
+        'ISSUER': '#17a2b8',
+        'LE': '#20c997',
+        'APE': '#fd7e14',
+        'DE': '#e83e8c',
+        'TNAlloc': '#007bff',
+        'UNKNOWN': '#6c757d'
+    };
+
+    // Edge colors by type
+    const edgeColors = {
+        'vetting': '#28a745',
+        'delegation': '#007bff',
+        'issued_by': '#6f42c1',
+        'issuer': '#17a2b8',
+        'jl': '#fd7e14',
+        'default': '#6c757d'
+    };
+
+    // Build node position map
+    const nodePositions = {};
+    let maxWidth = 0;
+
+    graphData.layers.forEach((layerIds, layerIndex) => {
+        const y = PADDING + layerIndex * (BOX_HEIGHT + LAYER_GAP);
+        const layerWidth = layerIds.length * (BOX_WIDTH + NODE_GAP) - NODE_GAP;
+        maxWidth = Math.max(maxWidth, layerWidth);
+
+        layerIds.forEach((nodeId, nodeIndex) => {
+            const x = PADDING + nodeIndex * (BOX_WIDTH + NODE_GAP);
+            nodePositions[nodeId] = { x, y, layerIndex };
+        });
+    });
+
+    // Center each layer
+    graphData.layers.forEach((layerIds, layerIndex) => {
+        const layerWidth = layerIds.length * (BOX_WIDTH + NODE_GAP) - NODE_GAP;
+        const offset = (maxWidth - layerWidth) / 2;
+        layerIds.forEach(nodeId => {
+            nodePositions[nodeId].x += offset;
+        });
+    });
+
+    const svgWidth = maxWidth + PADDING * 2;
+    const svgHeight = graphData.layers.length * (BOX_HEIGHT + LAYER_GAP) - LAYER_GAP + PADDING * 2;
+
+    // Create SVG
+    const svg = document.getElementById('credential-graph-svg');
+    svg.setAttribute('width', svgWidth);
+    svg.setAttribute('height', svgHeight);
+    svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
+
+    // Arrow marker definition
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    defs.innerHTML = `
+        <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="strokeWidth">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#6c757d"/>
+        </marker>
+    `;
+    svg.appendChild(defs);
+
+    // Draw edges first (so they're behind nodes)
+    graphData.edges.forEach(edge => {
+        const fromPos = nodePositions[edge.from];
+        const toPos = nodePositions[edge.to];
+
+        if (fromPos && toPos) {
+            const x1 = fromPos.x + BOX_WIDTH / 2;
+            const y1 = fromPos.y + BOX_HEIGHT;
+            const x2 = toPos.x + BOX_WIDTH / 2;
+            const y2 = toPos.y;
+
+            // Bezier curve
+            const midY = (y1 + y2) / 2;
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`);
+            path.setAttribute('stroke', edgeColors[edge.type] || edgeColors.default);
+            path.setAttribute('stroke-width', '2');
+            path.setAttribute('fill', 'none');
+            path.setAttribute('marker-end', 'url(#arrow)');
+
+            // Add edge type label
+            const labelX = (x1 + x2) / 2;
+            const labelY = midY;
+            const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            label.setAttribute('x', labelX);
+            label.setAttribute('y', labelY);
+            label.setAttribute('text-anchor', 'middle');
+            label.setAttribute('font-size', '10');
+            label.setAttribute('fill', edgeColors[edge.type] || edgeColors.default);
+            label.textContent = edge.type;
+
+            svg.appendChild(path);
+            svg.appendChild(label);
+        }
+    });
+
+    // Track selected node
+    let selectedNodeId = null;
+
+    // Draw nodes
+    graphData.nodes.forEach(node => {
+        const pos = nodePositions[node.id];
+        if (!pos) return;
+
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', 'graph-node');
+        group.setAttribute('data-node-id', node.id);
+        group.style.cursor = 'pointer';
+
+        // Box
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', pos.x);
+        rect.setAttribute('y', pos.y);
+        rect.setAttribute('width', BOX_WIDTH);
+        rect.setAttribute('height', BOX_HEIGHT);
+        rect.setAttribute('rx', '8');
+        rect.setAttribute('fill', '#fff');
+        rect.setAttribute('stroke', typeColors[node.type] || typeColors.UNKNOWN);
+        rect.setAttribute('stroke-width', '3');
+        rect.setAttribute('class', 'node-rect');
+
+        // Type badge background
+        const badgeWidth = 60;
+        const badge = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        badge.setAttribute('x', pos.x + (BOX_WIDTH - badgeWidth) / 2);
+        badge.setAttribute('y', pos.y + 5);
+        badge.setAttribute('width', badgeWidth);
+        badge.setAttribute('height', '18');
+        badge.setAttribute('rx', '4');
+        badge.setAttribute('fill', typeColors[node.type] || typeColors.UNKNOWN);
+
+        // Type label
+        const typeLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        typeLabel.setAttribute('x', pos.x + BOX_WIDTH / 2);
+        typeLabel.setAttribute('y', pos.y + 18);
+        typeLabel.setAttribute('text-anchor', 'middle');
+        typeLabel.setAttribute('font-size', '11');
+        typeLabel.setAttribute('font-weight', 'bold');
+        typeLabel.setAttribute('fill', '#fff');
+        typeLabel.textContent = node.type || 'UNKNOWN';
+
+        // Display name or truncated SAID
+        const displayText = node.displayName || node.id.substring(0, 12) + '...';
+        const nameLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        nameLabel.setAttribute('x', pos.x + BOX_WIDTH / 2);
+        nameLabel.setAttribute('y', pos.y + 40);
+        nameLabel.setAttribute('text-anchor', 'middle');
+        nameLabel.setAttribute('font-size', '11');
+        nameLabel.setAttribute('fill', '#333');
+        nameLabel.textContent = displayText.length > 18 ? displayText.substring(0, 18) + '...' : displayText;
+
+        // Status indicator
+        const statusColor = node.status === 'ACTIVE' ? '#28a745' : (node.status === 'REVOKED' ? '#dc3545' : '#ffc107');
+        const statusDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        statusDot.setAttribute('cx', pos.x + BOX_WIDTH - 12);
+        statusDot.setAttribute('cy', pos.y + 12);
+        statusDot.setAttribute('r', '5');
+        statusDot.setAttribute('fill', statusColor);
+
+        // Root indicator
+        if (node.isRoot) {
+            const rootBadge = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            rootBadge.setAttribute('x', pos.x + 10);
+            rootBadge.setAttribute('y', pos.y + 15);
+            rootBadge.setAttribute('font-size', '10');
+            rootBadge.setAttribute('fill', '#6f42c1');
+            rootBadge.textContent = '\u2605';
+            group.appendChild(rootBadge);
+        }
+
+        group.appendChild(rect);
+        group.appendChild(badge);
+        group.appendChild(typeLabel);
+        group.appendChild(nameLabel);
+        group.appendChild(statusDot);
+
+        // Click event - show credential card below (resets navigation history)
+        group.addEventListener('click', () => {
+            navHistory.length = 0;  // Clear history when clicking graph directly
+            selectCredential(node.id, false);
+        });
+
+        svg.appendChild(group);
+    });
+
+    // Credential selection handling
+    const cardsData = document.getElementById('credential-cards-data');
+    const cardContent = document.getElementById('card-content');
+    const cardNav = document.getElementById('card-nav');
+    const backBtn = document.getElementById('back-btn');
+    const navBreadcrumb = document.getElementById('nav-breadcrumb');
+
+    // Navigation history stack
+    const navHistory = [];
+
+    // Get display name for a node
+    function getNodeDisplayName(nodeId) {
+        const node = graphData.nodes.find(n => n.id === nodeId);
+        if (node) {
+            return node.displayName || node.type || nodeId.substring(0, 12) + '...';
+        }
+        return nodeId.substring(0, 12) + '...';
+    }
+
+    // Update navigation UI
+    function updateNavUI() {
+        if (navHistory.length > 0) {
+            cardNav.style.display = 'block';
+            const prevName = getNodeDisplayName(navHistory[navHistory.length - 1]);
+            navBreadcrumb.textContent = `from: ${prevName}`;
+        } else {
+            cardNav.style.display = 'none';
+            navBreadcrumb.textContent = '';
+        }
+    }
+
+    // Select credential (called from graph click)
+    function selectCredential(nodeId, addToHistory = false) {
+        // If navigating from another card, add current to history
+        if (addToHistory && selectedNodeId) {
+            navHistory.push(selectedNodeId);
+        }
+
+        // Clear previous selection styling
+        document.querySelectorAll('.graph-node').forEach(g => {
+            const rect = g.querySelector('.node-rect');
+            if (rect) {
+                rect.setAttribute('stroke-width', '3');
+                rect.style.filter = '';
+            }
+        });
+
+        // Highlight selected node
+        const selectedGroup = document.querySelector(`.graph-node[data-node-id="${nodeId}"]`);
+        if (selectedGroup) {
+            const rect = selectedGroup.querySelector('.node-rect');
+            if (rect) {
+                rect.setAttribute('stroke-width', '5');
+                rect.style.filter = 'drop-shadow(0 0 8px rgba(0, 102, 204, 0.5))';
+            }
+        }
+
+        // Show credential card
+        const cardData = cardsData.querySelector(`[data-node-id="${nodeId}"]`);
+        if (cardData) {
+            cardContent.innerHTML = '<h4 style="margin-bottom:0.5rem;">Credential Details</h4>' + cardData.innerHTML;
+
+            // Override edge link clicks to use our navigation
+            cardContent.querySelectorAll('.edge-link').forEach(link => {
+                link.onclick = function(e) {
+                    e.preventDefault();
+                    // Extract SAID from href (format: #cred-SAID)
+                    const href = this.getAttribute('href');
+                    const targetSaid = href.replace('#cred-', '');
+                    navigateToCredential(targetSaid);
+                    return false;
+                };
+            });
+
+            updateNavUI();
+            document.getElementById('selected-credential').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        selectedNodeId = nodeId;
+    }
+
+    // Navigate to a credential via edge link (adds to history)
+    window.navigateToCredential = function(said) {
+        selectCredential(said, true);
+    };
+
+    // Navigate back in history
+    window.navigateBack = function() {
+        if (navHistory.length > 0) {
+            const prevId = navHistory.pop();
+            selectCredential(prevId, false);
+        }
+    };
+
+    // Override the global highlightCredential function for this context
+    window.highlightCredential = function(said) {
+        navigateToCredential(said);
+    };
+})();
+</script>
+
+<style>
+    .svg-graph-wrapper {
+        overflow-x: auto;
+        background: #fafafa;
+        border: 1px solid #dee2e6;
+        border-radius: 0.5rem;
+        padding: 1rem;
+    }
+
+    .credential-graph-svg {
+        display: block;
+        margin: 0 auto;
+    }
+
+    .graph-node:hover .node-rect {
+        filter: brightness(0.95);
+    }
+
+    #selected-credential {
+        min-height: 100px;
+        padding: 1rem;
+        background: #f8f9fa;
+        border-radius: 0.5rem;
+    }
+
+    #selected-credential .credential-card {
+        margin: 0;
+    }
+
+    #card-nav {
+        padding: 0.5rem;
+        background: #e9ecef;
+        border-radius: 0.25rem;
+        display: flex;
+        align-items: center;
+    }
+
+    #back-btn {
+        background: var(--vvp-info, #0066cc);
+        color: white;
+        border: none;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        font-weight: 500;
+    }
+
+    #back-btn:hover {
+        background: #0056b3;
+    }
+
+    #card-content .edge-link {
+        cursor: pointer;
+        text-decoration: underline;
+    }
+
+    #card-content .edge-link:hover {
+        color: var(--vvp-info, #0066cc);
+    }
+</style>
+
+{% elif graph and graph.nodes and graph.nodes | length > 0 %}
+<article>
+    <p>No layers computed, but {{ graph.nodes | length }} node(s) exist.</p>
+</article>
+{% else %}
+<article aria-invalid="true">
+    <p>No credentials found in dossier.</p>
+</article>
+{% endif %}
+
+{% endif %}

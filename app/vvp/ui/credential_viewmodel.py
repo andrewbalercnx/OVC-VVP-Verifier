@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.core.config import TRUSTED_ROOT_AIDS
 from app.vvp.acdc.models import ACDC, ACDCChainResult
+from app.vvp.gleif import lookup_lei
 
 
 # =============================================================================
@@ -75,6 +76,7 @@ class IssuerInfo:
         is_trusted_root: True if this AID is in TRUSTED_ROOT_AIDS.
         display_name: Human-readable name from LE credential (if available).
         lei: Legal Entity Identifier from LE credential (if available).
+        gleif_legal_name: Legal name from GLEIF API lookup (if LEI available).
     """
 
     aid: str
@@ -82,6 +84,7 @@ class IssuerInfo:
     is_trusted_root: bool
     display_name: Optional[str] = None
     lei: Optional[str] = None
+    gleif_legal_name: Optional[str] = None
 
 
 @dataclass
@@ -189,6 +192,7 @@ class VCardInfo:
         logo_hash: SHA-256 hash from LOGO;HASH=... (for integrity check).
         org: Organization name from ORG: line.
         lei: LEI from NOTE;LEI:... line.
+        gleif_legal_name: Legal name from GLEIF API lookup (if LEI available).
         categories: Categories from CATEGORIES: line.
         fn: Full name from FN: line.
         adr: Address from ADR: line.
@@ -202,6 +206,7 @@ class VCardInfo:
     logo_hash: Optional[str] = None
     org: Optional[str] = None
     lei: Optional[str] = None
+    gleif_legal_name: Optional[str] = None
     categories: Optional[str] = None
     fn: Optional[str] = None
     adr: Optional[str] = None
@@ -1176,6 +1181,12 @@ def _parse_vcard_lines(vcard_lines: List[str]) -> VCardInfo:
         elif line_upper.startswith("URL:"):
             info.url = line[4:].strip()
 
+    # Look up GLEIF legal name if LEI is available
+    if info.lei:
+        lei_record = lookup_lei(info.lei)
+        if lei_record:
+            info.gleif_legal_name = lei_record.legal_name
+
     return info
 
 
@@ -1313,12 +1324,22 @@ def build_credential_card_vm(
     # Build issuer info with resolved identity if available
     issuer_aid = acdc.issuer_aid
     issuer_identity = (issuer_identities or {}).get(issuer_aid)
+    lei = issuer_identity.lei if issuer_identity else None
+
+    # Look up GLEIF legal name if LEI is available
+    gleif_legal_name = None
+    if lei:
+        lei_record = lookup_lei(lei)
+        if lei_record:
+            gleif_legal_name = lei_record.legal_name
+
     issuer = IssuerInfo(
         aid=issuer_aid,
         aid_short=_truncate_aid(issuer_aid),
         is_trusted_root=issuer_aid in TRUSTED_ROOT_AIDS,
         display_name=issuer_identity.legal_name if issuer_identity else None,
-        lei=issuer_identity.lei if issuer_identity else None,
+        lei=lei,
+        gleif_legal_name=gleif_legal_name,
     )
 
     # Build primary attribute
