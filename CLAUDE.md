@@ -6,7 +6,7 @@ The following commands are pre-authorized and do not require user confirmation:
 
 - `git` - All git operations (add, commit, push, status, log, diff, etc.)
 - `gh` - All GitHub CLI operations (run watch, pr create, issue, etc.)
-- `./scripts/run-tests.sh` - Test runner script (preferred for running tests)
+- `./scripts/*` - All scripts in the scripts directory (run-tests.sh, restart-server.sh, monitor-azure-deploy.sh, etc.)
 - `pytest` - Run tests directly
 - `python3` / `pip3` - Python execution and package management
 - `curl` - HTTP requests for deployment verification
