@@ -65,9 +65,8 @@ class TELClient:
     - /credentials/{cred-said}       - Credential + TEL state
     """
 
-    # Fallback witnesses - used ONLY when kid doesn't provide witness URL
-    # PRIMARY method: Derive witness from PASSporT kid field (witness OOBI URL)
-    # GLEIF testnet witnesses removed - not functional for OVC project
+    # Legacy fallback witnesses - kept for backwards compatibility
+    # New code should use the WitnessPool instead (use_witness_pool=True)
     DEFAULT_WITNESSES = [
         # Provenant OVC stage witnesses (last resort fallback)
         "http://witness1.stage.provenant.net:5631",
@@ -90,6 +89,9 @@ class TELClient:
 
         This allows deriving the witness endpoint from the PASSporT kid field,
         which should contain a witness OOBI URL per KERI/Provenant specs.
+
+        NOTE: Prefer using witness_pool.extract_witness_base_url() which
+        includes URL validation.
         """
         if not oobi_url:
             return None
@@ -102,14 +104,51 @@ class TELClient:
     def __init__(
         self,
         timeout: float = 10.0,
-        witness_urls: Optional[List[str]] = None
+        witness_urls: Optional[List[str]] = None,
+        use_witness_pool: bool = True,
     ):
+        """Initialize TEL client.
+
+        Args:
+            timeout: HTTP request timeout.
+            witness_urls: Explicit list of witness URLs (overrides pool).
+            use_witness_pool: If True and witness_urls is None, use WitnessPool.
+        """
         self.timeout = timeout
-        self.witness_urls = witness_urls or self.DEFAULT_WITNESSES
+        self._use_witness_pool = use_witness_pool and witness_urls is None
+        self._explicit_witness_urls = witness_urls
         self._cache: Dict[str, RevocationResult] = {}
         # Cache metrics
         self._cache_hits: int = 0
         self._cache_misses: int = 0
+
+    @property
+    def witness_urls(self) -> List[str]:
+        """Get witness URLs synchronously (no GLEIF discovery).
+
+        For async contexts that need GLEIF discovery, use _get_witness_urls_async().
+        """
+        if self._explicit_witness_urls:
+            return self._explicit_witness_urls
+        if self._use_witness_pool:
+            from .witness_pool import get_witness_pool
+            return get_witness_pool().get_witness_urls()
+        return self.DEFAULT_WITNESSES
+
+    async def _get_witness_urls_async(self) -> List[str]:
+        """Get witness URLs with GLEIF discovery (async).
+
+        Triggers lazy GLEIF discovery if enabled, ensuring all available
+        witnesses are queried.
+        """
+        if self._explicit_witness_urls:
+            return self._explicit_witness_urls
+        if self._use_witness_pool:
+            from .witness_pool import get_witness_pool
+            pool = get_witness_pool()
+            witnesses = await pool.get_all_witnesses()
+            return [w.url for w in witnesses]
+        return self.DEFAULT_WITNESSES
 
     async def check_revocation(
         self,
@@ -149,9 +188,10 @@ class TELClient:
                 self._cache[cache_key] = result
                 return result
 
-        # Try known witnesses
-        log.info(f"  trying_witnesses: count={len(self.witness_urls)}")
-        for i, witness_url in enumerate(self.witness_urls):
+        # Try known witnesses (with GLEIF discovery)
+        witness_urls = await self._get_witness_urls_async()
+        log.info(f"  trying_witnesses: count={len(witness_urls)}")
+        for i, witness_url in enumerate(witness_urls):
             result = await self._query_witness(credential_said, registry_said, witness_url)
             log.info(f"  witness[{i}] {witness_url}: status={result.status.value}")
             if result.status != CredentialStatus.ERROR:

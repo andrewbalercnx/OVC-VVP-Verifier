@@ -170,15 +170,19 @@ class CredentialResolver:
     async def resolve(
         self,
         said: str,
-        witness_base_urls: List[str],
+        witness_base_urls: Optional[List[str]] = None,
         current_depth: int = 0,
+        use_witness_pool: bool = True,
     ) -> Optional[ResolvedCredential]:
         """Attempt to resolve a credential SAID from witnesses.
 
         Args:
             said: The SAID of the credential to resolve.
-            witness_base_urls: Base URLs of witnesses to query.
+            witness_base_urls: Base URLs of witnesses to query. If None and
+                use_witness_pool is True, witnesses are obtained from the pool.
             current_depth: Current recursion depth (for nested external refs).
+            use_witness_pool: If True and witness_base_urls is empty/None,
+                fall back to the WitnessPool.
 
         Returns:
             ResolvedCredential if found and valid, None otherwise.
@@ -186,6 +190,18 @@ class CredentialResolver:
         if not self._config.enabled:
             log.debug(f"External SAID resolution disabled, skipping {said[:20]}...")
             return None
+
+        # Get witness URLs from pool if not provided (with GLEIF discovery)
+        if not witness_base_urls and use_witness_pool:
+            from .witness_pool import get_witness_pool
+            pool = get_witness_pool()
+            # Use async method to trigger GLEIF discovery
+            witnesses = await pool.get_all_witnesses()
+            witness_base_urls = [w.url for w in witnesses]
+            if witness_base_urls:
+                log.debug(
+                    f"Using {len(witness_base_urls)} witnesses from pool for {said[:20]}..."
+                )
 
         self._metrics.attempts += 1
 
@@ -242,7 +258,7 @@ class CredentialResolver:
     ) -> Optional[ResolvedCredential]:
         """Fetch credential from witnesses in parallel.
 
-        Queries up to 3 witnesses in parallel and returns the first
+        Queries all witnesses in parallel and returns the first
         successful response.
 
         Args:
@@ -256,8 +272,8 @@ class CredentialResolver:
             log.warning(f"No witness URLs provided for credential {said[:20]}...")
             return None
 
-        # Query up to 3 witnesses in parallel
-        urls_to_try = witness_base_urls[:3]
+        # Query all witnesses in parallel
+        urls_to_try = witness_base_urls
         start_time = time.time()
 
         async def fetch_one(base_url: str) -> Optional[ResolvedCredential]:

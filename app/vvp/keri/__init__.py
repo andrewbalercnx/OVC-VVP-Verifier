@@ -38,6 +38,14 @@ from .credential_cache import (
     get_credential_cache,
     reset_credential_cache,
 )
+from .witness_pool import (
+    WitnessPool,
+    WitnessEndpoint,
+    get_witness_pool,
+    reset_witness_pool,
+    validate_witness_url,
+    extract_witness_base_url,
+)
 
 __all__ = [
     # Exceptions
@@ -79,4 +87,11 @@ __all__ = [
     "CachedCredential",
     "get_credential_cache",
     "reset_credential_cache",
+    # Witness Pool
+    "WitnessPool",
+    "WitnessEndpoint",
+    "get_witness_pool",
+    "reset_witness_pool",
+    "validate_witness_url",
+    "extract_witness_base_url",
 ]

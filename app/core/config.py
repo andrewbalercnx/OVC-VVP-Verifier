@@ -376,3 +376,44 @@ EXTERNAL_SAID_CACHE_TTL_SECONDS: int = int(
 EXTERNAL_SAID_CACHE_MAX_ENTRIES: int = int(
     os.getenv("VVP_EXTERNAL_SAID_CACHE_MAX_ENTRIES", "500")
 )
+
+
+# =============================================================================
+# WITNESS POOL CONFIGURATION
+# =============================================================================
+# Unified witness pool for AID resolution, aggregating witnesses from:
+# 1. Configured witnesses (Provenant staging) - always available
+# 2. GLEIF witnesses - discovered from well-known OOBI
+# 3. Per-request witnesses - from PASSporT kid OOBI URLs
+# 4. KEL-extracted witnesses - from 'b' field in establishment events
+
+# Provenant staging witnesses (default fallback)
+# These are loaded at WitnessPool initialization and always available
+PROVENANT_WITNESS_URLS: list[str] = [
+    "http://witness4.stage.provenant.net:5631",
+    "http://witness5.stage.provenant.net:5631",
+    "http://witness6.stage.provenant.net:5631",
+]
+
+# GLEIF well-known OOBI for witness discovery
+# The GLEIF Root AID OOBI endpoint returns reply messages with witness URLs
+GLEIF_WITNESS_OOBI_URL: str = os.getenv(
+    "VVP_GLEIF_WITNESS_OOBI",
+    "https://www.gleif.org/.well-known/keri/oobi/EDP1vHcw_wc4M__Fj53-cJaBnZZASd-aMTaSyWEQ-PC2"
+)
+
+# GLEIF Root AID (for reference/logging)
+GLEIF_ROOT_AID: str = "EDP1vHcw_wc4M__Fj53-cJaBnZZASd-aMTaSyWEQ-PC2"
+
+# Enable GLEIF witness discovery
+# When True (default): Attempt to discover GLEIF witnesses on first use
+# When False: Only use configured Provenant witnesses
+GLEIF_WITNESS_DISCOVERY_ENABLED: bool = os.getenv(
+    "VVP_GLEIF_WITNESS_DISCOVERY", "true"
+).lower() == "true"
+
+# Cache TTL for discovered GLEIF witnesses (seconds)
+# After this time, discovery will be re-attempted
+GLEIF_WITNESS_CACHE_TTL: int = int(
+    os.getenv("VVP_GLEIF_WITNESS_CACHE_TTL", "300")
+)

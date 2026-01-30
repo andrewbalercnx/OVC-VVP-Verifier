@@ -154,6 +154,7 @@ def admin():
         DOSSIER_CACHE_MAX_ENTRIES,
     )
     from app.vvp.keri.tel_client import TELClient, get_tel_client
+    from app.vvp.keri.witness_pool import get_witness_pool
     from app.vvp.dossier.cache import get_dossier_cache
 
     if not ADMIN_ENDPOINT_ENABLED:
@@ -183,7 +184,8 @@ def admin():
             "admin_endpoint_enabled": ADMIN_ENDPOINT_ENABLED,
         },
         "witnesses": {
-            "default_witness_urls": TELClient.DEFAULT_WITNESSES,
+            "legacy_default_urls": TELClient.DEFAULT_WITNESSES,
+            "witness_pool": get_witness_pool().get_status(),
         },
         "environment": {
             "log_level": logging.getLogger().getEffectiveLevel(),

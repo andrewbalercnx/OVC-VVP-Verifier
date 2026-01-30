@@ -142,55 +142,52 @@ What tests will be written and what they verify.
 
 The Editor provides a **copyable prompt** for the Reviewer **directly in the conversation** (not just in PLAN.md). The prompt should be in a fenced code block so the user can easily copy it to the Reviewer agent:
 
-~~~
-```
+```text
 ## Plan Review Request: Phase N - [Title]
 
-You are the Reviewer in a pair programming workflow. Please review the plan in `PLAN.md` and provide your assessment in `REVIEW.md`.
+You are the Reviewer in a pair programming workflow. Please review the plan in PLAN.md and provide your assessment in REVIEW.md.
 
-### Your Task
-1. Read `PLAN.md` thoroughly
+YOUR TASK:
+1. Read PLAN.md thoroughly
 2. Evaluate against the spec references cited
 3. Assess the rationale for design decisions
 4. Answer any open questions
-5. Provide verdict and feedback in `REVIEW.md`
+5. Provide verdict and feedback in REVIEW.md
 
-### Evaluation Criteria
+EVALUATION CRITERIA:
 - Does the plan correctly interpret the spec requirements?
 - Is the proposed approach sound and well-justified?
 - Are there gaps, ambiguities, or risks not addressed?
 - Is the test strategy adequate?
 
-### Response Format
-Write your response to `REVIEW.md` using this structure:
+RESPONSE FORMAT - Write to REVIEW.md with this structure:
 
-## Plan Review: Phase N - [Title]
+    ## Plan Review: Phase N - [Title]
 
-**Verdict:** APPROVED | CHANGES_REQUESTED
+    **Verdict:** APPROVED | CHANGES_REQUESTED
 
-### Spec Compliance
-[Assessment of how well the plan addresses spec requirements]
+    ### Spec Compliance
+    [Assessment of how well the plan addresses spec requirements]
 
-### Design Assessment
-[Evaluation of the proposed approach and alternatives]
+    ### Design Assessment
+    [Evaluation of the proposed approach and alternatives]
 
-### Findings
-- [High]: Critical issue that blocks approval
-- [Medium]: Important issue that should be addressed
-- [Low]: Suggestion for improvement (optional)
+    ### Findings
+    - [High]: Critical issue that blocks approval
+    - [Medium]: Important issue that should be addressed
+    - [Low]: Suggestion for improvement (optional)
 
-### Answers to Open Questions
-1. [Answer to question 1]
-2. [Answer to question 2]
+    ### Answers to Open Questions
+    1. [Answer to question 1]
+    2. [Answer to question 2]
 
-### Required Changes (if CHANGES_REQUESTED)
-1. [Specific change required]
-2. [Another required change]
+    ### Required Changes (if CHANGES_REQUESTED)
+    1. [Specific change required]
+    2. [Another required change]
 
-### Recommendations
-- [Optional improvements or future considerations]
+    ### Recommendations
+    - [Optional improvements or future considerations]
 ```
-~~~
 
 #### Step 1.3: Iterate Until Approved
 
@@ -218,7 +215,7 @@ After receiving `APPROVED` verdict:
 
 The Editor updates `PLAN.md` with an implementation appendix:
 
-```markdown
+```text
 ---
 
 ## Implementation Notes
@@ -230,84 +227,74 @@ The Editor updates `PLAN.md` with an implementation appendix:
 [Additional context discovered during implementation]
 
 ### Test Results
-```
 [pytest output showing all tests pass]
-```
 
 ### Files Changed
 | File | Lines | Summary |
 |------|-------|---------|
-| `path/to/file.py` | +150 | Created new module for X |
-| `tests/test_file.py` | +80 | Tests for X |
+| path/to/file.py | +150 | Created new module for X |
+| tests/test_file.py | +80 | Tests for X |
 ```
 
 #### Step 2.3: Request Code Review
 
 The Editor provides a **copyable prompt** for code review:
 
-~~~
-```
+```text
 ## Code Review Request: Phase N - [Title]
 
-You are the Reviewer in a pair programming workflow. Please review the implementation and provide your assessment in `REVIEW.md`.
+You are the Reviewer in a pair programming workflow. Please review the implementation and provide your assessment in REVIEW.md.
 
-### Context
-[Brief description of what was implemented]
+CONTEXT: [Brief description of what was implemented]
 
-### Spec References
+SPEC REFERENCES:
 - §X.Y: [Section name]
 
-### Files to Review
-- `path/to/file.py` (created) - [purpose]
-- `tests/test_file.py` (created) - [what it tests]
+FILES TO REVIEW:
+- path/to/file.py (created) - [purpose]
+- tests/test_file.py (created) - [what it tests]
 
-### Verification Commands
-```bash
-python3 -m pytest tests/test_xxx.py -v
-```
+VERIFICATION: Run python3 -m pytest tests/test_xxx.py -v
 
-### Key Design Decisions
+KEY DESIGN DECISIONS:
 1. [Decision and rationale]
 2. [Another decision and rationale]
 
-### Test Results
-[N passed in X.XXs]
+TEST RESULTS: [N passed in X.XXs]
 
-### Your Task
+YOUR TASK:
 1. Review all listed files for correctness and style
 2. Verify implementation matches approved plan
 3. Check test coverage and edge cases
-4. Provide verdict and feedback in `REVIEW.md`
+4. Provide verdict and feedback in REVIEW.md
 
-### Response Format
-Write your response to `REVIEW.md` using this structure:
+RESPONSE FORMAT - Write to REVIEW.md with this structure:
 
-## Code Review: Phase N - [Title]
+    ## Code Review: Phase N - [Title]
 
-**Verdict:** APPROVED | CHANGES_REQUESTED | PLAN_REVISION_REQUIRED
+    **Verdict:** APPROVED | CHANGES_REQUESTED | PLAN_REVISION_REQUIRED
 
-### Implementation Assessment
-[Does the code correctly implement the approved plan?]
+    ### Implementation Assessment
+    [Does the code correctly implement the approved plan?]
 
-### Code Quality
-[Assessment of code clarity, documentation, error handling]
+    ### Code Quality
+    [Assessment of code clarity, documentation, error handling]
 
-### Test Coverage
-[Assessment of test adequacy]
+    ### Test Coverage
+    [Assessment of test adequacy]
 
-### Findings
-- [High]: Critical issue that blocks approval
-- [Medium]: Important issue that should be fixed
-- [Low]: Minor suggestion (optional)
+    ### Findings
+    - [High]: Critical issue that blocks approval
+    - [Medium]: Important issue that should be fixed
+    - [Low]: Minor suggestion (optional)
 
-### Required Changes (if not APPROVED)
-1. [Specific change required]
-2. [Another required change]
+    ### Required Changes (if not APPROVED)
+    1. [Specific change required]
+    2. [Another required change]
 
-### Plan Revisions (if PLAN_REVISION_REQUIRED)
-[What needs to change in the plan before re-implementation]
+    ### Plan Revisions (if PLAN_REVISION_REQUIRED)
+    [What needs to change in the plan before re-implementation]
 ```
-~~~
 
 #### Step 2.4: Iterate Until Approved
 

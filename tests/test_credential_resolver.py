@@ -369,8 +369,8 @@ class TestCredentialResolver:
             assert call_count == 3
 
     @pytest.mark.asyncio
-    async def test_fetch_max_three_witnesses(self, resolver):
-        """Test that at most 3 witnesses are queried."""
+    async def test_fetch_all_witnesses_in_parallel(self, resolver):
+        """Test that all witnesses are queried in parallel."""
         said = "EABC123456789012345678901234567890123"
         acdc_json = {
             "v": "ACDC10JSON000000_",
@@ -408,8 +408,8 @@ class TestCredentialResolver:
             )
 
             assert result is not None
-            # Only first 3 witnesses should be queried
-            assert call_count == 3
+            # All witnesses should be queried in parallel
+            assert call_count == 5
 
 
 class TestCESRResponseParsing:

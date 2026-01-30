@@ -85,7 +85,7 @@ class TestAdminEndpoint:
         assert features["admin_endpoint_enabled"] is True
 
     def test_admin_witnesses_config(self):
-        """Admin endpoint returns witness URLs."""
+        """Admin endpoint returns witness URLs and pool status."""
         from app.main import app
         client = TestClient(app)
 
@@ -93,9 +93,15 @@ class TestAdminEndpoint:
         data = response.json()
 
         witnesses = data["witnesses"]
-        assert "default_witness_urls" in witnesses
-        assert isinstance(witnesses["default_witness_urls"], list)
-        assert len(witnesses["default_witness_urls"]) > 0
+        # Legacy default URLs (kept for backwards compatibility)
+        assert "legacy_default_urls" in witnesses
+        assert isinstance(witnesses["legacy_default_urls"], list)
+        assert len(witnesses["legacy_default_urls"]) > 0
+        # New witness pool status
+        assert "witness_pool" in witnesses
+        assert "configured_witnesses" in witnesses["witness_pool"]
+        assert "gleif_discovery" in witnesses["witness_pool"]
+        assert "witness_urls" in witnesses["witness_pool"]
 
     def test_admin_environment_config(self):
         """Admin endpoint returns environment variables."""
