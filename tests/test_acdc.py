@@ -1282,12 +1282,17 @@ class TestSchemaValidation:
         # LE credential with known schema
         known_le_schema = list(KNOWN_SCHEMA_SAIDS["LE"])[0] if KNOWN_SCHEMA_SAIDS["LE"] else ""
 
+        # LE schema requires: i (issuee AID), dt (datetime), LEI
         acdc = ACDC(
             version="",
             said="E" + "A" * 43,
             issuer_aid=root_aid,
             schema_said=known_le_schema,
-            attributes={"LEI": "1234567890"},
+            attributes={
+                "i": "E" + "I" * 43,  # Issuee AID
+                "dt": "2024-01-15T12:00:00.000000+00:00",  # Issuance datetime
+                "LEI": "5493001KJTIIGC8Y1R12",  # Valid LEI format
+            },
             raw={}
         )
 
