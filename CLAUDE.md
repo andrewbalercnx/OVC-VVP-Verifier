@@ -53,6 +53,46 @@ The following commands are pre-authorized and do not require user confirmation:
 
 All test-related commands are pre-authorized.
 
+## Docker Environment
+
+Docker Desktop is installed at `/Applications/Docker.app`. When running Docker commands from Claude Code, use the full path or set PATH:
+
+```bash
+# Option 1: Use full path
+/Applications/Docker.app/Contents/Resources/bin/docker compose --profile full up -d
+
+# Option 2: Export PATH first
+export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
+docker compose --profile full up -d
+```
+
+### Starting the Local Stack
+
+```bash
+# Start witnesses only (default)
+docker compose up -d
+
+# Start full stack (witnesses + verifier + issuer)
+docker compose --profile full up -d
+
+# View logs
+docker compose logs -f
+
+# Stop all
+docker compose down
+```
+
+### Service URLs (when running)
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Issuer | http://localhost:8001 | VVP Issuer API |
+| Issuer UI | http://localhost:8001/create | Identity creation web UI |
+| Verifier | http://localhost:8000 | VVP Verifier API |
+| Witness (wan) | http://localhost:5642 | KERI witness HTTP |
+| Witness (wil) | http://localhost:5643 | KERI witness HTTP |
+| Witness (wes) | http://localhost:5644 | KERI witness HTTP |
+
 ## User Commands
 
 ### "Complete"

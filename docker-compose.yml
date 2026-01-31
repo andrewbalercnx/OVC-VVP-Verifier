@@ -32,12 +32,12 @@ services:
     volumes:
       - witness-data:/usr/local/var/keri
     healthcheck:
-      # Use OOBI endpoint for stronger readiness signal (per reviewer feedback)
-      test: ["CMD", "curl", "-sf", "http://localhost:5642/oobi/BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha/controller"]
+      # Check witness HTTP port is responding (gleif/keri image doesn't have curl)
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5642/oobi/BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha/controller', timeout=5)\""]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 20s
+      start_period: 30s
     networks:
       - vvp-network
 
