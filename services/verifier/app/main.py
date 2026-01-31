@@ -45,6 +45,7 @@ def landing(request: Request):
     return templates.TemplateResponse("landing.html", {"request": request})
 
 
+@app.get("/verify")
 @app.get("/verify/")
 def verify_landing(request: Request):
     """Serve the verification landing page with mode descriptions."""
