@@ -2,22 +2,26 @@
 
 Reference this document by saying "Sprint N" to begin pair programming on that sprint.
 
-## Status Overview
+## Previous Sprints (Verifier)
+
+Sprints 1-25 implemented the VVP Verifier. See `services/verifier/app/Documentation/archive/PLAN_Sprint*.md` for history.
+
+## Status Overview (Issuer)
 
 | Sprint | Name | Status | Dependencies |
 |--------|------|--------|--------------|
-| 0 | Monorepo Foundation | COMPLETE | - |
-| 1 | Local Witness Infrastructure | Ready | Sprint 0 |
-| 2 | Issuer Service Skeleton | Ready | Sprint 1 |
-| 3 | Credential Registry | Ready | Sprint 2 |
-| 4 | Security Model | Ready | Sprint 3 |
-| 5 | ACDC Issuance | Blocked | Sprint 4 |
-| 6 | Dossier Assembly | Blocked | Sprint 5 |
-| 7 | Azure Deployment | Blocked | Sprint 6 |
+| 26 | Monorepo Foundation | COMPLETE | - |
+| 27 | Local Witness Infrastructure | Ready | Sprint 26 |
+| 28 | Issuer Service Skeleton | Ready | Sprint 27 |
+| 29 | Credential Registry | Ready | Sprint 28 |
+| 30 | Security Model | Ready | Sprint 29 |
+| 31 | ACDC Issuance | Blocked | Sprint 30 |
+| 32 | Dossier Assembly | Blocked | Sprint 31 |
+| 33 | Azure Deployment | Blocked | Sprint 32 |
 
 ---
 
-## Sprint 0: Monorepo Foundation (COMPLETE)
+## Sprint 26: Monorepo Foundation (COMPLETE)
 
 **Goal:** Restructure codebase for multi-service architecture.
 
@@ -32,7 +36,7 @@ Reference this document by saying "Sprint N" to begin pair programming on that s
 
 ---
 
-## Sprint 1: Local Witness Infrastructure
+## Sprint 27: Local Witness Infrastructure
 
 **Goal:** Set up local KERI witnesses for development and testing.
 
@@ -62,7 +66,7 @@ services/issuer/config/witnesses.json
 
 ---
 
-## Sprint 2: Issuer Service Skeleton
+## Sprint 28: Issuer Service Skeleton
 
 **Goal:** Create VVP-Issuer FastAPI service with identity management.
 
@@ -111,7 +115,7 @@ services/issuer/
 
 ---
 
-## Sprint 3: Credential Registry
+## Sprint 29: Credential Registry
 
 **Goal:** Implement TEL registry for credential issuance tracking.
 
@@ -153,7 +157,7 @@ services/issuer/app/
 
 ---
 
-## Sprint 4: Security Model
+## Sprint 30: Security Model
 
 **Goal:** Implement authentication and authorization before credential issuance.
 
@@ -198,11 +202,11 @@ services/issuer/app/
 
 ---
 
-## Sprint 5: ACDC Credential Issuance
+## Sprint 31: ACDC Credential Issuance
 
 **Goal:** Core credential issuance using keripy.
 
-**Prerequisites:** Sprint 4 (Security) MUST be complete.
+**Prerequisites:** Sprint 30 (Security) MUST be complete.
 
 **Deliverables:**
 - [ ] `CredentialIssuer` class using `keri.vc.proving.credential()`
@@ -249,7 +253,7 @@ services/issuer/app/
 
 ---
 
-## Sprint 6: Dossier Assembly
+## Sprint 32: Dossier Assembly
 
 **Goal:** Assemble credentials into complete dossiers for VVP.
 
@@ -284,7 +288,7 @@ services/issuer/app/
 
 ---
 
-## Sprint 7: Azure Deployment
+## Sprint 33: Azure Deployment
 
 **Goal:** Deploy issuer to Azure alongside verifier.
 
@@ -336,13 +340,13 @@ jobs:
 ## Quick Reference
 
 To start a sprint, say:
-- "Sprint 1" - Local witness infrastructure
-- "Sprint 2" - Issuer service skeleton
-- "Sprint 3" - Credential registry
-- "Sprint 4" - Security model (required before issuance)
-- "Sprint 5" - ACDC credential issuance
-- "Sprint 6" - Dossier assembly
-- "Sprint 7" - Azure deployment
+- "Sprint 27" - Local witness infrastructure
+- "Sprint 28" - Issuer service skeleton
+- "Sprint 29" - Credential registry
+- "Sprint 30" - Security model (required before issuance)
+- "Sprint 31" - ACDC credential issuance
+- "Sprint 32" - Dossier assembly
+- "Sprint 33" - Azure deployment
 
 Each sprint follows the pair programming workflow:
 1. Plan phase (design, review, approval)
