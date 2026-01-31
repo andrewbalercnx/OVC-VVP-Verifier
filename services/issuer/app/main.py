@@ -29,6 +29,13 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize managers
     log.info("Starting VVP Issuer service...")
     try:
+        # Initialize API key store if auth is enabled
+        if AUTH_ENABLED:
+            store = get_api_key_store()
+            log.info(f"Auth enabled: loaded {store.key_count} API keys")
+        else:
+            log.warning("Auth disabled: VVP_AUTH_ENABLED=false")
+
         await get_identity_manager()
         await get_registry_manager()
         log.info("VVP Issuer service started")
@@ -52,30 +59,31 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Include routers
-app.include_router(health.router)
-app.include_router(identity.router)
-app.include_router(registry.router)
-app.include_router(schema.router)
 
+# -----------------------------------------------------------------------------
+# Authentication Middleware
+# -----------------------------------------------------------------------------
 
-@app.middleware("http")
-async def request_logging(request: Request, call_next):
-    """Log all requests with timing."""
-    start = time.time()
-    response = await call_next(request)
-    duration_ms = int((time.time() - start) * 1000)
-
-    log.info(
-        f"request_complete status={response.status_code} duration_ms={duration_ms}",
-        extra={
-            "route": request.url.path,
-            "method": request.method,
-            "status": response.status_code,
-        },
+def on_auth_error(conn, exc):
+    """Handle authentication errors."""
+    return JSONResponse(
+        status_code=401,
+        content={"detail": str(exc)},
+        headers={"WWW-Authenticate": "ApiKey"},
     )
-    return response
 
+
+if AUTH_ENABLED:
+    app.add_middleware(
+        AuthenticationMiddleware,
+        backend=APIKeyBackend(exempt_paths=get_auth_exempt_paths()),
+        on_error=on_auth_error,
+    )
+
+
+# -----------------------------------------------------------------------------
+# Static UI Routes (must be before API routers to avoid path conflicts)
+# -----------------------------------------------------------------------------
 
 @app.get("/version")
 def version():
@@ -99,3 +107,32 @@ def registry_ui():
 def schemas_ui():
     """Serve the schema browser web UI."""
     return FileResponse(WEB_DIR / "schemas.html", media_type="text/html")
+
+
+# -----------------------------------------------------------------------------
+# API Routers
+# -----------------------------------------------------------------------------
+
+app.include_router(health.router)
+app.include_router(identity.router)
+app.include_router(registry.router)
+app.include_router(schema.router)
+app.include_router(admin.router)
+
+
+@app.middleware("http")
+async def request_logging(request: Request, call_next):
+    """Log all requests with timing."""
+    start = time.time()
+    response = await call_next(request)
+    duration_ms = int((time.time() - start) * 1000)
+
+    log.info(
+        f"request_complete status={response.status_code} duration_ms={duration_ms}",
+        extra={
+            "route": request.url.path,
+            "method": request.method,
+            "status": response.status_code,
+        },
+    )
+    return response

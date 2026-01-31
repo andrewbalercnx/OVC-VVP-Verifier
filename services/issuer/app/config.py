@@ -136,5 +136,7 @@ def get_auth_exempt_paths() -> set[str]:
 
     if not UI_AUTH_ENABLED:
         exempt.add("/create")
+        exempt.add("/registry/ui")
+        exempt.add("/schemas/ui")
 
     return exempt

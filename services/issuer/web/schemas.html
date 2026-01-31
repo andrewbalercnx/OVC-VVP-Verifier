@@ -285,6 +285,15 @@
           const res = await fetch('/schema');
           const data = await res.json();
 
+          if (!res.ok) {
+            if (res.status === 401) {
+              schemaList.innerHTML = '<div class="error">Authentication required. Set VVP_AUTH_ENABLED=false for local development.</div>';
+            } else {
+              schemaList.innerHTML = `<div class="error">Error: ${data.detail || res.statusText}</div>`;
+            }
+            return;
+          }
+
           if (data.count === 0) {
             schemaList.innerHTML = '<em>No schemas available.</em>';
             return;

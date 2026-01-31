@@ -326,6 +326,15 @@
           const res = await fetch('/identity');
           const data = await res.json();
 
+          if (!res.ok) {
+            if (res.status === 401) {
+              identityList.innerHTML = '<div class="error">Authentication required. Set VVP_AUTH_ENABLED=false for local development.</div>';
+            } else {
+              identityList.innerHTML = `<div class="error">Error: ${data.detail || res.statusText}</div>`;
+            }
+            return;
+          }
+
           if (data.count === 0) {
             identityList.innerHTML = '<em>No identities created yet.</em>';
             return;

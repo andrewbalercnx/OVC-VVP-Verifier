@@ -89,6 +89,8 @@ docker compose down
 |---------|-----|-------------|
 | Issuer | http://localhost:8001 | VVP Issuer API |
 | Issuer UI | http://localhost:8001/create | Identity creation web UI |
+| Issuer UI | http://localhost:8001/registry/ui | Registry management web UI |
+| Issuer UI | http://localhost:8001/schemas/ui | Schema browser web UI |
 | Verifier | http://localhost:8000 | VVP Verifier API |
 | Witness (wan) | http://localhost:5642 | KERI witness HTTP |
 | Witness (wil) | http://localhost:5643 | KERI witness HTTP |
@@ -109,7 +111,10 @@ When the user says "Complete", immediately perform all of the following without 
    - Rebuild verifier if changes touch: `services/verifier/`, `common/`, or `docker-compose.yml`
    - Skip rebuild if changes are only to docs, tests, or unrelated files
    - Command: `docker compose --profile full build <service>` (use full Docker path if needed)
-4. **Restart local server** - Run `./scripts/restart-server.sh`
+4. **Restart local servers** - Based on which files changed:
+   - Run `./scripts/restart-server.sh` if verifier files changed
+   - Run `./scripts/restart-issuer.sh` if issuer files changed
+   - When in doubt about which service was modified, restart both
 5. **Monitor Azure deployment** - Run `./scripts/monitor-azure-deploy.sh` to watch for successful deployment
 
 Do not ask for confirmation - execute all steps automatically.

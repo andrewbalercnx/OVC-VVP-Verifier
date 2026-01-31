@@ -10,6 +10,8 @@ from app.api.models import (
     SchemaValidationRequest,
     SchemaValidationResponse,
 )
+from app.auth.api_key import Principal
+from app.auth.roles import require_readonly
 from common.vvp.schema.registry import (
     is_known_schema,
     KNOWN_SCHEMA_SAIDS,
@@ -29,10 +31,14 @@ from app.schema.store import (
 
 
 @router.get("", response_model=SchemaListResponse)
-async def list_schemas() -> SchemaListResponse:
+async def list_schemas(
+    principal: Principal = require_readonly,
+) -> SchemaListResponse:
     """List all available schemas.
 
     Returns schemas from the embedded schema store with their SAIDs and titles.
+
+    Requires: issuer:readonly role
     """
     schemas_dict = list_embedded_schemas()
 
@@ -53,7 +59,10 @@ async def list_schemas() -> SchemaListResponse:
 
 
 @router.get("/{said}", response_model=SchemaResponse)
-async def get_schema(said: str) -> SchemaResponse:
+async def get_schema(
+    said: str,
+    principal: Principal = require_readonly,
+) -> SchemaResponse:
     """Get a schema by SAID.
 
     Args:
@@ -61,6 +70,8 @@ async def get_schema(said: str) -> SchemaResponse:
 
     Returns:
         Schema with full document if found
+
+    Requires: issuer:readonly role
     """
     schema_doc = get_embedded_schema(said)
 
@@ -76,7 +87,10 @@ async def get_schema(said: str) -> SchemaResponse:
 
 
 @router.post("/validate", response_model=SchemaValidationResponse)
-async def validate_schema(request: SchemaValidationRequest) -> SchemaValidationResponse:
+async def validate_schema(
+    request: SchemaValidationRequest,
+    principal: Principal = require_readonly,
+) -> SchemaValidationResponse:
     """Validate a schema SAID is recognized for issuance.
 
     Checks if the SAID is in the known schema registry. If a credential_type
@@ -87,6 +101,8 @@ async def validate_schema(request: SchemaValidationRequest) -> SchemaValidationR
 
     Returns:
         Validation result indicating if the schema is recognized
+
+    Requires: issuer:readonly role
     """
     if request.credential_type:
         # Check against specific credential type

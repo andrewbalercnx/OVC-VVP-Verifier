@@ -1,7 +1,7 @@
 """Registry management endpoints."""
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.api.models import (
     CreateRegistryRequest,
@@ -10,6 +10,9 @@ from app.api.models import (
     RegistryListResponse,
     WitnessPublishResult,
 )
+from app.auth.api_key import Principal
+from app.auth.roles import require_admin, require_readonly
+from app.audit import get_audit_logger
 from app.config import WITNESS_IURLS
 from app.keri.identity import get_identity_manager
 from app.keri.registry import get_registry_manager
@@ -20,14 +23,21 @@ router = APIRouter(prefix="/registry", tags=["registry"])
 
 
 @router.post("", response_model=CreateRegistryResponse)
-async def create_registry(request: CreateRegistryRequest) -> CreateRegistryResponse:
+async def create_registry(
+    request: CreateRegistryRequest,
+    http_request: Request,
+    principal: Principal = require_admin,
+) -> CreateRegistryResponse:
     """Create a new credential registry.
 
     Creates a TEL (Transaction Event Log) registry for tracking
     credential issuance and revocation.
+
+    Requires: issuer:admin role
     """
     identity_mgr = await get_identity_manager()
     registry_mgr = await get_registry_manager()
+    audit = get_audit_logger()
 
     try:
         # Resolve issuer AID from name or AID
@@ -78,6 +88,15 @@ async def create_registry(request: CreateRegistryRequest) -> CreateRegistryRespo
                 log.error(f"Failed to publish TEL to witnesses: {e}")
                 # Don't fail registry creation if witness publishing fails
 
+        # Audit log the creation
+        audit.log_access(
+            action="registry.create",
+            principal_id=principal.key_id,
+            resource=registry_info.registry_key,
+            details={"name": request.name, "issuer_aid": issuer_aid},
+            request=http_request,
+        )
+
         return CreateRegistryResponse(
             registry=RegistryResponse(
                 registry_key=registry_info.registry_key,
@@ -100,8 +119,13 @@ async def create_registry(request: CreateRegistryRequest) -> CreateRegistryRespo
 
 
 @router.get("", response_model=RegistryListResponse)
-async def list_registries() -> RegistryListResponse:
-    """List all managed registries."""
+async def list_registries(
+    principal: Principal = require_readonly,
+) -> RegistryListResponse:
+    """List all managed registries.
+
+    Requires: issuer:readonly role
+    """
     registry_mgr = await get_registry_manager()
     registries = await registry_mgr.list_registries()
 
@@ -122,8 +146,14 @@ async def list_registries() -> RegistryListResponse:
 
 
 @router.get("/{registry_key}", response_model=RegistryResponse)
-async def get_registry(registry_key: str) -> RegistryResponse:
-    """Get registry information by registry key."""
+async def get_registry(
+    registry_key: str,
+    principal: Principal = require_readonly,
+) -> RegistryResponse:
+    """Get registry information by registry key.
+
+    Requires: issuer:readonly role
+    """
     try:
         registry_mgr = await get_registry_manager()
         info = await registry_mgr.get_registry(registry_key)

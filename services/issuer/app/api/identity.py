@@ -1,7 +1,7 @@
 """Identity management endpoints."""
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.api.models import (
     CreateIdentityRequest,
@@ -11,6 +11,9 @@ from app.api.models import (
     OobiResponse,
     WitnessPublishResult,
 )
+from app.auth.api_key import Principal
+from app.auth.roles import require_admin, require_readonly
+from app.audit import get_audit_logger
 from app.config import WITNESS_IURLS
 from app.keri.identity import get_identity_manager
 from app.keri.witness import get_witness_publisher
@@ -20,13 +23,20 @@ router = APIRouter(prefix="/identity", tags=["identity"])
 
 
 @router.post("", response_model=CreateIdentityResponse)
-async def create_identity(request: CreateIdentityRequest) -> CreateIdentityResponse:
+async def create_identity(
+    request: CreateIdentityRequest,
+    http_request: Request,
+    principal: Principal = require_admin,
+) -> CreateIdentityResponse:
     """Create a new KERI identity.
 
     Creates an identity with the specified parameters and optionally
     publishes its OOBI to configured witnesses.
+
+    Requires: issuer:admin role
     """
     mgr = await get_identity_manager()
+    audit = get_audit_logger()
 
     try:
         # Create the identity
@@ -73,6 +83,15 @@ async def create_identity(request: CreateIdentityRequest) -> CreateIdentityRespo
                 # Don't fail identity creation if witness publishing fails
                 # The identity is created, just not published yet
 
+        # Audit log the creation
+        audit.log_access(
+            action="identity.create",
+            principal_id=principal.key_id,
+            resource=info.aid,
+            details={"name": request.name},
+            request=http_request,
+        )
+
         return CreateIdentityResponse(
             identity=IdentityResponse(
                 aid=info.aid,
@@ -95,8 +114,13 @@ async def create_identity(request: CreateIdentityRequest) -> CreateIdentityRespo
 
 
 @router.get("", response_model=IdentityListResponse)
-async def list_identities() -> IdentityListResponse:
-    """List all managed identities."""
+async def list_identities(
+    principal: Principal = require_readonly,
+) -> IdentityListResponse:
+    """List all managed identities.
+
+    Requires: issuer:readonly role
+    """
     mgr = await get_identity_manager()
     identities = await mgr.list_identities()
 
@@ -118,8 +142,14 @@ async def list_identities() -> IdentityListResponse:
 
 
 @router.get("/{aid}", response_model=IdentityResponse)
-async def get_identity(aid: str) -> IdentityResponse:
-    """Get identity information by AID."""
+async def get_identity(
+    aid: str,
+    principal: Principal = require_readonly,
+) -> IdentityResponse:
+    """Get identity information by AID.
+
+    Requires: issuer:readonly role
+    """
     mgr = await get_identity_manager()
     info = await mgr.get_identity(aid)
 
@@ -138,8 +168,14 @@ async def get_identity(aid: str) -> IdentityResponse:
 
 
 @router.get("/{aid}/oobi", response_model=OobiResponse)
-async def get_oobi(aid: str) -> OobiResponse:
-    """Get OOBI URLs for an identity."""
+async def get_oobi(
+    aid: str,
+    principal: Principal = require_readonly,
+) -> OobiResponse:
+    """Get OOBI URLs for an identity.
+
+    Requires: issuer:readonly role
+    """
     mgr = await get_identity_manager()
     info = await mgr.get_identity(aid)
 

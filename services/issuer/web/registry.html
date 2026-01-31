@@ -240,7 +240,17 @@
           // Clear existing options except placeholder
           identitySelect.innerHTML = '<option value="">Select an identity...</option>';
 
+          if (!res.ok) {
+            if (res.status === 401) {
+              noIdentitiesWarning.innerHTML = 'Authentication required. Set VVP_AUTH_ENABLED=false for local development.';
+              noIdentitiesWarning.style.display = 'block';
+            }
+            createBtn.disabled = true;
+            return;
+          }
+
           if (data.count === 0) {
+            noIdentitiesWarning.innerHTML = 'No identities available. <a href="/create">Create an identity</a> first before creating a registry.';
             noIdentitiesWarning.style.display = 'block';
             createBtn.disabled = true;
             return;
@@ -345,6 +355,15 @@
         try {
           const res = await fetch('/registry');
           const data = await res.json();
+
+          if (!res.ok) {
+            if (res.status === 401) {
+              registryList.innerHTML = '<div class="error">Authentication required. Set VVP_AUTH_ENABLED=false for local development.</div>';
+            } else {
+              registryList.innerHTML = `<div class="error">Error: ${data.detail || res.statusText}</div>`;
+            }
+            return;
+          }
 
           if (data.count === 0) {
             registryList.innerHTML = '<em>No registries created yet.</em>';

@@ -86,6 +86,7 @@ services:
       - ./services/issuer/config:/srv/config:ro
     environment:
       - VVP_WITNESS_CONFIG=/srv/config/witnesses.json
+      - VVP_AUTH_ENABLED=false  # Disabled for local development UI
     depends_on:
       witnesses:
         condition: service_healthy
