@@ -4,8 +4,6 @@
 #   docker-compose --profile full up   # Start witnesses + verifier
 #   docker-compose down                # Stop all services
 
-version: "3.8"
-
 services:
   # ===========================================================================
   # KERI Witnesses (kli witness demo)
@@ -23,7 +21,7 @@ services:
   witnesses:
     image: gleif/keri:latest
     container_name: vvp-witnesses
-    command: ["kli", "witness", "demo"]
+    command: ["witness", "demo"]
     ports:
       - "5632:5632"  # wan TCP
       - "5633:5633"  # wil TCP
