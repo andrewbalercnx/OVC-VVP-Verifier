@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir /srv/common
 # Install issuer service
 COPY services/issuer/pyproject.toml /srv/pyproject.toml
 COPY services/issuer/app /srv/app
+COPY services/issuer/web /srv/web
 RUN pip install --no-cache-dir -U pip && pip install --no-cache-dir .
 
 # Copy config (will be overridden by volume mount in docker-compose)

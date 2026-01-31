@@ -4,7 +4,7 @@ Reference this document by saying "Sprint N" to begin pair programming on that s
 
 ## Previous Sprints (Verifier)
 
-Sprints 1-25 implemented the VVP Verifier. See `services/verifier/app/Documentation/archive/PLAN_Sprint*.md` for history.
+Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprint*.md` for history.
 
 ## Status Overview (Issuer)
 
@@ -12,7 +12,7 @@ Sprints 1-25 implemented the VVP Verifier. See `services/verifier/app/Documentat
 |--------|------|--------|--------------|
 | 26 | Monorepo Foundation | COMPLETE | - |
 | 27 | Local Witness Infrastructure | COMPLETE | Sprint 26 |
-| 28 | Issuer Service Skeleton | Ready | Sprint 27 |
+| 28 | Issuer Service Skeleton | COMPLETE | Sprint 27 |
 | 29 | Credential Registry | Ready | Sprint 28 |
 | 30 | Security Model | Ready | Sprint 29 |
 | 31 | ACDC Issuance | Blocked | Sprint 30 |
@@ -71,17 +71,25 @@ services/issuer/config/witnesses.json
 
 ---
 
-## Sprint 28: Issuer Service Skeleton
+## Sprint 28: Issuer Service Skeleton (COMPLETE)
 
 **Goal:** Create VVP-Issuer FastAPI service with identity management.
 
 **Deliverables:**
-- [ ] `services/issuer/` directory structure
-- [ ] FastAPI application with health endpoint
-- [ ] `IssuerIdentityManager` wrapping keripy Habery
-- [ ] Identity creation API (`POST /identity`)
-- [ ] OOBI publishing to witnesses
-- [ ] Dockerfile for issuer service
+- [x] `services/issuer/` directory structure
+- [x] FastAPI application with health endpoint
+- [x] `IssuerIdentityManager` wrapping keripy Habery
+- [x] Identity creation API (`POST /identity`)
+- [x] OOBI publishing to witnesses (events accepted by all 3 witnesses)
+- [x] Dockerfile for issuer service
+- [x] Integration tests for witness publishing
+
+**Commits:** `ee47606`, `65f3033`
+
+**Notes:**
+- Witness publishing uses CESR HTTP format (application/cesr+json + CESR-ATTACHMENT header)
+- Full OOBI resolution requires complete witness receipt protocol (planned for future sprint)
+- Current implementation successfully sends events to all witnesses (HTTP 200)
 
 **Key Files:**
 ```

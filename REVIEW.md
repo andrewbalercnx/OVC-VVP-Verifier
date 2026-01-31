@@ -1,18 +1,12 @@
-## Code Review: Sprint 28 - Review Response
+## Plan Review: Sprint 29 - Credential Registry (Revision 2)
 
 **Verdict:** APPROVED
 
-### Implementation Assessment
-KEL publishing is now wired into identity creation via `get_kel_bytes()` and `WitnessPublisher`, satisfying the prior blocker. The config isolation in tests is fixed via `VVP_ISSUER_DATA_DIR`, and persistence across restart is exercised. The integration test for OOBI resolution is correctly gated.
-
-### Code Quality
-Changes are consistent with existing patterns and are readable. Error handling in the publish path is defensive and does not fail identity creation when witnesses are unavailable.
-
-### Test Coverage
-Coverage now includes persistence and KEL serialization. Integration OOBI resolution is present and marked; acceptable for Docker-dependent tests.
+### Revision Assessment
+The TEL serialization fix using `reger.cloneTvt(pre, dig)` addresses the prior blocker and aligns with keripy’s expected CESR framing (event + attachments). Moving schema validation to `schema.py` and adding a dedicated `publish_event()` method resolves the earlier design concerns. The integration test is appropriately marked and documented for witness-required execution. No remaining blockers.
 
 ### Findings
-- [Low]: The integration OOBI resolution test is currently a hard skip rather than a marker-only skip. Consider using `@pytest.mark.integration` with a skip-if flag to allow opt-in execution when witnesses are running. `services/issuer/tests/test_identity.py`
+- [Low]: `reger.cloneTvt(pre, dig)` requires the correct `pre` and `dig` inputs; ensure the registry inception digest used (`registry.vcp.saidb`) matches the stored event in Reger. Consider a brief comment in the plan noting this dependency.
 
-### Required Changes (if not APPROVED)
+### Required Changes (if CHANGES_REQUESTED)
 1. N/A

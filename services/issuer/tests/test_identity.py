@@ -238,17 +238,76 @@ async def test_create_identity_with_publish_disabled(client: AsyncClient):
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_oobi_resolution_with_witnesses():
-    """Test that OOBI can be resolved by witnesses.
+async def test_witness_publishing_integration():
+    """Integration test: Verify witness publishing works.
 
-    This is an integration test that requires witnesses to be running.
-    Run with: pytest -m integration
+    This test requires Docker witnesses to be running:
+        docker compose up -d witnesses
 
-    The test:
-    1. Creates an identity with witness publishing enabled
-    2. Verifies publish_results show success
-    3. Attempts to resolve the OOBI URL (requires live witnesses)
+    Run with: pytest -m integration --no-header -rN
+
+    The test verifies:
+    1. Identity creation succeeds
+    2. Witness publishing sends events to all witnesses
+    3. All witnesses accept the events (HTTP 200)
+
+    NOTE: Full OOBI resolution requires the complete witness receipt
+    protocol (collecting and distributing receipts between all witnesses).
+    The current implementation gets events TO witnesses but doesn't
+    complete the full receipt distribution needed for fullyWitnessed status.
+    This is acceptable for Sprint 28 - full witness integration is planned
+    for a future sprint.
     """
-    # This test is marked as integration and skipped by default
-    # It would require docker-compose up with witnesses running
-    pytest.skip("Integration test requires running witnesses")
+    import httpx
+    import os
+
+    # Skip if not running against Docker
+    issuer_url = os.getenv("VVP_ISSUER_URL", "http://localhost:8001")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Check issuer is running
+            health = await client.get(f"{issuer_url}/healthz")
+            if health.status_code != 200:
+                pytest.skip("Issuer not running")
+    except Exception:
+        pytest.skip("Cannot connect to issuer")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Create identity with witness publishing
+        import uuid
+        name = f"integ-test-{uuid.uuid4().hex[:8]}"
+
+        response = await client.post(
+            f"{issuer_url}/identity",
+            json={"name": name, "publish_to_witnesses": True},
+        )
+
+        assert response.status_code == 200, f"Identity creation failed: {response.text}"
+        data = response.json()
+
+        # Verify identity was created
+        identity = data["identity"]
+        assert identity["name"] == name
+        assert identity["aid"].startswith("E")
+        assert identity["witness_count"] == 3
+
+        # Verify publishing results
+        publish_results = data.get("publish_results")
+        assert publish_results is not None, "Expected publish_results"
+        assert len(publish_results) == 3, "Expected 3 witness results"
+
+        # All witnesses should have accepted the event
+        success_count = sum(1 for r in publish_results if r["success"])
+        assert success_count == 3, (
+            f"Expected all 3 witnesses to succeed, got {success_count}. "
+            f"Results: {publish_results}"
+        )
+
+        # Verify OOBI URLs are generated
+        oobi_urls = data.get("oobi_urls")
+        assert oobi_urls is not None
+        assert len(oobi_urls) == 3
+        for url in oobi_urls:
+            assert identity["aid"] in url
+            assert "/oobi/" in url

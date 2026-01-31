@@ -15,6 +15,11 @@ from app.keri.identity import (
     IssuerIdentityManager,
 )
 from app.keri.persistence import reset_persistence_manager, PersistenceManager
+from app.keri.registry import (
+    reset_registry_manager,
+    close_registry_manager,
+    CredentialRegistryManager,
+)
 from app.keri.witness import reset_witness_publisher
 
 
@@ -59,6 +64,25 @@ async def temp_identity_manager(temp_dir: Path) -> AsyncGenerator[IssuerIdentity
 
 
 @pytest.fixture
+async def identity_with_registry(
+    client: AsyncClient,
+) -> AsyncGenerator[dict, None]:
+    """Create an identity for registry tests.
+
+    Uses the client fixture to ensure proper singleton initialization,
+    then creates an identity that can be used for registry creation.
+    """
+    # Create a test identity via API
+    response = await client.post(
+        "/identity",
+        json={"name": "test-issuer-for-registry", "publish_to_witnesses": False},
+    )
+    assert response.status_code == 200, f"Failed to create identity: {response.text}"
+    identity_data = response.json()
+    yield identity_data["identity"]
+
+
+@pytest.fixture
 async def client(temp_dir: Path) -> AsyncGenerator[AsyncClient, None]:
     """Create test client for API testing with isolated temp storage.
 
@@ -72,6 +96,7 @@ async def client(temp_dir: Path) -> AsyncGenerator[AsyncClient, None]:
 
     # Reset singletons to pick up new config
     reset_identity_manager()
+    reset_registry_manager()
     reset_persistence_manager()
     reset_witness_publisher()
 
@@ -87,11 +112,13 @@ async def client(temp_dir: Path) -> AsyncGenerator[AsyncClient, None]:
     ) as async_client:
         yield async_client
 
-    # Close identity manager to release LMDB locks
+    # Close managers to release LMDB locks
+    await close_registry_manager()
     await close_identity_manager()
 
     # Cleanup after test
     reset_identity_manager()
+    reset_registry_manager()
     reset_persistence_manager()
     reset_witness_publisher()
 

@@ -84,3 +84,84 @@ class HealthResponse(BaseModel):
     ok: bool
     service: str = "vvp-issuer"
     identities_loaded: int = 0
+
+
+# =============================================================================
+# Registry Models
+# =============================================================================
+
+
+class CreateRegistryRequest(BaseModel):
+    """Request to create a new credential registry."""
+
+    name: str = Field(..., description="Human-readable name for the registry")
+    identity_name: Optional[str] = Field(None, description="Issuer identity by name")
+    issuer_aid: Optional[str] = Field(None, description="Issuer identity by AID")
+    no_backers: bool = Field(True, description="If True, no TEL-specific backers")
+    publish_to_witnesses: bool = Field(True, description="Publish TEL to witnesses")
+
+    def model_post_init(self, __context) -> None:
+        """Validate that either identity_name or issuer_aid is provided."""
+        if not self.identity_name and not self.issuer_aid:
+            raise ValueError("Either identity_name or issuer_aid is required")
+
+
+class RegistryResponse(BaseModel):
+    """Response containing registry information."""
+
+    registry_key: str = Field(..., description="Registry prefix (regk)")
+    name: str = Field(..., description="Human-readable name")
+    issuer_aid: str = Field(..., description="Issuer identity AID")
+    created_at: Optional[str] = Field(None, description="Creation timestamp (ISO8601)")
+    sequence_number: int = Field(..., description="Current TEL sequence")
+    no_backers: bool = Field(..., description="Whether using TEL-specific backers")
+
+
+class CreateRegistryResponse(BaseModel):
+    """Response from registry creation."""
+
+    registry: RegistryResponse
+    publish_results: Optional[list[WitnessPublishResult]] = None
+
+
+class RegistryListResponse(BaseModel):
+    """Response listing all registries."""
+
+    registries: list[RegistryResponse]
+    count: int
+
+
+# =============================================================================
+# Schema Models
+# =============================================================================
+
+
+class SchemaResponse(BaseModel):
+    """Response containing schema information."""
+
+    said: str = Field(..., description="Schema SAID")
+    title: str = Field(..., description="Schema title")
+    description: Optional[str] = Field(None, description="Schema description")
+    schema_document: Optional[dict] = Field(None, description="Full JSON schema")
+
+
+class SchemaListResponse(BaseModel):
+    """Response listing all schemas."""
+
+    schemas: list[SchemaResponse]
+    count: int
+
+
+class SchemaValidationRequest(BaseModel):
+    """Request to validate a schema SAID."""
+
+    said: str = Field(..., description="Schema SAID to validate")
+    credential_type: Optional[str] = Field(None, description="Credential type (LE, APE, DE, TNAlloc)")
+
+
+class SchemaValidationResponse(BaseModel):
+    """Response from schema validation."""
+
+    said: str = Field(..., description="Schema SAID that was validated")
+    valid: bool = Field(..., description="Whether the SAID is recognized")
+    credential_type: Optional[str] = Field(None, description="Credential type if specified")

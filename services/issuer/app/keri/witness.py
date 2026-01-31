@@ -9,12 +9,17 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
+from keri.core import serdering
 
 from app.config import (
     WITNESS_IURLS,
     WITNESS_TIMEOUT_SECONDS,
     WITNESS_RECEIPT_THRESHOLD,
 )
+
+# CESR HTTP format constants (from keripy httping)
+CESR_CONTENT_TYPE = "application/cesr+json"
+CESR_ATTACHMENT_HEADER = "CESR-ATTACHMENT"
 
 log = logging.getLogger(__name__)
 
@@ -82,8 +87,9 @@ class WitnessPublisher:
     ) -> PublishResult:
         """Publish identity KEL to witnesses.
 
-        Posts the inception event to each witness endpoint
-        to establish the identity's OOBI resolution.
+        Implements the witness receipt protocol:
+        1. Send event to each witness, collect their receipts
+        2. Send all receipts back to all witnesses for full witnessing
 
         Args:
             aid: The AID being published
@@ -103,26 +109,43 @@ class WitnessPublisher:
             )
 
         results: list[WitnessResult] = []
+        receipts: dict[str, bytes] = {}  # url -> receipt bytes
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
+            # Phase 1: Send event to each witness and collect receipts
             tasks = [
                 self._publish_to_witness(client, url, aid, kel_bytes)
                 for url in self._witness_urls
             ]
-            task_results = await asyncio.gather(*tasks, return_exceptions=True)
+            phase1_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Convert exceptions to WitnessResult
-        for i, result in enumerate(task_results):
-            if isinstance(result, Exception):
-                results.append(
-                    WitnessResult(
-                        url=self._witness_urls[i],
-                        success=False,
-                        error=str(result),
+            # Collect successful receipts
+            for i, result in enumerate(phase1_results):
+                url = self._witness_urls[i]
+                if isinstance(result, tuple):  # (WitnessResult, receipt_bytes)
+                    wr, receipt = result
+                    results.append(wr)
+                    if wr.success and receipt:
+                        receipts[url] = receipt
+                elif isinstance(result, Exception):
+                    results.append(
+                        WitnessResult(url=url, success=False, error=str(result))
                     )
-                )
-            else:
-                results.append(result)
+                else:
+                    results.append(result)
+
+            # Phase 2: Distribute all receipts to all witnesses
+            if len(receipts) > 1:
+                log.debug(f"Distributing {len(receipts)} receipts to witnesses")
+                all_receipts = bytearray()
+                for rct in receipts.values():
+                    all_receipts.extend(rct)
+
+                for url in receipts:
+                    try:
+                        await self._send_receipts(client, url, bytes(all_receipts))
+                    except Exception as e:
+                        log.warning(f"Failed to distribute receipts to {url}: {e}")
 
         success_count = sum(1 for r in results if r.success)
 
@@ -134,57 +157,130 @@ class WitnessPublisher:
             witnesses=results,
         )
 
+    async def publish_event(
+        self,
+        pre: str,
+        event_bytes: bytes,
+    ) -> PublishResult:
+        """Publish a KERI/ACDC event to witnesses.
+
+        Generic method for publishing any CESR-encoded event (KEL, TEL, etc.)
+        to configured witnesses. This is semantically equivalent to publish_oobi
+        but named more generally for TEL and credential events.
+
+        Args:
+            pre: The identifier prefix (AID or registry key)
+            event_bytes: CESR-encoded event with signatures
+
+        Returns:
+            PublishResult with per-witness results
+        """
+        return await self.publish_oobi(aid=pre, kel_bytes=event_bytes)
+
     async def _publish_to_witness(
         self,
         client: httpx.AsyncClient,
         url: str,
         aid: str,
         kel_bytes: bytes,
-    ) -> WitnessResult:
-        """Publish to a single witness."""
+    ) -> tuple[WitnessResult, Optional[bytes]]:
+        """Publish to a single witness and collect receipt.
+
+        Uses CESR HTTP format as expected by keripy witnesses:
+        - POST to /receipts endpoint
+        - Content-Type: application/cesr+json
+        - Body: JSON event (the inception/rotation/interaction event)
+        - CESR-ATTACHMENT header: signatures and other attachments
+
+        Returns:
+            Tuple of (WitnessResult, receipt_bytes or None)
+        """
         start = datetime.now(timezone.utc)
 
         try:
-            # Post KEL to witness endpoint
-            # Witnesses accept CESR-encoded messages at root endpoint
+            # Parse CESR message to extract event JSON and attachments
+            # The kel_bytes contains: [event JSON][CESR attachments]
+            msg = bytearray(kel_bytes)
+            serder = serdering.SerderKERI(raw=msg)
+            event_json = bytes(serder.raw)  # JSON event body
+            attachments = bytes(msg[serder.size:])  # Everything after the event
+
+            # Build request with CESR HTTP format
+            receipts_url = f"{url.rstrip('/')}/receipts"
+            headers = {
+                "Content-Type": CESR_CONTENT_TYPE,
+                CESR_ATTACHMENT_HEADER: attachments.decode("utf-8"),
+            }
+
             response = await client.post(
-                url,
-                content=kel_bytes,
-                headers={"Content-Type": "application/cesr"},
+                receipts_url,
+                content=event_json,
+                headers=headers,
             )
 
             elapsed_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
 
-            if response.status_code in (200, 202):
-                log.info(f"Published {aid[:16]}... to {url} ({elapsed_ms}ms)")
-                return WitnessResult(
-                    url=url,
-                    success=True,
-                    response_time_ms=elapsed_ms,
+            if response.status_code == 200:
+                # 200 means witness returned a receipt
+                receipt_bytes = response.content
+                log.info(f"Published {aid[:16]}... to {receipts_url} ({elapsed_ms}ms), got receipt")
+                return (
+                    WitnessResult(url=url, success=True, response_time_ms=elapsed_ms),
+                    receipt_bytes,
+                )
+            elif response.status_code == 202:
+                # 202 means event escrowed but no receipt yet
+                log.info(f"Published {aid[:16]}... to {receipts_url} ({elapsed_ms}ms), escrowed")
+                return (
+                    WitnessResult(url=url, success=True, response_time_ms=elapsed_ms),
+                    None,
                 )
             else:
-                log.warning(f"Witness {url} returned {response.status_code}")
-                return WitnessResult(
-                    url=url,
-                    success=False,
-                    error=f"HTTP {response.status_code}",
-                    response_time_ms=elapsed_ms,
+                error_detail = ""
+                try:
+                    error_data = response.json()
+                    error_detail = f": {error_data.get('description', '')}"
+                except Exception:
+                    pass
+                log.warning(f"Witness {receipts_url} returned {response.status_code}{error_detail}")
+                return (
+                    WitnessResult(
+                        url=url,
+                        success=False,
+                        error=f"HTTP {response.status_code}{error_detail}",
+                        response_time_ms=elapsed_ms,
+                    ),
+                    None,
                 )
 
         except httpx.TimeoutException:
             log.warning(f"Timeout publishing to {url}")
-            return WitnessResult(
-                url=url,
-                success=False,
-                error="Timeout",
-            )
+            return (WitnessResult(url=url, success=False, error="Timeout"), None)
         except Exception as e:
             log.error(f"Failed to publish to {url}: {e}")
-            return WitnessResult(
-                url=url,
-                success=False,
-                error=str(e),
-            )
+            return (WitnessResult(url=url, success=False, error=str(e)), None)
+
+    async def _send_receipts(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        receipt_bytes: bytes,
+    ) -> None:
+        """Send receipts to a witness.
+
+        This distributes receipts from other witnesses so each witness
+        has the full complement needed for fullyWitnessed.
+
+        Receipts are sent to /kel endpoint as raw CESR since they're
+        already properly formatted witness signatures.
+        """
+        # Send to /kel endpoint which accepts raw CESR messages
+        kel_url = f"{url.rstrip('/')}/kel"
+        headers = {"Content-Type": "application/cesr"}
+
+        response = await client.put(kel_url, content=receipt_bytes, headers=headers)
+        if response.status_code not in (200, 202, 204):
+            log.warning(f"Failed to distribute receipts to {url}: HTTP {response.status_code}")
 
 
 # Module-level singleton

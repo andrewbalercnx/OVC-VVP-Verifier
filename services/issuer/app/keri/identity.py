@@ -113,6 +113,16 @@ class IssuerIdentityManager:
             raise RuntimeError("IssuerIdentityManager not initialized")
         return self._hby
 
+    @property
+    def habery(self) -> habbing.Habery:
+        """Get the underlying Habery instance for registry use.
+
+        This is the same as .hby but provides a clearer name for external
+        components like CredentialRegistryManager that need access to the
+        shared Habery instance.
+        """
+        return self.hby
+
     async def create_identity(
         self,
         name: str,

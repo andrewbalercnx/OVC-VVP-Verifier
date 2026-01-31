@@ -30,6 +30,7 @@ VVP/
 │       ├── config/             # witnesses.json
 │       ├── pyproject.toml      # Service dependencies
 │       └── Dockerfile          # Container definition
+├── Documentation/              # Specs, checklists, archived plans
 ├── keripy/                     # Vendored KERI library
 ├── scripts/                    # Root convenience wrappers
 ├── pyproject.toml              # Workspace definition
@@ -99,12 +100,15 @@ docker compose down
 
 When the user says "Complete", immediately perform all of the following without asking for permission:
 
+1. **Update sprint status** - Update `SPRINTS.md` to reflect any work completed in the current sprint before committing.
 1. **Commit all changes** - Stage all modified/new files and create a descriptive commit
 2. **Push to main** - Push the commit to the main branch
-3. **Build Docker images (if needed)** - If changes include Dockerfile or service code:
-   - Check if any `services/*/Dockerfile` files were modified or created
-   - If so, run `docker-compose --profile full build <service>` for affected services
-   - For new services, this ensures the image exists for local testing
+3. **Rebuild Docker images (if needed)** - Only rebuild if the commit includes changes to service code:
+   - Use `git diff --name-only HEAD~1` to check which files changed in the commit
+   - Rebuild issuer if changes touch: `services/issuer/`, `common/`, or `docker-compose.yml`
+   - Rebuild verifier if changes touch: `services/verifier/`, `common/`, or `docker-compose.yml`
+   - Skip rebuild if changes are only to docs, tests, or unrelated files
+   - Command: `docker compose --profile full build <service>` (use full Docker path if needed)
 4. **Restart local server** - Run `./scripts/restart-server.sh`
 5. **Monitor Azure deployment** - Run `./scripts/monitor-azure-deploy.sh` to watch for successful deployment
 
@@ -193,10 +197,10 @@ This project uses a formal two-agent workflow with an **Editor** (implementing a
 |------|---------|-------|
 | Claude plan mode file | Current phase design with rationale | Editor |
 | `REVIEW.md` | Reviewer feedback on plans and code | Reviewer |
-| `services/verifier/app/Documentation/PLAN_PhaseN.md` | Archive of accepted plans | Both |
+| `Documentation/PLAN_PhaseN.md` | Archive of accepted plans | Both |
 | `CHANGES.md` | Change log with commit SHAs | Both |
 
-**Note:** Plans are now written using Claude Code's built-in plan mode rather than a separate `PLAN.md` file. The plan content is stored at `~/.claude/plans/` and archived to `services/verifier/app/Documentation/` after approval.
+**Note:** Plans are now written using Claude Code's built-in plan mode rather than a separate `PLAN.md` file. The plan content is stored at `~/.claude/plans/` and archived to `Documentation/` after approval.
 
 ---
 
@@ -437,7 +441,7 @@ RESPONSE FORMAT - Write to REVIEW.md with this structure:
 #### Step 3.1: Archive the Plan
 
 Move accepted plan to documentation:
-1. Copy `PLAN.md` to `services/verifier/app/Documentation/PLAN_PhaseN.md`
+1. Copy `PLAN.md` to `Documentation/PLAN_PhaseN.md`
 2. Include implementation notes and review history
 3. Update `CHANGES.md` with phase summary
 
@@ -478,13 +482,13 @@ At the end of every major phase of work:
 
 ## Specification Reference
 
-- Authoritative spec: `services/verifier/app/Documentation/VVP_Verifier_Specification_v1.5.md` (also v1.4_FINAL.md for reference)
-- Implementation checklist: `services/verifier/app/Documentation/VVP_Implementation_Checklist.md`
+- Authoritative spec: `Documentation/VVP_Verifier_Specification_v1.5.md` (also v1.4_FINAL.md for reference)
+- Implementation checklist: `Documentation/VVP_Implementation_Checklist.md`
 
 ## Sprint Planning
 
 - **Sprint roadmap:** `SPRINTS.md` - Defines all sprints with goals, deliverables, exit criteria
-- **Archived verifier sprints:** `services/verifier/app/Documentation/archive/PLAN_Sprint*.md` (Sprints 1-25)
+- **Archived verifier sprints:** `Documentation/archive/PLAN_Sprint*.md` (Sprints 1-25)
 - **Issuer sprints:** 26-33 (defined in `SPRINTS.md`)
 
 ## CI/CD
@@ -541,14 +545,14 @@ VVP/
 │       │   │   ├── keri/            # KERI integration
 │       │   │   ├── acdc/            # ACDC credential handling
 │       │   │   └── dossier/         # Dossier handling
-│       │   ├── main.py              # FastAPI application
-│       │   └── Documentation/       # Specs, checklists, archived plans
+│       │   └── main.py              # FastAPI application
 │       ├── tests/                   # Test suite
 │       ├── scripts/                 # Service scripts
 │       ├── web/                     # Static assets
 │       ├── pyproject.toml           # Service dependencies
 │       ├── pytest.ini               # Test configuration
 │       └── Dockerfile               # Container definition
+├── Documentation/                   # Specs, checklists, archived plans
 ├── keripy/                          # Vendored KERI library
 ├── scripts/                         # Root convenience wrappers
 ├── pyproject.toml                   # Workspace definition

@@ -106,3 +106,4 @@ scripts/            # Helper scripts (e.g., test runner)
 - [VVP Verifier Documentation](app/Documentation/VVP_Verifier_Documentation.md): Comprehensive guide to objectives, background, and architecture.
 - [Specification](app/Documentation/VVP_Verifier_Specification_v1.5.md): Detailed VVP specification.
 - [Implementation Checklist](app/Documentation/VVP_Implementation_Checklist.md): Tracking implementation progress.
+- [Creating Dossiers](app/Documentation/CREATING_DOSSIERS.md): Capabilities and infrastructure needed to create ACDCs and dossiers.

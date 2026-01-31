@@ -9,8 +9,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 
 from common.vvp.core.logging import configure_logging
-from app.api import health, identity
+from app.api import health, identity, registry, schema
 from app.keri.identity import get_identity_manager, close_identity_manager
+from app.keri.registry import get_registry_manager, close_registry_manager
 
 # Web directory for static files
 WEB_DIR = Path(__file__).parent.parent / "web"
@@ -22,19 +23,21 @@ log = logging.getLogger("vvp-issuer")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
-    # Startup: Initialize identity manager
+    # Startup: Initialize managers
     log.info("Starting VVP Issuer service...")
     try:
         await get_identity_manager()
+        await get_registry_manager()
         log.info("VVP Issuer service started")
     except Exception as e:
-        log.error(f"Failed to initialize identity manager: {e}")
+        log.error(f"Failed to initialize managers: {e}")
         raise
 
     yield
 
-    # Shutdown: Close identity manager
+    # Shutdown: Close managers
     log.info("Shutting down VVP Issuer service...")
+    await close_registry_manager()
     await close_identity_manager()
     log.info("VVP Issuer service stopped")
 
@@ -49,6 +52,8 @@ app = FastAPI(
 # Include routers
 app.include_router(health.router)
 app.include_router(identity.router)
+app.include_router(registry.router)
+app.include_router(schema.router)
 
 
 @app.middleware("http")
