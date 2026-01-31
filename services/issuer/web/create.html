@@ -1,0 +1,379 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>VVP Issuer - Create Identity</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        margin: 0;
+        padding: 2rem;
+        max-width: 900px;
+        background: #f8f9fa;
+      }
+      h1 { color: #2c3e50; margin-bottom: 0.5rem; }
+      .subtitle { color: #666; margin-bottom: 2rem; }
+      .card {
+        background: white;
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      .card h2 { margin-top: 0; color: #34495e; }
+      label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
+      input[type="text"] {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 1rem;
+        box-sizing: border-box;
+      }
+      input[type="text"]:focus {
+        outline: none;
+        border-color: #3498db;
+        box-shadow: 0 0 0 2px rgba(52,152,219,0.2);
+      }
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 1rem 0;
+      }
+      .checkbox-row input { width: auto; }
+      .checkbox-row label { margin: 0; font-weight: normal; }
+      button {
+        background: #3498db;
+        color: white;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 4px;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button:hover { background: #2980b9; }
+      button:disabled { background: #bdc3c7; cursor: not-allowed; }
+      .success {
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+        padding: 1rem;
+        border-radius: 4px;
+        margin-top: 1rem;
+      }
+      .error {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+        padding: 1rem;
+        border-radius: 4px;
+        margin-top: 1rem;
+      }
+      .result-field {
+        margin: 0.75rem 0;
+        padding: 0.5rem;
+        background: #f8f9fa;
+        border-radius: 4px;
+      }
+      .result-field strong { color: #495057; }
+      .result-field code {
+        display: block;
+        margin-top: 0.25rem;
+        padding: 0.5rem;
+        background: #e9ecef;
+        border-radius: 4px;
+        font-family: 'SFMono-Regular', Consolas, monospace;
+        font-size: 0.85rem;
+        word-break: break-all;
+      }
+      .oobi-url {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0.25rem 0;
+      }
+      .oobi-url code {
+        flex: 1;
+        margin: 0;
+        font-size: 0.8rem;
+      }
+      .copy-btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.75rem;
+        background: #6c757d;
+      }
+      .copy-btn:hover { background: #5a6268; }
+      .identity-list {
+        display: grid;
+        gap: 1rem;
+      }
+      .identity-item {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 1rem;
+      }
+      .identity-item h4 { margin: 0 0 0.5rem 0; color: #2c3e50; }
+      .identity-item .aid {
+        font-family: monospace;
+        font-size: 0.85rem;
+        color: #6c757d;
+        word-break: break-all;
+      }
+      .identity-meta {
+        display: flex;
+        gap: 1rem;
+        margin-top: 0.5rem;
+        font-size: 0.85rem;
+        color: #666;
+      }
+      .badge {
+        display: inline-block;
+        padding: 0.125rem 0.5rem;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+      .badge-transferable { background: #d4edda; color: #155724; }
+      .badge-non-transferable { background: #f8d7da; color: #721c24; }
+      .loading { opacity: 0.6; pointer-events: none; }
+      .spinner {
+        display: inline-block;
+        width: 1rem;
+        height: 1rem;
+        border: 2px solid #fff;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-right: 0.5rem;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .publish-results { margin-top: 1rem; }
+      .witness-result {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.25rem 0;
+        font-size: 0.85rem;
+      }
+      .witness-success { color: #28a745; }
+      .witness-fail { color: #dc3545; }
+    </style>
+  </head>
+  <body>
+    <h1>VVP Issuer</h1>
+    <p class="subtitle">Create and manage KERI identities for credential issuance</p>
+
+    <div class="card">
+      <h2>Create New Identity</h2>
+      <form id="createForm">
+        <div style="margin-bottom: 1rem;">
+          <label for="name">Identity Name</label>
+          <input type="text" id="name" name="name" placeholder="e.g., my-issuer" required>
+        </div>
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="transferable" name="transferable" checked>
+          <label for="transferable">Transferable (keys can rotate)</label>
+        </div>
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="publishToWitnesses" name="publishToWitnesses" checked>
+          <label for="publishToWitnesses">Publish to witnesses</label>
+        </div>
+
+        <button type="submit" id="createBtn">Create Identity</button>
+      </form>
+
+      <div id="createResult"></div>
+    </div>
+
+    <div class="card">
+      <h2>Existing Identities</h2>
+      <button id="refreshBtn" style="margin-bottom: 1rem; background: #6c757d;">Refresh List</button>
+      <div id="identityList">
+        <em>Loading...</em>
+      </div>
+    </div>
+
+    <script>
+      const createForm = document.getElementById('createForm');
+      const createBtn = document.getElementById('createBtn');
+      const createResult = document.getElementById('createResult');
+      const identityList = document.getElementById('identityList');
+      const refreshBtn = document.getElementById('refreshBtn');
+
+      // Create identity
+      createForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        createBtn.disabled = true;
+        createBtn.innerHTML = '<span class="spinner"></span>Creating...';
+        createResult.innerHTML = '';
+
+        const name = document.getElementById('name').value.trim();
+        const transferable = document.getElementById('transferable').checked;
+        const publishToWitnesses = document.getElementById('publishToWitnesses').checked;
+
+        try {
+          const res = await fetch('/identity', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name,
+              transferable,
+              publish_to_witnesses: publishToWitnesses
+            })
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            createResult.innerHTML = `<div class="error">Error: ${data.detail || 'Unknown error'}</div>`;
+            return;
+          }
+
+          const identity = data.identity;
+          let html = `<div class="success">
+            <strong>Identity Created Successfully!</strong>
+            <div class="result-field">
+              <strong>Name:</strong>
+              <code>${identity.name}</code>
+            </div>
+            <div class="result-field">
+              <strong>AID (Autonomic Identifier):</strong>
+              <code>${identity.aid}</code>
+            </div>
+            <div class="result-field">
+              <strong>Transferable:</strong>
+              <code>${identity.transferable ? 'Yes' : 'No'}</code>
+            </div>
+            <div class="result-field">
+              <strong>Witnesses:</strong>
+              <code>${identity.witness_count}</code>
+            </div>
+          </div>`;
+
+          if (data.oobi_urls && data.oobi_urls.length > 0) {
+            html += `<div class="card" style="margin-top:1rem;background:#e8f4ff;">
+              <h3 style="margin-top:0;">OOBI URLs</h3>
+              <p style="font-size:0.85rem;color:#666;">Share these URLs for others to discover this identity:</p>`;
+            for (const url of data.oobi_urls) {
+              html += `<div class="oobi-url">
+                <code>${url}</code>
+                <button class="copy-btn" onclick="copyToClipboard('${url}', this)">Copy</button>
+              </div>`;
+            }
+            html += `</div>`;
+          }
+
+          if (data.publish_results && data.publish_results.length > 0) {
+            const successCount = data.publish_results.filter(r => r.success).length;
+            html += `<div class="publish-results">
+              <strong>Witness Publishing:</strong> ${successCount}/${data.publish_results.length} succeeded`;
+            for (const result of data.publish_results) {
+              const cls = result.success ? 'witness-success' : 'witness-fail';
+              const icon = result.success ? '✓' : '✗';
+              html += `<div class="witness-result ${cls}">
+                ${icon} ${result.url}${result.error ? ` (${result.error})` : ''}
+              </div>`;
+            }
+            html += `</div>`;
+          }
+
+          createResult.innerHTML = html;
+          document.getElementById('name').value = '';
+          loadIdentities();
+
+        } catch (err) {
+          createResult.innerHTML = `<div class="error">Network error: ${err.message}</div>`;
+        } finally {
+          createBtn.disabled = false;
+          createBtn.textContent = 'Create Identity';
+        }
+      });
+
+      // Load identities
+      async function loadIdentities() {
+        identityList.innerHTML = '<em>Loading...</em>';
+
+        try {
+          const res = await fetch('/identity');
+          const data = await res.json();
+
+          if (data.count === 0) {
+            identityList.innerHTML = '<em>No identities created yet.</em>';
+            return;
+          }
+
+          let html = '<div class="identity-list">';
+          for (const identity of data.identities) {
+            const badge = identity.transferable
+              ? '<span class="badge badge-transferable">Transferable</span>'
+              : '<span class="badge badge-non-transferable">Non-transferable</span>';
+
+            html += `<div class="identity-item">
+              <h4>${identity.name} ${badge}</h4>
+              <div class="aid">${identity.aid}</div>
+              <div class="identity-meta">
+                <span>Keys: ${identity.key_count}</span>
+                <span>Witnesses: ${identity.witness_count}</span>
+                <span>Seq: ${identity.sequence_number}</span>
+              </div>
+              <button onclick="showOobi('${identity.aid}')" style="margin-top:0.5rem;padding:0.25rem 0.5rem;font-size:0.85rem;background:#17a2b8;">View OOBI URLs</button>
+            </div>`;
+          }
+          html += '</div>';
+          identityList.innerHTML = html;
+
+        } catch (err) {
+          identityList.innerHTML = `<div class="error">Failed to load: ${err.message}</div>`;
+        }
+      }
+
+      // Show OOBI URLs for an identity
+      async function showOobi(aid) {
+        try {
+          const res = await fetch(`/identity/${aid}/oobi`);
+          const data = await res.json();
+
+          let html = '<h4>OOBI URLs for ' + aid.substring(0, 16) + '...</h4>';
+          for (const url of data.oobi_urls) {
+            html += `<div class="oobi-url">
+              <code>${url}</code>
+              <button class="copy-btn" onclick="copyToClipboard('${url}', this)">Copy</button>
+            </div>`;
+          }
+
+          const modal = document.createElement('div');
+          modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;z-index:1000;';
+          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;max-height:80vh;overflow:auto;">
+            ${html}
+            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+          </div>`;
+          modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+          document.body.appendChild(modal);
+
+        } catch (err) {
+          alert('Failed to load OOBI URLs: ' + err.message);
+        }
+      }
+
+      // Copy to clipboard
+      function copyToClipboard(text, btn) {
+        navigator.clipboard.writeText(text).then(() => {
+          const orig = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(() => btn.textContent = orig, 1500);
+        });
+      }
+
+      // Refresh button
+      refreshBtn.addEventListener('click', loadIdentities);
+
+      // Initial load
+      loadIdentities();
+    </script>
+  </body>
+</html>

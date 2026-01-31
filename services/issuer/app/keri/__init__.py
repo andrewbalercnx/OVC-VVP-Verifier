@@ -1,0 +1,1 @@
+"""VVP Issuer KERI integration."""

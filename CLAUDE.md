@@ -14,11 +14,20 @@ VVP/
 │       ├── schema/             # Schema registry, validation
 │       └── utils/              # Shared utilities
 ├── services/
-│   └── verifier/               # VVP Verifier service
+│   ├── verifier/               # VVP Verifier service
+│   │   ├── app/                # FastAPI application
+│   │   ├── tests/              # Test suite
+│   │   ├── scripts/            # Service scripts
+│   │   ├── web/                # Static assets
+│   │   ├── pyproject.toml      # Service dependencies
+│   │   └── Dockerfile          # Container definition
+│   └── issuer/                 # VVP Issuer service (Sprint 28+)
 │       ├── app/                # FastAPI application
+│       │   ├── api/            # API routers (health, identity)
+│       │   └── keri/           # KERI integration (identity, witness)
 │       ├── tests/              # Test suite
-│       ├── scripts/            # Service scripts
-│       ├── web/                # Static assets
+│       ├── web/                # Static assets (/create UI)
+│       ├── config/             # witnesses.json
 │       ├── pyproject.toml      # Service dependencies
 │       └── Dockerfile          # Container definition
 ├── keripy/                     # Vendored KERI library
@@ -35,10 +44,12 @@ The following commands are pre-authorized and do not require user confirmation:
 - `gh` - All GitHub CLI operations (run watch, pr create, issue, etc.)
 - `./scripts/*` - All scripts (root wrappers and service scripts)
 - `./services/verifier/scripts/*` - Verifier service scripts
+- `./services/issuer/scripts/*` - Issuer service scripts
 - `pytest` - Run tests directly
 - `python3` / `pip3` - Python execution and package management
 - `curl` - HTTP requests for deployment verification
 - `uvicorn` - Running the development server
+- `docker` / `docker-compose` - Container operations (build, up, down, logs)
 
 All test-related commands are pre-authorized.
 
@@ -50,8 +61,12 @@ When the user says "Complete", immediately perform all of the following without 
 
 1. **Commit all changes** - Stage all modified/new files and create a descriptive commit
 2. **Push to main** - Push the commit to the main branch
-3. **Restart local server** - Run `./scripts/restart-server.sh`
-4. **Monitor Azure deployment** - Run `./scripts/monitor-azure-deploy.sh` to watch for successful deployment
+3. **Build Docker images (if needed)** - If changes include Dockerfile or service code:
+   - Check if any `services/*/Dockerfile` files were modified or created
+   - If so, run `docker-compose --profile full build <service>` for affected services
+   - For new services, this ensures the image exists for local testing
+4. **Restart local server** - Run `./scripts/restart-server.sh`
+5. **Monitor Azure deployment** - Run `./scripts/monitor-azure-deploy.sh` to watch for successful deployment
 
 Do not ask for confirmation - execute all steps automatically.
 

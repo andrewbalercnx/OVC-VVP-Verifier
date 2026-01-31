@@ -70,28 +70,34 @@ services:
       - full
 
   # ===========================================================================
-  # VVP Issuer (placeholder for Sprint 28)
+  # VVP Issuer (Sprint 28)
   # ===========================================================================
-  # Uncomment when issuer service is implemented
+  # Start with: docker-compose --profile full up
 
-  # issuer:
-  #   build:
-  #     context: .
-  #     dockerfile: services/issuer/Dockerfile
-  #   container_name: vvp-issuer
-  #   ports:
-  #     - "8001:8001"
-  #   volumes:
-  #     - issuer-data:/data/vvp-issuer
-  #   environment:
-  #     - VVP_WITNESS_CONFIG=/app/config/witnesses.json
-  #   depends_on:
-  #     witnesses:
-  #       condition: service_healthy
-  #   networks:
-  #     - vvp-network
-  #   profiles:
-  #     - full
+  issuer:
+    build:
+      context: .
+      dockerfile: services/issuer/Dockerfile
+    container_name: vvp-issuer
+    ports:
+      - "8001:8001"
+    volumes:
+      - issuer-data:/data/vvp-issuer
+      - ./services/issuer/config:/srv/config:ro
+    environment:
+      - VVP_WITNESS_CONFIG=/srv/config/witnesses.json
+    depends_on:
+      witnesses:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - vvp-network
+    profiles:
+      - full
 
 networks:
   vvp-network:
@@ -100,4 +106,4 @@ networks:
 
 volumes:
   witness-data:
-  # issuer-data:  # Uncomment in Sprint 28
+  issuer-data:
