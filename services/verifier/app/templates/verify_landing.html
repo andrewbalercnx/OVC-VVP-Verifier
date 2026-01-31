@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Verification - VVP{% endblock %}
+
+{% block header %}Verification{% endblock %}
+
+{% block content %}
+<section>
+    <p class="lead">
+        VVP verification validates the cryptographic chain of trust from a PASSporT token
+        through its credential dossier to trusted root authorities.
+    </p>
+</section>
+
+<section>
+    <h2>Verification Modes</h2>
+    <div class="grid">
+        <article>
+            <header><strong>Simple Verification</strong></header>
+            <p>
+                One-click verification with a visual credential graph.
+                Paste a PASSporT JWT and see the complete trust chain.
+            </p>
+            <footer>
+                <a href="/verify/simple" role="button">Try simple verification</a>
+            </footer>
+        </article>
+        <article>
+            <header><strong>Full Verification</strong></header>
+            <p>
+                Step-by-step exploration of PASSporTs, SIP headers, and dossiers.
+                Inspect each credential individually with detailed validation results.
+            </p>
+            <footer>
+                <a href="/verify/full" role="button" class="secondary">Open full explorer</a>
+            </footer>
+        </article>
+    </div>
+</section>
+
+<section>
+    <h2>What Gets Verified</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Check</th>
+                <th>Spec Reference</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Signature</td>
+                <td>SS5.0, SS5.1</td>
+                <td>EdDSA (Ed25519) signature on the PASSporT JWT</td>
+            </tr>
+            <tr>
+                <td>Temporal</td>
+                <td>SS5.2A</td>
+                <td>iat drift (max 5s), validity window (max 300s)</td>
+            </tr>
+            <tr>
+                <td>Phone Numbers</td>
+                <td>SS4.2</td>
+                <td>E.164 format validation for orig.tn and dest.tn</td>
+            </tr>
+            <tr>
+                <td>Credential Chain</td>
+                <td>SS5.1.1</td>
+                <td>ACDC signatures, edge relationships, trusted roots</td>
+            </tr>
+            <tr>
+                <td>Revocation</td>
+                <td>SS5.1.1-2.9</td>
+                <td>TEL (Transaction Event Log) status for each credential</td>
+            </tr>
+            <tr>
+                <td>Schema</td>
+                <td>SS6.3</td>
+                <td>vLEI schema compliance for credential attributes</td>
+            </tr>
+        </tbody>
+    </table>
+</section>
+
+<section>
+    <h2>API Endpoints</h2>
+    <dl>
+        <dt><code>POST /verify</code></dt>
+        <dd>Primary verification endpoint. Accepts <code>VerifyRequest</code> with passport_jwt and context.</dd>
+
+        <dt><code>POST /verify-callee</code></dt>
+        <dd>Callee verification per VVP SS5B. Requires VVP-Identity header and call context.</dd>
+
+        <dt><code>POST /check-revocation</code></dt>
+        <dd>Check revocation status for a single credential SAID.</dd>
+    </dl>
+</section>
+
+<nav>
+    <a href="/">&larr; Back to home</a>
+</nav>
+{% endblock %}

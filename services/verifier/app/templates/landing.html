@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}VVP - Verifiable Voice Protocol{% endblock %}
+
+{% block header %}VVP{% endblock %}
+
+{% block content %}
+<section>
+    <p class="lead">
+        <strong>Verifiable Voice Protocol (VVP)</strong> is a cryptographic framework for establishing
+        trust in voice communications. It enables verifiable caller identity using KERI-based
+        credentials and PASSporT tokens.
+    </p>
+</section>
+
+<section>
+    <h2>What We Do</h2>
+    <div class="grid">
+        <article>
+            <header><strong>Verify Identities</strong></header>
+            <p>
+                Validate PASSporT tokens and their associated credential chains.
+                Confirm that callers are who they claim to be using cryptographic proofs.
+            </p>
+            <a href="/verify" role="button" class="outline">Learn about verification</a>
+        </article>
+        <article>
+            <header><strong>Create Dossiers</strong></header>
+            <p>
+                Issue and assemble ACDC credentials into dossiers that prove organizational
+                identity, role assignments, and telephone number allocations.
+            </p>
+            <a href="/create" role="button" class="outline">Learn about creation</a>
+        </article>
+    </div>
+</section>
+
+<section>
+    <h2>Key Concepts</h2>
+    <dl>
+        <dt><strong>PASSporT</strong></dt>
+        <dd>A signed JSON Web Token (JWT) containing caller and callee identities,
+            with an evidence URL pointing to the credential dossier.</dd>
+
+        <dt><strong>ACDC</strong></dt>
+        <dd>Authentic Chained Data Container - a KERI credential format that supports
+            cryptographic binding, selective disclosure, and revocation.</dd>
+
+        <dt><strong>Dossier</strong></dt>
+        <dd>A bundle of ACDC credentials forming a trust chain from trusted roots
+            (like GLEIF) to the entity making the call.</dd>
+
+        <dt><strong>KERI</strong></dt>
+        <dd>Key Event Receipt Infrastructure - a decentralized key management system
+            providing secure identifier rotation and delegation.</dd>
+    </dl>
+</section>
+
+<section>
+    <h2>Quick Links</h2>
+    <nav>
+        <ul>
+            <li><a href="/verify/simple">Simple verification (one-click)</a></li>
+            <li><a href="/verify/full">Full verification explorer</a></li>
+            <li><a href="/healthz">Service health check</a></li>
+            <li><a href="/admin">Admin configuration</a></li>
+        </ul>
+    </nav>
+</section>
+{% endblock %}

@@ -1,4 +1,31 @@
-# VVP Verifier - Claude Code Instructions
+# VVP Monorepo - Claude Code Instructions
+
+## Repository Structure
+
+This is a monorepo with shared code and separate services:
+
+```
+VVP/
+├── common/                     # Shared code (installed as package)
+│   └── vvp/
+│       ├── core/               # config, exceptions, logging
+│       ├── models/             # ACDC, dossier data models
+│       ├── canonical/          # KERI/CESR serialization
+│       ├── schema/             # Schema registry, validation
+│       └── utils/              # Shared utilities
+├── services/
+│   └── verifier/               # VVP Verifier service
+│       ├── app/                # FastAPI application
+│       ├── tests/              # Test suite
+│       ├── scripts/            # Service scripts
+│       ├── web/                # Static assets
+│       ├── pyproject.toml      # Service dependencies
+│       └── Dockerfile          # Container definition
+├── keripy/                     # Vendored KERI library
+├── scripts/                    # Root convenience wrappers
+├── pyproject.toml              # Workspace definition
+└── CLAUDE.md                   # This file
+```
 
 ## Permissions
 
@@ -6,7 +33,8 @@ The following commands are pre-authorized and do not require user confirmation:
 
 - `git` - All git operations (add, commit, push, status, log, diff, etc.)
 - `gh` - All GitHub CLI operations (run watch, pr create, issue, etc.)
-- `./scripts/*` - All scripts in the scripts directory (run-tests.sh, restart-server.sh, monitor-azure-deploy.sh, etc.)
+- `./scripts/*` - All scripts (root wrappers and service scripts)
+- `./services/verifier/scripts/*` - Verifier service scripts
 - `pytest` - Run tests directly
 - `python3` / `pip3` - Python execution and package management
 - `curl` - HTTP requests for deployment verification
@@ -32,11 +60,16 @@ Do not ask for confirmation - execute all steps automatically.
 **Always use the test runner script** - it handles libsodium library paths automatically:
 
 ```bash
+# From repo root (uses wrapper scripts):
 ./scripts/run-tests.sh                          # Run all tests
 ./scripts/run-tests.sh -v                       # Verbose output
 ./scripts/run-tests.sh tests/test_signature.py  # Run specific file
 ./scripts/run-tests.sh -k "test_format"         # Run tests matching pattern
 ./scripts/run-tests.sh --cov=app --cov-report=term-missing  # With coverage
+
+# Or from service directory:
+cd services/verifier
+./scripts/run-tests.sh -v
 ```
 
 ### Troubleshooting libsodium
@@ -46,7 +79,7 @@ If tests fail with libsodium errors, verify the library is installed:
 brew --prefix libsodium  # Should show: /opt/homebrew/opt/libsodium
 ```
 
-The test script sets `DYLD_LIBRARY_PATH="/opt/homebrew/lib"` automatically. If libsodium is installed elsewhere, update the path in `scripts/run-tests.sh`.
+The test script sets `DYLD_LIBRARY_PATH="/opt/homebrew/lib"` automatically. If libsodium is installed elsewhere, update the path in `services/verifier/scripts/run-tests.sh`.
 
 ## Pair Programming Workflow
 
@@ -65,10 +98,10 @@ This project uses a formal two-agent workflow with an **Editor** (implementing a
 |------|---------|-------|
 | Claude plan mode file | Current phase design with rationale | Editor |
 | `REVIEW.md` | Reviewer feedback on plans and code | Reviewer |
-| `app/Documentation/PLAN_PhaseN.md` | Archive of accepted plans | Both |
+| `services/verifier/app/Documentation/PLAN_PhaseN.md` | Archive of accepted plans | Both |
 | `CHANGES.md` | Change log with commit SHAs | Both |
 
-**Note:** Plans are now written using Claude Code's built-in plan mode rather than a separate `PLAN.md` file. The plan content is stored at `~/.claude/plans/` and archived to `app/Documentation/` after approval.
+**Note:** Plans are now written using Claude Code's built-in plan mode rather than a separate `PLAN.md` file. The plan content is stored at `~/.claude/plans/` and archived to `services/verifier/app/Documentation/` after approval.
 
 ---
 
@@ -309,7 +342,7 @@ RESPONSE FORMAT - Write to REVIEW.md with this structure:
 #### Step 3.1: Archive the Plan
 
 Move accepted plan to documentation:
-1. Copy `PLAN.md` to `app/Documentation/PLAN_PhaseN.md`
+1. Copy `PLAN.md` to `services/verifier/app/Documentation/PLAN_PhaseN.md`
 2. Include implementation notes and review history
 3. Update `CHANGES.md` with phase summary
 
@@ -350,8 +383,8 @@ At the end of every major phase of work:
 
 ## Specification Reference
 
-- Authoritative spec: `app/Documentation/VVP_Verifier_Specification_v1.5.md` (also v1.4_FINAL.md for reference)
-- Implementation checklist: `app/Documentation/VVP_Implementation_Checklist.md`
+- Authoritative spec: `services/verifier/app/Documentation/VVP_Verifier_Specification_v1.5.md` (also v1.4_FINAL.md for reference)
+- Implementation checklist: `services/verifier/app/Documentation/VVP_Implementation_Checklist.md`
 
 ## CI/CD
 
@@ -385,57 +418,38 @@ At the end of every major phase of work:
 ## Project Structure
 
 ```
-app/
-├── core/
-│   ├── __init__.py
-│   └── config.py            # Configuration (TRUSTED_ROOT_AIDS, etc.)
-├── vvp/
-│   ├── __init__.py
-│   ├── api_models.py        # Pydantic models, ErrorCode enum
-│   ├── exceptions.py        # VVPIdentityError, PassportError
-│   ├── header.py            # VVP-Identity parser
-│   ├── passport.py          # PASSporT JWT parser
-│   ├── verify.py            # Main verification flow (Tier 1 & 2)
-│   ├── keri/                # KERI integration
-│   │   ├── __init__.py
-│   │   ├── cache.py         # Key state caching
-│   │   ├── cesr.py          # CESR encoding/decoding (PSS signatures)
-│   │   ├── exceptions.py    # KeriError, SignatureInvalidError
-│   │   ├── kel_parser.py    # KEL event parsing, witness validation
-│   │   ├── kel_resolver.py  # Key state resolution via OOBI
-│   │   ├── keri_canonical.py # Canonical KERI serialization
-│   │   ├── key_parser.py    # parse_kid_to_verkey
-│   │   ├── oobi.py          # OOBI dereferencing
-│   │   ├── signature.py     # Signature verification
-│   │   └── tel_client.py    # TEL (revocation) client
-│   ├── acdc/                # ACDC credential handling (Phase 10)
-│   │   ├── __init__.py
-│   │   ├── exceptions.py    # ACDCChainInvalid, ACDCSignatureInvalid
-│   │   ├── graph.py         # Credential graph traversal
-│   │   ├── models.py        # ACDC data model
-│   │   ├── parser.py        # ACDC parsing, SAID validation
-│   │   └── verifier.py      # Chain validation, credential type rules
-│   └── dossier/             # Dossier handling
-│       ├── __init__.py
-│       ├── exceptions.py    # DossierError
-│       ├── fetch.py         # Dossier fetching
-│       ├── models.py        # DossierDAG, DossierNode
-│       ├── parser.py        # Dossier parsing, CESR extraction
-│       └── validator.py     # DAG validation
-├── main.py                  # FastAPI application
-└── Documentation/
-    ├── VVP_Verifier_Specification_v1.5.md
-    ├── VVP_Implementation_Checklist.md
-    └── PLAN_PhaseN.md       # Archived plans
-tests/
-├── __init__.py
-├── test_acdc.py             # ACDC chain validation tests
-├── test_cesr_pss.py         # PSS CESR decoding tests
-├── test_dossier.py          # Dossier parsing tests
-├── test_kel_*.py            # KEL parsing/chain/cache tests
-├── test_passport.py         # PASSporT parsing tests
-├── test_signature.py        # Signature verification tests
-├── test_verify.py           # Integration tests
-├── test_witness_validation.py # Witness signature tests
-└── vectors/                 # Test vector framework
+VVP/
+├── common/                          # Shared code (pip install -e common/)
+│   └── vvp/
+│       ├── core/                    # logging, exceptions
+│       ├── models/                  # ACDC, Dossier data models
+│       ├── canonical/               # keri_canonical, cesr, parser, said
+│       ├── schema/                  # registry, store, validator
+│       └── utils/                   # tn_utils
+├── services/
+│   └── verifier/
+│       ├── app/
+│       │   ├── core/
+│       │   │   └── config.py        # Configuration (TRUSTED_ROOT_AIDS, etc.)
+│       │   ├── vvp/
+│       │   │   ├── api_models.py    # Pydantic models, ErrorCode enum
+│       │   │   ├── exceptions.py    # VVPIdentityError, PassportError
+│       │   │   ├── header.py        # VVP-Identity parser
+│       │   │   ├── passport.py      # PASSporT JWT parser
+│       │   │   ├── verify.py        # Main verification flow
+│       │   │   ├── keri/            # KERI integration
+│       │   │   ├── acdc/            # ACDC credential handling
+│       │   │   └── dossier/         # Dossier handling
+│       │   ├── main.py              # FastAPI application
+│       │   └── Documentation/       # Specs, checklists, archived plans
+│       ├── tests/                   # Test suite
+│       ├── scripts/                 # Service scripts
+│       ├── web/                     # Static assets
+│       ├── pyproject.toml           # Service dependencies
+│       ├── pytest.ini               # Test configuration
+│       └── Dockerfile               # Container definition
+├── keripy/                          # Vendored KERI library
+├── scripts/                         # Root convenience wrappers
+├── pyproject.toml                   # Workspace definition
+└── .github/workflows/deploy.yml     # CI/CD pipeline
 ```

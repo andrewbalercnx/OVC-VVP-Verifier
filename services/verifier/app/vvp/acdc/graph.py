@@ -265,6 +265,7 @@ def _get_root_display_name(aid: str) -> str:
     """Get display name for a trusted root AID."""
     # Known roots
     known_roots = {
+        "EDP1vHcw_wc4M__Fj53-cJaBnZZASd-aMTaSyWEQ-PC2": "GLEIF Root",
         "EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao": "GLEIF External",
     }
     return known_roots.get(aid, f"Trusted Root: {aid[:16]}...")

@@ -11,6 +11,9 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/verifier
 
     steps:
       - name: Checkout
@@ -22,11 +25,16 @@ jobs:
           python-version: '3.12'
 
       - name: Install libsodium
+        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y libsodium-dev
           # Verify libsodium is properly installed
           ldconfig -p | grep libsodium || echo "libsodium found in apt paths"
+
+      - name: Install common package
+        working-directory: common
+        run: pip install -e .
 
       - name: Install dependencies
         run: |
@@ -43,7 +51,7 @@ jobs:
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
-          file: coverage.xml
+          file: services/verifier/coverage.xml
         continue-on-error: true
 
   build-and-deploy:
@@ -69,7 +77,7 @@ jobs:
         run: |
           IMAGE="${{ secrets.ACR_LOGIN_SERVER }}/vvp-verifier:${{ github.sha }}"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-          docker build -t "$IMAGE" .
+          docker build -t "$IMAGE" -f services/verifier/Dockerfile .
           docker push "$IMAGE"
 
       - name: Deploy new revision
@@ -78,4 +86,5 @@ jobs:
             --resource-group "${{ secrets.AZURE_RG }}" \
             --name "${{ secrets.AZURE_CONTAINERAPP_NAME }}" \
             --image "$IMAGE" \
+            --min-replicas 1 \
             --set-env-vars "GIT_SHA=${{ github.sha }}"

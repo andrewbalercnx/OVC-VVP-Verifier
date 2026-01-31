@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -40,9 +40,37 @@ templates = Jinja2Templates(directory=str(templates_dir))
 app.mount("/static", StaticFiles(directory="web"), name="static")
 
 @app.get("/")
-def index(request: Request):
-    """Serve the main verification page using HTMX templates."""
+def landing(request: Request):
+    """Serve the main landing page describing VVP."""
+    return templates.TemplateResponse("landing.html", {"request": request})
+
+
+@app.get("/verify/")
+def verify_landing(request: Request):
+    """Serve the verification landing page with mode descriptions."""
+    return templates.TemplateResponse("verify_landing.html", {"request": request})
+
+
+@app.get("/verify/full")
+def verify_full(request: Request):
+    """Serve the full verification explorer page using HTMX templates."""
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/verify/simple")
+def verify_simple(request: Request):
+    """Serve the simple verification page with single-step workflow."""
+    return templates.TemplateResponse("simple.html", {
+        "request": request,
+        "default_jwt": DEFAULT_TEST_JWT,
+    })
+
+
+@app.get("/create")
+def create_landing(request: Request):
+    """Serve the dossier creation landing page."""
+    return templates.TemplateResponse("create_landing.html", {"request": request})
+
 
 @app.get("/healthz")
 def healthz():
@@ -1655,12 +1683,9 @@ async def ui_credential_card(
 
 
 @app.get("/simple")
-def simple_page(request: Request):
-    """Serve the simple verification page with single-step workflow."""
-    return templates.TemplateResponse("simple.html", {
-        "request": request,
-        "default_jwt": DEFAULT_TEST_JWT,
-    })
+def simple_redirect():
+    """Redirect /simple to /verify/simple for backwards compatibility."""
+    return RedirectResponse(url="/verify/simple", status_code=301)
 
 
 @app.post("/ui/simple-verify")

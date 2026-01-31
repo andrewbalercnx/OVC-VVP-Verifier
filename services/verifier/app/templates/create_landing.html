@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}Dossier Creation - VVP{% endblock %}
+
+{% block header %}Dossier Creation{% endblock %}
+
+{% block content %}
+<section>
+    <p class="lead">
+        Create verifiable credential dossiers that prove organizational identity,
+        role assignments, and telephone number allocations for VVP-authenticated calls.
+    </p>
+</section>
+
+<section>
+    <h2>Coming Soon</h2>
+    <p>
+        The VVP Issuer service is under development. When complete, it will support:
+    </p>
+    <ul>
+        <li><strong>Identity Management</strong> - Create and manage KERI identifiers with witness backing</li>
+        <li><strong>Credential Registry</strong> - Issue and revoke ACDC credentials via TEL</li>
+        <li><strong>vLEI Credentials</strong> - Legal Entity, Authorized Public Entity, and Designated Entity credentials</li>
+        <li><strong>TN Allocation</strong> - Telephone number allocation credentials for caller authentication</li>
+        <li><strong>Dossier Assembly</strong> - Bundle credentials into verifiable dossiers</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Credential Types</h2>
+    <div class="grid">
+        <article>
+            <header>
+                <span class="badge badge-le">LE</span>
+                <strong>Legal Entity</strong>
+            </header>
+            <p>Root credential binding an LEI to a KERI identifier. Issued by GLEIF-authorized vLEI issuers.</p>
+        </article>
+        <article>
+            <header>
+                <span class="badge badge-ape">APE</span>
+                <strong>Authorized Public Entity</strong>
+            </header>
+            <p>Role authorization within an organization. Enables delegation of signing authority.</p>
+        </article>
+        <article>
+            <header>
+                <span class="badge badge-tnalloc">TN</span>
+                <strong>TN Allocation</strong>
+            </header>
+            <p>Telephone number allocation credential. Proves rights to originate calls from specific numbers.</p>
+        </article>
+    </div>
+</section>
+
+<section>
+    <h2>Architecture</h2>
+    <p>
+        The issuer service uses KERI primitives from keripy:
+    </p>
+    <dl>
+        <dt><strong>Habery</strong></dt>
+        <dd>Identity management with key rotation support</dd>
+
+        <dt><strong>Regery</strong></dt>
+        <dd>Credential registry for issuance and revocation tracking</dd>
+
+        <dt><strong>Witnesses</strong></dt>
+        <dd>Distributed receipts for key event and TEL anchoring</dd>
+    </dl>
+</section>
+
+<nav>
+    <a href="/">&larr; Back to home</a>
+</nav>
+{% endblock %}
