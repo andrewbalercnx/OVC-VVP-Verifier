@@ -55,6 +55,46 @@ When the user says "Complete", immediately perform all of the following without 
 
 Do not ask for confirmation - execute all steps automatically.
 
+### "Sprint N"
+
+When the user says "Sprint N" (e.g., "Sprint 27"), begin pair programming on that sprint by following these steps:
+
+1. **Read sprint details** - Read `SPRINTS.md` to get the sprint's:
+   - Goal and deliverables
+   - Key files to create/modify
+   - Technical notes and dependencies
+   - Exit criteria
+
+2. **Read architectural context** - If the sprint involves the issuer service, read the plan file which contains:
+   - Architectural decisions (hybrid infrastructure, separate services, monorepo structure)
+   - Phase breakdown with detailed designs
+   - Risk assessment and mitigations
+
+3. **Enter plan mode** - Use Claude's built-in plan mode to:
+   - Draft a detailed implementation plan based on sprint deliverables
+   - Include specific file paths, code structure, and test strategy
+   - Address any dependencies from previous sprints
+
+4. **Follow pair programming workflow** - As defined in the "Pair Programming Workflow" section:
+   - Draft plan with sufficient detail for review
+   - Request plan review from user (they may copy to a Reviewer agent)
+   - Iterate until APPROVED
+   - Implement according to plan
+   - Request code review
+   - Archive completed plan
+
+**Sprint Definitions:** See `SPRINTS.md` for the full sprint roadmap (Sprints 1-25 were verifier implementation, Sprints 26+ are issuer implementation).
+
+**Example workflow:**
+```
+User: Sprint 27
+Agent: [Reads SPRINTS.md for Sprint 27 details]
+Agent: [Enters plan mode]
+Agent: [Drafts implementation plan for Local Witness Infrastructure]
+Agent: [Requests plan review]
+... pair programming cycle continues ...
+```
+
 ## Running Tests
 
 **Always use the test runner script** - it handles libsodium library paths automatically:
@@ -386,6 +426,12 @@ At the end of every major phase of work:
 - Authoritative spec: `services/verifier/app/Documentation/VVP_Verifier_Specification_v1.5.md` (also v1.4_FINAL.md for reference)
 - Implementation checklist: `services/verifier/app/Documentation/VVP_Implementation_Checklist.md`
 
+## Sprint Planning
+
+- **Sprint roadmap:** `SPRINTS.md` - Defines all sprints with goals, deliverables, exit criteria
+- **Archived verifier sprints:** `services/verifier/app/Documentation/archive/PLAN_Sprint*.md` (Sprints 1-25)
+- **Issuer sprints:** 26-33 (defined in `SPRINTS.md`)
+
 ## CI/CD
 
 - Push to `main` triggers deployment to Azure Container Apps
@@ -451,5 +497,8 @@ VVP/
 ├── keripy/                          # Vendored KERI library
 ├── scripts/                         # Root convenience wrappers
 ├── pyproject.toml                   # Workspace definition
+├── SPRINTS.md                       # Sprint roadmap (say "Sprint N" to start)
+├── CHANGES.md                       # Change log with commit SHAs
+├── REVIEW.md                        # Reviewer feedback during pair programming
 └── .github/workflows/deploy.yml     # CI/CD pipeline
 ```
