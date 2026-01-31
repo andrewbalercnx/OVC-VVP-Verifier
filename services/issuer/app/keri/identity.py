@@ -123,6 +123,11 @@ class IssuerIdentityManager:
         """
         return self.hby
 
+    @property
+    def temp(self) -> bool:
+        """Whether using temporary storage (for testing)."""
+        return self._temp
+
     async def create_identity(
         self,
         name: str,

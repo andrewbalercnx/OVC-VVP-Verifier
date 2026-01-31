@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from app.config import DATA_DIR
+from app import config
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +25,8 @@ class PersistenceManager:
         Args:
             base_dir: Override base directory (for testing)
         """
-        self._base_dir = base_dir or DATA_DIR
+        # Access config.DATA_DIR dynamically to pick up reloaded values
+        self._base_dir = base_dir or config.DATA_DIR
         self._initialized = False
 
     def initialize(self) -> None:

@@ -31,6 +31,7 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 - [x] Update CI/CD for monorepo paths
 - [x] Add root convenience scripts
 - [x] Restructure UI routes (`/`, `/verify`, `/create`)
+- [x] Consider UI functionality needed to expose this sprint's capabilities
 
 **Commits:** `0b7d5fa`, `60df06e`, `b7ba9a3`
 
@@ -46,6 +47,7 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 - [x] Witness configuration in `services/issuer/config/witnesses.json`
 - [x] Verify witnesses respond to OOBI requests
 - [x] Verify verifier can resolve AIDs via local witnesses
+- [x] Consider UI functionality needed to expose this sprint's capabilities
 
 **Commits:** `7f18a94`
 
@@ -83,6 +85,7 @@ services/issuer/config/witnesses.json
 - [x] OOBI publishing to witnesses (events accepted by all 3 witnesses)
 - [x] Dockerfile for issuer service
 - [x] Integration tests for witness publishing
+- [x] Consider UI functionality needed to expose this sprint's capabilities
 
 **Commits:** `ee47606`, `65f3033`
 
@@ -137,6 +140,7 @@ services/issuer/
 - [ ] Registry creation API (`POST /registry`)
 - [ ] Schema registry integration from `common/vvp/schema/`
 - [ ] Witness receipt anchoring for registry events
+- [ ] Consider UI functionality needed to expose this sprint's capabilities
 
 **Key Files:**
 ```
@@ -181,6 +185,7 @@ services/issuer/app/
 - [ ] Role-based authorization (admin, operator, readonly)
 - [ ] Audit logging for all issuance operations
 - [ ] Network isolation configuration (issuer internal-only)
+- [ ] Consider UI functionality needed to expose this sprint's capabilities
 
 **Key Files:**
 ```
@@ -227,6 +232,7 @@ services/issuer/app/
 - [ ] TEL issuance event (iss) anchoring
 - [ ] Witness receipt collection
 - [ ] Revocation API
+- [ ] Consider UI functionality needed to expose this sprint's capabilities
 
 **Key Files:**
 ```
@@ -276,6 +282,7 @@ services/issuer/app/
 - [ ] JSON+CESR hybrid format
 - [ ] Edge resolution (walk credential chain)
 - [ ] TEL event inclusion
+- [ ] Consider UI functionality needed to expose this sprint's capabilities
 
 **Key Files:**
 ```
@@ -311,6 +318,7 @@ services/issuer/app/
 - [ ] Key Vault integration for API keys
 - [ ] CI/CD pipeline updates
 - [ ] Backup/restore procedures
+- [ ] Consider UI functionality needed to expose this sprint's capabilities
 
 **Infrastructure:**
 | Component | Azure Service |

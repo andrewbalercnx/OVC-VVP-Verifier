@@ -1,0 +1,364 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>VVP Issuer - Schema Browser</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        margin: 0;
+        padding: 2rem;
+        max-width: 900px;
+        background: #f8f9fa;
+      }
+      h1 { color: #2c3e50; margin-bottom: 0.5rem; }
+      .subtitle { color: #666; margin-bottom: 2rem; }
+      .nav-links {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+      }
+      .nav-links a {
+        color: #3498db;
+        text-decoration: none;
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        background: white;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+      }
+      .nav-links a:hover { background: #e8f4ff; }
+      .nav-links a.active {
+        background: #3498db;
+        color: white;
+      }
+      .card {
+        background: white;
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      .card h2 { margin-top: 0; color: #34495e; }
+      label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
+      input[type="text"], select {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 1rem;
+        box-sizing: border-box;
+      }
+      input[type="text"]:focus, select:focus {
+        outline: none;
+        border-color: #3498db;
+        box-shadow: 0 0 0 2px rgba(52,152,219,0.2);
+      }
+      button {
+        background: #3498db;
+        color: white;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 4px;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button:hover { background: #2980b9; }
+      button:disabled { background: #bdc3c7; cursor: not-allowed; }
+      .success {
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+        padding: 1rem;
+        border-radius: 4px;
+        margin-top: 1rem;
+      }
+      .error {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+        padding: 1rem;
+        border-radius: 4px;
+        margin-top: 1rem;
+      }
+      .schema-list {
+        display: grid;
+        gap: 1rem;
+      }
+      .schema-item {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 1rem;
+      }
+      .schema-item h4 { margin: 0 0 0.5rem 0; color: #2c3e50; }
+      .schema-item .said {
+        font-family: monospace;
+        font-size: 0.85rem;
+        color: #6c757d;
+        word-break: break-all;
+        margin-bottom: 0.5rem;
+      }
+      .schema-item .description {
+        font-size: 0.9rem;
+        color: #555;
+        margin-bottom: 0.5rem;
+      }
+      .badge {
+        display: inline-block;
+        padding: 0.125rem 0.5rem;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        background: #e2e3e5;
+        color: #383d41;
+        margin-right: 0.5rem;
+      }
+      .badge-type { background: #cce5ff; color: #004085; }
+      .loading { opacity: 0.6; pointer-events: none; }
+      .spinner {
+        display: inline-block;
+        width: 1rem;
+        height: 1rem;
+        border: 2px solid #fff;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-right: 0.5rem;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .validate-form {
+        display: flex;
+        gap: 0.5rem;
+        align-items: flex-end;
+      }
+      .validate-form .input-group { flex: 1; }
+      .validate-form select { width: auto; min-width: 150px; }
+      .validate-result {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        border-radius: 4px;
+      }
+      .validate-valid {
+        background: #d4edda;
+        color: #155724;
+      }
+      .validate-invalid {
+        background: #f8d7da;
+        color: #721c24;
+      }
+      .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+      }
+      .modal-content {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 8px;
+        max-width: 800px;
+        max-height: 80vh;
+        overflow: auto;
+        width: 90%;
+      }
+      .modal-content h3 { margin-top: 0; }
+      .modal-content pre {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 4px;
+        overflow-x: auto;
+        font-size: 0.85rem;
+        line-height: 1.5;
+      }
+      .view-btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.85rem;
+        background: #17a2b8;
+        margin-top: 0.5rem;
+      }
+      .view-btn:hover { background: #138496; }
+    </style>
+  </head>
+  <body>
+    <h1>VVP Issuer</h1>
+    <p class="subtitle">Browse available credential schemas</p>
+
+    <nav class="nav-links">
+      <a href="/create">Identities</a>
+      <a href="/registry/ui">Registries</a>
+      <a href="/schemas/ui" class="active">Schemas</a>
+    </nav>
+
+    <div class="card">
+      <h2>Validate Schema SAID</h2>
+      <form id="validateForm" class="validate-form">
+        <div class="input-group">
+          <label for="said">Schema SAID</label>
+          <input type="text" id="said" name="said" placeholder="e.g., ENPXp1vQzRF6JwIuS..." required>
+        </div>
+        <div>
+          <label for="credentialType">Credential Type</label>
+          <select id="credentialType" name="credentialType">
+            <option value="LE">Legal Entity (LE)</option>
+            <option value="OOR">OOR Authority</option>
+            <option value="ECR">Engagement Context Role</option>
+          </select>
+        </div>
+        <button type="submit" id="validateBtn">Validate</button>
+      </form>
+      <div id="validateResult"></div>
+    </div>
+
+    <div class="card">
+      <h2>Available Schemas</h2>
+      <button id="refreshBtn" style="margin-bottom: 1rem; background: #6c757d;">Refresh List</button>
+      <div id="schemaList">
+        <em>Loading...</em>
+      </div>
+    </div>
+
+    <script>
+      const validateForm = document.getElementById('validateForm');
+      const validateBtn = document.getElementById('validateBtn');
+      const validateResult = document.getElementById('validateResult');
+      const schemaList = document.getElementById('schemaList');
+      const refreshBtn = document.getElementById('refreshBtn');
+
+      // Validate SAID
+      validateForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        validateBtn.disabled = true;
+        validateBtn.innerHTML = '<span class="spinner"></span>Validating...';
+        validateResult.innerHTML = '';
+
+        const said = document.getElementById('said').value.trim();
+        const credentialType = document.getElementById('credentialType').value;
+
+        try {
+          const res = await fetch('/schema/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              said: said,
+              credential_type: credentialType
+            })
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            validateResult.innerHTML = `<div class="validate-result validate-invalid">Error: ${data.detail || 'Unknown error'}</div>`;
+            return;
+          }
+
+          if (data.valid) {
+            validateResult.innerHTML = `<div class="validate-result validate-valid">
+              ✓ Valid schema SAID for ${credentialType} credentials
+              ${data.title ? `<br><strong>Title:</strong> ${data.title}` : ''}
+            </div>`;
+          } else {
+            validateResult.innerHTML = `<div class="validate-result validate-invalid">
+              ✗ ${data.error || 'Schema SAID not recognized'}
+            </div>`;
+          }
+
+        } catch (err) {
+          validateResult.innerHTML = `<div class="validate-result validate-invalid">Network error: ${err.message}</div>`;
+        } finally {
+          validateBtn.disabled = false;
+          validateBtn.textContent = 'Validate';
+        }
+      });
+
+      // Load schemas
+      async function loadSchemas() {
+        schemaList.innerHTML = '<em>Loading...</em>';
+
+        try {
+          const res = await fetch('/schema');
+          const data = await res.json();
+
+          if (data.count === 0) {
+            schemaList.innerHTML = '<em>No schemas available.</em>';
+            return;
+          }
+
+          let html = '<div class="schema-list">';
+          for (const schema of data.schemas) {
+            const types = schema.credential_types || [];
+            const typeBadges = types.map(t => `<span class="badge badge-type">${t}</span>`).join('');
+
+            html += `<div class="schema-item">
+              <h4>${schema.title || 'Untitled Schema'}</h4>
+              <div class="said">${schema.said}</div>
+              ${schema.description ? `<div class="description">${schema.description}</div>` : ''}
+              <div>${typeBadges}</div>
+              <button class="view-btn" onclick="showSchema('${schema.said}')">View Full Schema</button>
+            </div>`;
+          }
+          html += '</div>';
+          schemaList.innerHTML = html;
+
+        } catch (err) {
+          schemaList.innerHTML = `<div class="error">Failed to load: ${err.message}</div>`;
+        }
+      }
+
+      // Show schema in modal
+      async function showSchema(said) {
+        try {
+          const res = await fetch(`/schema/${said}`);
+          const data = await res.json();
+
+          if (!res.ok) {
+            alert('Failed to load schema: ' + (data.detail || 'Unknown error'));
+            return;
+          }
+
+          const schemaJson = JSON.stringify(data.schema, null, 2);
+
+          const modal = document.createElement('div');
+          modal.className = 'modal-overlay';
+          modal.innerHTML = `<div class="modal-content">
+            <h3>${data.title || 'Schema Details'}</h3>
+            <p><strong>SAID:</strong> <code>${said}</code></p>
+            ${data.description ? `<p>${data.description}</p>` : ''}
+            <pre>${escapeHtml(schemaJson)}</pre>
+            <button onclick="this.closest('.modal-overlay').remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+          </div>`;
+          modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+          document.addEventListener('keydown', function escHandler(e) {
+            if (e.key === 'Escape') {
+              modal.remove();
+              document.removeEventListener('keydown', escHandler);
+            }
+          });
+          document.body.appendChild(modal);
+
+        } catch (err) {
+          alert('Failed to load schema: ' + err.message);
+        }
+      }
+
+      // Escape HTML for safe display
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      // Refresh button
+      refreshBtn.addEventListener('click', loadSchemas);
+
+      // Initial load
+      loadSchemas();
+    </script>
+  </body>
+</html>

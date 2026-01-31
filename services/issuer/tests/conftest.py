@@ -18,7 +18,6 @@ from app.keri.persistence import reset_persistence_manager, PersistenceManager
 from app.keri.registry import (
     reset_registry_manager,
     close_registry_manager,
-    CredentialRegistryManager,
 )
 from app.keri.witness import reset_witness_publisher
 

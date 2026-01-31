@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from keri.vdr.credentialing import Regery
+from keri.vdr.viring import Reger
 
 from app.keri.identity import get_identity_manager
 
@@ -41,14 +42,18 @@ class CredentialRegistryManager:
     as Regery requires a Habery for identity context.
     """
 
-    def __init__(self):
+    def __init__(self, temp: bool = False):
         """Initialize registry manager.
+
+        Args:
+            temp: If True, use temporary storage (for testing).
 
         Note: Call initialize() to complete setup after construction.
         """
         self._regery: Optional[Regery] = None
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._temp = temp
 
     async def initialize(self) -> None:
         """Initialize the Regery with shared Habery.
@@ -63,12 +68,25 @@ class CredentialRegistryManager:
             identity_mgr = await get_identity_manager()
             hby = identity_mgr.habery
 
-            # Create Regery sharing the Habery
-            # name matches identity manager for consistent storage
+            # Use identity manager's temp mode if not explicitly set
+            # This ensures the Regery uses the same storage mode as the Habery
+            temp_mode = self._temp or identity_mgr.temp
+
+            # Create Reger with the same headDirPath as the Habery's database
+            # This ensures TEL events are stored in the same location as KEL events
+            reger = Reger(
+                name=hby.name,
+                headDirPath=hby.db.headDirPath,
+                temp=temp_mode,
+                reopen=True,
+            )
+
+            # Create Regery sharing the Habery and our Reger
             self._regery = Regery(
                 hby=hby,
                 name=hby.name,
-                temp=False,
+                reger=reger,
+                temp=temp_mode,
             )
 
             log.info(f"Regery initialized with {len(self._regery.regs)} existing registries")
@@ -131,12 +149,18 @@ class CredentialRegistryManager:
 
             log.info(f"Created registry: {name} ({registry.regk[:16]}...) for issuer {issuer_aid[:16]}...")
 
+            # Get sequence number safely - tever may not be processed yet
+            try:
+                seq_num = registry.regi
+            except (KeyError, AttributeError):
+                seq_num = 0
+
             return RegistryInfo(
                 registry_key=registry.regk,
                 name=name,
                 issuer_aid=issuer_aid,
                 created_at=datetime.now(timezone.utc).isoformat(),
-                sequence_number=registry.regi if hasattr(registry, 'regi') else 0,
+                sequence_number=seq_num,
                 no_backers=no_backers,
             )
 
@@ -147,16 +171,31 @@ class CredentialRegistryManager:
             if registry is None:
                 return None
 
-            # Get issuer AID from hab
-            issuer_aid = registry.hab.pre if registry.hab else ""
+            # Get issuer AID from hab safely
+            try:
+                issuer_aid = registry.hab.pre if registry.hab else ""
+            except (KeyError, AttributeError):
+                issuer_aid = ""
+
+            # Get sequence number safely - tever may not be processed yet
+            try:
+                seq_num = registry.regi
+            except (KeyError, AttributeError):
+                seq_num = 0
+
+            # Get noBackers safely - tever may not be processed yet
+            try:
+                no_backers = registry.noBackers
+            except (KeyError, AttributeError):
+                no_backers = True
 
             return RegistryInfo(
                 registry_key=registry.regk,
                 name=registry.name,
                 issuer_aid=issuer_aid,
                 created_at="",  # Not stored in keripy
-                sequence_number=registry.regi if hasattr(registry, 'regi') else 0,
-                no_backers=registry.noBackers if hasattr(registry, 'noBackers') else True,
+                sequence_number=seq_num,
+                no_backers=no_backers,
             )
 
     async def get_registry_by_name(self, name: str) -> Optional[RegistryInfo]:
@@ -166,15 +205,31 @@ class CredentialRegistryManager:
             if registry is None:
                 return None
 
-            issuer_aid = registry.hab.pre if registry.hab else ""
+            # Get issuer AID from hab safely
+            try:
+                issuer_aid = registry.hab.pre if registry.hab else ""
+            except (KeyError, AttributeError):
+                issuer_aid = ""
+
+            # Get sequence number safely - tever may not be processed yet
+            try:
+                seq_num = registry.regi
+            except (KeyError, AttributeError):
+                seq_num = 0
+
+            # Get noBackers safely - tever may not be processed yet
+            try:
+                no_backers = registry.noBackers
+            except (KeyError, AttributeError):
+                no_backers = True
 
             return RegistryInfo(
                 registry_key=registry.regk,
                 name=registry.name,
                 issuer_aid=issuer_aid,
                 created_at="",
-                sequence_number=registry.regi if hasattr(registry, 'regi') else 0,
-                no_backers=registry.noBackers if hasattr(registry, 'noBackers') else True,
+                sequence_number=seq_num,
+                no_backers=no_backers,
             )
 
     async def list_registries(self) -> list[RegistryInfo]:
@@ -182,14 +237,31 @@ class CredentialRegistryManager:
         async with self._lock:
             registries = []
             for regk, registry in self.regery.regs.items():
-                issuer_aid = registry.hab.pre if registry.hab else ""
+                # Get issuer AID from hab safely
+                try:
+                    issuer_aid = registry.hab.pre if registry.hab else ""
+                except (KeyError, AttributeError):
+                    issuer_aid = ""
+
+                # Get sequence number safely - tever may not be processed yet
+                try:
+                    seq_num = registry.regi
+                except (KeyError, AttributeError):
+                    seq_num = 0
+
+                # Get noBackers safely - tever may not be processed yet
+                try:
+                    no_backers = registry.noBackers
+                except (KeyError, AttributeError):
+                    no_backers = True
+
                 info = RegistryInfo(
                     registry_key=registry.regk,
                     name=registry.name,
                     issuer_aid=issuer_aid,
                     created_at="",
-                    sequence_number=registry.regi if hasattr(registry, 'regi') else 0,
-                    no_backers=registry.noBackers if hasattr(registry, 'noBackers') else True,
+                    sequence_number=seq_num,
+                    no_backers=no_backers,
                 )
                 registries.append(info)
             return registries

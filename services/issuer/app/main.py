@@ -6,10 +6,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.middleware.authentication import AuthenticationMiddleware
 
 from common.vvp.core.logging import configure_logging
-from app.api import health, identity, registry, schema
+from app.api import admin, health, identity, registry, schema
+from app.auth.api_key import APIKeyBackend, get_api_key_store
+from app.config import AUTH_ENABLED, get_auth_exempt_paths
 from app.keri.identity import get_identity_manager, close_identity_manager
 from app.keri.registry import get_registry_manager, close_registry_manager
 
@@ -84,3 +87,15 @@ def version():
 def create_identity_ui():
     """Serve the identity creation web UI."""
     return FileResponse(WEB_DIR / "create.html", media_type="text/html")
+
+
+@app.get("/registry/ui", response_class=FileResponse)
+def registry_ui():
+    """Serve the registry management web UI."""
+    return FileResponse(WEB_DIR / "registry.html", media_type="text/html")
+
+
+@app.get("/schemas/ui", response_class=FileResponse)
+def schemas_ui():
+    """Serve the schema browser web UI."""
+    return FileResponse(WEB_DIR / "schemas.html", media_type="text/html")

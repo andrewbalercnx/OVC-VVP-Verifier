@@ -92,8 +92,10 @@ async def create_registry(request: CreateRegistryRequest) -> CreateRegistryRespo
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
-        log.error(f"Failed to create registry: {e}")
+        log.exception(f"Failed to create registry: {e}")
         raise HTTPException(status_code=500, detail="Internal error creating registry")
 
 
@@ -122,17 +124,23 @@ async def list_registries() -> RegistryListResponse:
 @router.get("/{registry_key}", response_model=RegistryResponse)
 async def get_registry(registry_key: str) -> RegistryResponse:
     """Get registry information by registry key."""
-    registry_mgr = await get_registry_manager()
-    info = await registry_mgr.get_registry(registry_key)
+    try:
+        registry_mgr = await get_registry_manager()
+        info = await registry_mgr.get_registry(registry_key)
 
-    if info is None:
-        raise HTTPException(status_code=404, detail=f"Registry not found: {registry_key}")
+        if info is None:
+            raise HTTPException(status_code=404, detail=f"Registry not found: {registry_key}")
 
-    return RegistryResponse(
-        registry_key=info.registry_key,
-        name=info.name,
-        issuer_aid=info.issuer_aid,
-        created_at=info.created_at or None,
-        sequence_number=info.sequence_number,
-        no_backers=info.no_backers,
-    )
+        return RegistryResponse(
+            registry_key=info.registry_key,
+            name=info.name,
+            issuer_aid=info.issuer_aid,
+            created_at=info.created_at or None,
+            sequence_number=info.sequence_number,
+            no_backers=info.no_backers,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception(f"Failed to get registry {registry_key}: {e}")
+        raise HTTPException(status_code=500, detail="Internal error getting registry")

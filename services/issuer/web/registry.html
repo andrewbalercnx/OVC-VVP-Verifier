@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8"/>
-    <title>VVP Issuer - Create Identity</title>
+    <title>VVP Issuer - Registry Management</title>
     <style>
       body {
         font-family: system-ui, -apple-system, sans-serif;
@@ -13,6 +13,24 @@
       }
       h1 { color: #2c3e50; margin-bottom: 0.5rem; }
       .subtitle { color: #666; margin-bottom: 2rem; }
+      .nav-links {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+      }
+      .nav-links a {
+        color: #3498db;
+        text-decoration: none;
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        background: white;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+      }
+      .nav-links a:hover { background: #e8f4ff; }
+      .nav-links a.active {
+        background: #3498db;
+        color: white;
+      }
       .card {
         background: white;
         border-radius: 8px;
@@ -22,7 +40,7 @@
       }
       .card h2 { margin-top: 0; color: #34495e; }
       label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
-      input[type="text"] {
+      input[type="text"], select {
         width: 100%;
         padding: 0.75rem;
         border: 1px solid #ddd;
@@ -30,7 +48,7 @@
         font-size: 1rem;
         box-sizing: border-box;
       }
-      input[type="text"]:focus {
+      input[type="text"]:focus, select:focus {
         outline: none;
         border-color: #3498db;
         box-shadow: 0 0 0 2px rgba(52,152,219,0.2);
@@ -88,41 +106,24 @@
         font-size: 0.85rem;
         word-break: break-all;
       }
-      .oobi-url {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        margin: 0.25rem 0;
-      }
-      .oobi-url code {
-        flex: 1;
-        margin: 0;
-        font-size: 0.8rem;
-      }
-      .copy-btn {
-        padding: 0.25rem 0.5rem;
-        font-size: 0.75rem;
-        background: #6c757d;
-      }
-      .copy-btn:hover { background: #5a6268; }
-      .identity-list {
+      .registry-list {
         display: grid;
         gap: 1rem;
       }
-      .identity-item {
+      .registry-item {
         background: #f8f9fa;
         border: 1px solid #dee2e6;
         border-radius: 4px;
         padding: 1rem;
       }
-      .identity-item h4 { margin: 0 0 0.5rem 0; color: #2c3e50; }
-      .identity-item .aid {
+      .registry-item h4 { margin: 0 0 0.5rem 0; color: #2c3e50; }
+      .registry-item .registry-key {
         font-family: monospace;
         font-size: 0.85rem;
         color: #6c757d;
         word-break: break-all;
       }
-      .identity-meta {
+      .registry-meta {
         display: flex;
         gap: 1rem;
         margin-top: 0.5rem;
@@ -136,8 +137,8 @@
         font-size: 0.75rem;
         font-weight: 500;
       }
-      .badge-transferable { background: #d4edda; color: #155724; }
-      .badge-non-transferable { background: #f8d7da; color: #721c24; }
+      .badge-no-backers { background: #e2e3e5; color: #383d41; }
+      .badge-with-backers { background: #d4edda; color: #155724; }
       .loading { opacity: 0.6; pointer-events: none; }
       .spinner {
         display: inline-block;
@@ -160,47 +161,43 @@
       }
       .witness-success { color: #28a745; }
       .witness-fail { color: #dc3545; }
-      .nav-links {
-        display: flex;
-        gap: 1rem;
-        margin-bottom: 1.5rem;
-      }
-      .nav-links a {
-        color: #3498db;
-        text-decoration: none;
-        padding: 0.5rem 1rem;
+      .no-identities {
+        padding: 1rem;
+        background: #fff3cd;
+        border: 1px solid #ffc107;
         border-radius: 4px;
-        background: white;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-      }
-      .nav-links a:hover { background: #e8f4ff; }
-      .nav-links a.active {
-        background: #3498db;
-        color: white;
+        color: #856404;
       }
     </style>
   </head>
   <body>
     <h1>VVP Issuer</h1>
-    <p class="subtitle">Create and manage KERI identities for credential issuance</p>
+    <p class="subtitle">Create and manage credential registries</p>
 
     <nav class="nav-links">
-      <a href="/create" class="active">Identities</a>
-      <a href="/registry/ui">Registries</a>
+      <a href="/create">Identities</a>
+      <a href="/registry/ui" class="active">Registries</a>
       <a href="/schemas/ui">Schemas</a>
     </nav>
 
     <div class="card">
-      <h2>Create New Identity</h2>
+      <h2>Create New Registry</h2>
       <form id="createForm">
         <div style="margin-bottom: 1rem;">
-          <label for="name">Identity Name</label>
-          <input type="text" id="name" name="name" placeholder="e.g., my-issuer" required>
+          <label for="identitySelect">Issuer Identity</label>
+          <select id="identitySelect" name="identitySelect" required>
+            <option value="">Select an identity...</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom: 1rem;">
+          <label for="registryName">Registry Name</label>
+          <input type="text" id="registryName" name="registryName" placeholder="e.g., my-credentials" required>
         </div>
 
         <div class="checkbox-row">
-          <input type="checkbox" id="transferable" name="transferable" checked>
-          <label for="transferable">Transferable (keys can rotate)</label>
+          <input type="checkbox" id="noBackers" name="noBackers" checked>
+          <label for="noBackers">No TEL-specific backers (simpler setup)</label>
         </div>
 
         <div class="checkbox-row">
@@ -208,16 +205,19 @@
           <label for="publishToWitnesses">Publish to witnesses</label>
         </div>
 
-        <button type="submit" id="createBtn">Create Identity</button>
+        <button type="submit" id="createBtn">Create Registry</button>
       </form>
 
       <div id="createResult"></div>
+      <div id="noIdentitiesWarning" class="no-identities" style="display:none; margin-top:1rem;">
+        No identities available. <a href="/create">Create an identity</a> first before creating a registry.
+      </div>
     </div>
 
     <div class="card">
-      <h2>Existing Identities</h2>
+      <h2>Existing Registries</h2>
       <button id="refreshBtn" style="margin-bottom: 1rem; background: #6c757d;">Refresh List</button>
-      <div id="identityList">
+      <div id="registryList">
         <em>Loading...</em>
       </div>
     </div>
@@ -226,27 +226,60 @@
       const createForm = document.getElementById('createForm');
       const createBtn = document.getElementById('createBtn');
       const createResult = document.getElementById('createResult');
-      const identityList = document.getElementById('identityList');
+      const registryList = document.getElementById('registryList');
       const refreshBtn = document.getElementById('refreshBtn');
+      const identitySelect = document.getElementById('identitySelect');
+      const noIdentitiesWarning = document.getElementById('noIdentitiesWarning');
 
-      // Create identity
+      // Load identities for dropdown
+      async function loadIdentities() {
+        try {
+          const res = await fetch('/identity');
+          const data = await res.json();
+
+          // Clear existing options except placeholder
+          identitySelect.innerHTML = '<option value="">Select an identity...</option>';
+
+          if (data.count === 0) {
+            noIdentitiesWarning.style.display = 'block';
+            createBtn.disabled = true;
+            return;
+          }
+
+          noIdentitiesWarning.style.display = 'none';
+          createBtn.disabled = false;
+
+          for (const identity of data.identities) {
+            const opt = document.createElement('option');
+            opt.value = identity.name;
+            opt.textContent = `${identity.name} (${identity.aid.slice(0, 16)}...)`;
+            identitySelect.appendChild(opt);
+          }
+        } catch (err) {
+          console.error('Failed to load identities:', err);
+        }
+      }
+
+      // Create registry
       createForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         createBtn.disabled = true;
         createBtn.innerHTML = '<span class="spinner"></span>Creating...';
         createResult.innerHTML = '';
 
-        const name = document.getElementById('name').value.trim();
-        const transferable = document.getElementById('transferable').checked;
+        const identityName = identitySelect.value;
+        const registryName = document.getElementById('registryName').value.trim();
+        const noBackers = document.getElementById('noBackers').checked;
         const publishToWitnesses = document.getElementById('publishToWitnesses').checked;
 
         try {
-          const res = await fetch('/identity', {
+          const res = await fetch('/registry', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              name,
-              transferable,
+              name: registryName,
+              identity_name: identityName,
+              no_backers: noBackers,
               publish_to_witnesses: publishToWitnesses
             })
           });
@@ -258,39 +291,26 @@
             return;
           }
 
-          const identity = data.identity;
+          const registry = data.registry;
           let html = `<div class="success">
-            <strong>Identity Created Successfully!</strong>
+            <strong>Registry Created Successfully!</strong>
             <div class="result-field">
               <strong>Name:</strong>
-              <code>${identity.name}</code>
+              <code>${registry.name}</code>
             </div>
             <div class="result-field">
-              <strong>AID (Autonomic Identifier):</strong>
-              <code>${identity.aid}</code>
+              <strong>Registry Key:</strong>
+              <code>${registry.registry_key}</code>
             </div>
             <div class="result-field">
-              <strong>Transferable:</strong>
-              <code>${identity.transferable ? 'Yes' : 'No'}</code>
+              <strong>Issuer AID:</strong>
+              <code>${registry.issuer_aid}</code>
             </div>
             <div class="result-field">
-              <strong>Witnesses:</strong>
-              <code>${identity.witness_count}</code>
+              <strong>No Backers:</strong>
+              <code>${registry.no_backers ? 'Yes' : 'No'}</code>
             </div>
           </div>`;
-
-          if (data.oobi_urls && data.oobi_urls.length > 0) {
-            html += `<div class="card" style="margin-top:1rem;background:#e8f4ff;">
-              <h3 style="margin-top:0;">OOBI URLs</h3>
-              <p style="font-size:0.85rem;color:#666;">Share these URLs for others to discover this identity:</p>`;
-            for (const url of data.oobi_urls) {
-              html += `<div class="oobi-url">
-                <code>${url}</code>
-                <button class="copy-btn" onclick="copyToClipboard('${url}', this)">Copy</button>
-              </div>`;
-            }
-            html += `</div>`;
-          }
 
           if (data.publish_results && data.publish_results.length > 0) {
             const successCount = data.publish_results.filter(r => r.success).length;
@@ -307,97 +327,62 @@
           }
 
           createResult.innerHTML = html;
-          document.getElementById('name').value = '';
-          loadIdentities();
+          document.getElementById('registryName').value = '';
+          loadRegistries();
 
         } catch (err) {
           createResult.innerHTML = `<div class="error">Network error: ${err.message}</div>`;
         } finally {
           createBtn.disabled = false;
-          createBtn.textContent = 'Create Identity';
+          createBtn.textContent = 'Create Registry';
         }
       });
 
-      // Load identities
-      async function loadIdentities() {
-        identityList.innerHTML = '<em>Loading...</em>';
+      // Load registries
+      async function loadRegistries() {
+        registryList.innerHTML = '<em>Loading...</em>';
 
         try {
-          const res = await fetch('/identity');
+          const res = await fetch('/registry');
           const data = await res.json();
 
           if (data.count === 0) {
-            identityList.innerHTML = '<em>No identities created yet.</em>';
+            registryList.innerHTML = '<em>No registries created yet.</em>';
             return;
           }
 
-          let html = '<div class="identity-list">';
-          for (const identity of data.identities) {
-            const badge = identity.transferable
-              ? '<span class="badge badge-transferable">Transferable</span>'
-              : '<span class="badge badge-non-transferable">Non-transferable</span>';
+          let html = '<div class="registry-list">';
+          for (const registry of data.registries) {
+            const badge = registry.no_backers
+              ? '<span class="badge badge-no-backers">No Backers</span>'
+              : '<span class="badge badge-with-backers">With Backers</span>';
 
-            html += `<div class="identity-item">
-              <h4>${identity.name} ${badge}</h4>
-              <div class="aid">${identity.aid}</div>
-              <div class="identity-meta">
-                <span>Keys: ${identity.key_count}</span>
-                <span>Witnesses: ${identity.witness_count}</span>
-                <span>Seq: ${identity.sequence_number}</span>
+            html += `<div class="registry-item">
+              <h4>${registry.name} ${badge}</h4>
+              <div class="registry-key">${registry.registry_key}</div>
+              <div class="registry-meta">
+                <span>Issuer: ${registry.issuer_aid.slice(0, 16)}...</span>
+                <span>Seq: ${registry.sequence_number}</span>
               </div>
-              <button onclick="showOobi('${identity.aid}')" style="margin-top:0.5rem;padding:0.25rem 0.5rem;font-size:0.85rem;background:#17a2b8;">View OOBI URLs</button>
             </div>`;
           }
           html += '</div>';
-          identityList.innerHTML = html;
+          registryList.innerHTML = html;
 
         } catch (err) {
-          identityList.innerHTML = `<div class="error">Failed to load: ${err.message}</div>`;
+          registryList.innerHTML = `<div class="error">Failed to load: ${err.message}</div>`;
         }
-      }
-
-      // Show OOBI URLs for an identity
-      async function showOobi(aid) {
-        try {
-          const res = await fetch(`/identity/${aid}/oobi`);
-          const data = await res.json();
-
-          let html = '<h4>OOBI URLs for ' + aid.substring(0, 16) + '...</h4>';
-          for (const url of data.oobi_urls) {
-            html += `<div class="oobi-url">
-              <code>${url}</code>
-              <button class="copy-btn" onclick="copyToClipboard('${url}', this)">Copy</button>
-            </div>`;
-          }
-
-          const modal = document.createElement('div');
-          modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;z-index:1000;';
-          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;max-height:80vh;overflow:auto;">
-            ${html}
-            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
-          </div>`;
-          modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
-          document.body.appendChild(modal);
-
-        } catch (err) {
-          alert('Failed to load OOBI URLs: ' + err.message);
-        }
-      }
-
-      // Copy to clipboard
-      function copyToClipboard(text, btn) {
-        navigator.clipboard.writeText(text).then(() => {
-          const orig = btn.textContent;
-          btn.textContent = 'Copied!';
-          setTimeout(() => btn.textContent = orig, 1500);
-        });
       }
 
       // Refresh button
-      refreshBtn.addEventListener('click', loadIdentities);
+      refreshBtn.addEventListener('click', () => {
+        loadIdentities();
+        loadRegistries();
+      });
 
       // Initial load
       loadIdentities();
+      loadRegistries();
     </script>
   </body>
 </html>

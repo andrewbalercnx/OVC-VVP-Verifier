@@ -90,3 +90,51 @@ DEFAULT_NEXT_THRESHOLD: str = os.getenv("VVP_DEFAULT_NEXT_THRESHOLD", "1")
 
 ADMIN_ENDPOINT_ENABLED: bool = os.getenv("ADMIN_ENDPOINT_ENABLED", "true").lower() == "true"
 SERVICE_PORT: int = int(os.getenv("VVP_ISSUER_PORT", "8001"))
+
+
+# =============================================================================
+# SECURITY CONFIGURATION
+# =============================================================================
+
+def _get_api_keys_file() -> str:
+    """Get path to API keys configuration file."""
+    return os.getenv(
+        "VVP_API_KEYS_FILE",
+        str(Path(__file__).parent.parent / "config" / "api_keys.json")
+    )
+
+
+# API key authentication
+API_KEYS_FILE: str = _get_api_keys_file()
+API_KEYS_JSON: str | None = os.getenv("VVP_API_KEYS")  # Inline JSON override
+
+# Authentication settings
+AUTH_ENABLED: bool = os.getenv("VVP_AUTH_ENABLED", "true").lower() == "true"
+AUTH_EXEMPT_PATHS: set[str] = {"/healthz", "/version"}  # Always exempt
+
+# Docs/OpenAPI protection
+# Default: protected (require auth). Set to "true" to exempt from auth.
+DOCS_AUTH_EXEMPT: bool = os.getenv("VVP_DOCS_AUTH_EXEMPT", "false").lower() == "true"
+
+# UI authentication
+# Default: UI does not require auth. Set to "true" to require auth.
+UI_AUTH_ENABLED: bool = os.getenv("VVP_UI_AUTH_ENABLED", "false").lower() == "true"
+
+# Key reload settings
+AUTH_RELOAD_INTERVAL: int = int(os.getenv("VVP_AUTH_RELOAD_INTERVAL", "60"))  # seconds
+AUTH_RELOAD_ENABLED: bool = os.getenv("VVP_AUTH_RELOAD_ENABLED", "true").lower() == "true"
+
+
+def get_auth_exempt_paths() -> set[str]:
+    """Get the full set of auth-exempt paths based on configuration."""
+    exempt = set(AUTH_EXEMPT_PATHS)
+
+    if DOCS_AUTH_EXEMPT:
+        exempt.add("/docs")
+        exempt.add("/openapi.json")
+        exempt.add("/redoc")
+
+    if not UI_AUTH_ENABLED:
+        exempt.add("/create")
+
+    return exempt
