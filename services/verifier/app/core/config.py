@@ -389,11 +389,35 @@ EXTERNAL_SAID_CACHE_MAX_ENTRIES: int = int(
 
 # Provenant staging witnesses (default fallback)
 # These are loaded at WitnessPool initialization and always available
-PROVENANT_WITNESS_URLS: list[str] = [
-    "http://witness4.stage.provenant.net:5631",
-    "http://witness5.stage.provenant.net:5631",
-    "http://witness6.stage.provenant.net:5631",
-]
+# Override with VVP_LOCAL_WITNESS_URLS for local development (Sprint 27)
+
+
+def _parse_witness_urls() -> list[str]:
+    """Parse witness URLs from environment or use defaults.
+
+    Supports local development override via VVP_LOCAL_WITNESS_URLS env var.
+    Format: comma-separated list of URLs
+    Example: "http://127.0.0.1:5642,http://127.0.0.1:5643,http://127.0.0.1:5644"
+
+    When running in Docker with docker-compose, use service names:
+    Example: "http://witnesses:5642,http://witnesses:5643,http://witnesses:5644"
+    """
+    local_urls = os.getenv("VVP_LOCAL_WITNESS_URLS", "")
+    if local_urls:
+        urls = [url.strip() for url in local_urls.split(",") if url.strip()]
+        if urls:
+            _config_log.info(f"Using local witness URLs from VVP_LOCAL_WITNESS_URLS: {urls}")
+            return urls
+
+    # Default to Provenant staging
+    return [
+        "http://witness4.stage.provenant.net:5631",
+        "http://witness5.stage.provenant.net:5631",
+        "http://witness6.stage.provenant.net:5631",
+    ]
+
+
+PROVENANT_WITNESS_URLS: list[str] = _parse_witness_urls()
 
 # GLEIF well-known OOBI for witness discovery
 # The GLEIF Root AID OOBI endpoint returns reply messages with witness URLs

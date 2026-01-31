@@ -1,0 +1,105 @@
+# VVP Local Development Environment
+# Usage:
+#   docker-compose up -d witnesses     # Start witnesses only (default)
+#   docker-compose --profile full up   # Start witnesses + verifier
+#   docker-compose down                # Stop all services
+
+version: "3.8"
+
+services:
+  # ===========================================================================
+  # KERI Witnesses (kli witness demo)
+  # ===========================================================================
+  # Runs 6 demo witnesses with deterministic AIDs. We expose the first 3:
+  #   wan: TCP 5632, HTTP 5642
+  #   wil: TCP 5633, HTTP 5643
+  #   wes: TCP 5634, HTTP 5644
+  #
+  # Known AIDs (from deterministic salts):
+  #   wan: BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha
+  #   wil: BLskRTInXnMxWaGqcpSyMgo0nYbalW99cGZESrz3zapM
+  #   wes: BIKKuvBwpmDVA4Ds-EpL5bt9OqPzWPja2LigFYZN2YfX
+
+  witnesses:
+    image: gleif/keri:latest
+    container_name: vvp-witnesses
+    command: ["kli", "witness", "demo"]
+    ports:
+      - "5632:5632"  # wan TCP
+      - "5633:5633"  # wil TCP
+      - "5634:5634"  # wes TCP
+      - "5642:5642"  # wan HTTP
+      - "5643:5643"  # wil HTTP
+      - "5644:5644"  # wes HTTP
+    volumes:
+      - witness-data:/usr/local/var/keri
+    healthcheck:
+      # Use OOBI endpoint for stronger readiness signal (per reviewer feedback)
+      test: ["CMD", "curl", "-sf", "http://localhost:5642/oobi/BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha/controller"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - vvp-network
+
+  # ===========================================================================
+  # VVP Verifier (optional - for end-to-end testing)
+  # ===========================================================================
+  # Start with: docker-compose --profile full up
+
+  verifier:
+    build:
+      context: .
+      dockerfile: services/verifier/Dockerfile
+    container_name: vvp-verifier
+    ports:
+      - "8000:8000"
+    environment:
+      - VVP_LOCAL_WITNESS_URLS=http://witnesses:5642,http://witnesses:5643,http://witnesses:5644
+      - VVP_GLEIF_WITNESS_DISCOVERY=false
+    depends_on:
+      witnesses:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - vvp-network
+    profiles:
+      - full
+
+  # ===========================================================================
+  # VVP Issuer (placeholder for Sprint 28)
+  # ===========================================================================
+  # Uncomment when issuer service is implemented
+
+  # issuer:
+  #   build:
+  #     context: .
+  #     dockerfile: services/issuer/Dockerfile
+  #   container_name: vvp-issuer
+  #   ports:
+  #     - "8001:8001"
+  #   volumes:
+  #     - issuer-data:/data/vvp-issuer
+  #   environment:
+  #     - VVP_WITNESS_CONFIG=/app/config/witnesses.json
+  #   depends_on:
+  #     witnesses:
+  #       condition: service_healthy
+  #   networks:
+  #     - vvp-network
+  #   profiles:
+  #     - full
+
+networks:
+  vvp-network:
+    name: vvp-internal
+    driver: bridge
+
+volumes:
+  witness-data:
+  # issuer-data:  # Uncomment in Sprint 28

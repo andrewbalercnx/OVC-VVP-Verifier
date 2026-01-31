@@ -11,7 +11,7 @@ Sprints 1-25 implemented the VVP Verifier. See `services/verifier/app/Documentat
 | Sprint | Name | Status | Dependencies |
 |--------|------|--------|--------------|
 | 26 | Monorepo Foundation | COMPLETE | - |
-| 27 | Local Witness Infrastructure | Ready | Sprint 26 |
+| 27 | Local Witness Infrastructure | COMPLETE | Sprint 26 |
 | 28 | Issuer Service Skeleton | Ready | Sprint 27 |
 | 29 | Credential Registry | Ready | Sprint 28 |
 | 30 | Security Model | Ready | Sprint 29 |
@@ -36,16 +36,18 @@ Sprints 1-25 implemented the VVP Verifier. See `services/verifier/app/Documentat
 
 ---
 
-## Sprint 27: Local Witness Infrastructure
+## Sprint 27: Local Witness Infrastructure (COMPLETE)
 
 **Goal:** Set up local KERI witnesses for development and testing.
 
 **Deliverables:**
-- [ ] `docker-compose.yml` with witness containers (wan, wil, wes)
-- [ ] `scripts/local-witnesses.sh` to start witness network
-- [ ] Witness configuration in `services/issuer/config/witnesses.json`
-- [ ] Verify witnesses respond to OOBI requests
-- [ ] Verify verifier can resolve AIDs via local witnesses
+- [x] `docker-compose.yml` with witness containers (wan, wil, wes)
+- [x] `scripts/local-witnesses.sh` to start witness network
+- [x] Witness configuration in `services/issuer/config/witnesses.json`
+- [x] Verify witnesses respond to OOBI requests
+- [x] Verify verifier can resolve AIDs via local witnesses
+
+**Commits:** `7f18a94`
 
 **Key Files:**
 ```
@@ -56,12 +58,15 @@ services/issuer/config/witnesses.json
 
 **Technical Notes:**
 - Use keripy's `kli witness demo` for local witnesses
-- Witnesses run on ports 5632, 5642, 5652
-- OOBI format: `http://127.0.0.1:5642/oobi/{aid}`
+- Witness ports (from kli witness demo):
+  - wan: TCP 5632, HTTP 5642
+  - wil: TCP 5633, HTTP 5643
+  - wes: TCP 5634, HTTP 5644
+- OOBI format: `http://127.0.0.1:{http_port}/oobi/{aid}/controller`
 
 **Exit Criteria:**
 - `docker-compose up` starts all witnesses
-- `curl http://127.0.0.1:5642/.well-known/keri/oobi` returns valid OOBI
+- `curl http://127.0.0.1:5642/oobi/{wan_aid}/controller` returns valid OOBI
 - Verifier tests pass with local witness resolution
 
 ---

@@ -1,5 +1,55 @@
 # VVP Verifier Change Log
 
+## Sprint 27: Local Witness Infrastructure
+
+**Date:** 2026-01-31
+**Status:** APPROVED (Pair Review)
+
+### Summary
+
+Set up local KERI witness infrastructure for VVP Issuer development. Uses `gleif/keri:latest` Docker image with `kli witness demo` to run three deterministic demo witnesses (wan, wil, wes). Added environment variable override for verifier to use local witnesses instead of Provenant staging.
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `docker-compose.yml` | Docker orchestration for witnesses + optional verifier |
+| `scripts/local-witnesses.sh` | Start/stop script with health checks |
+| `services/issuer/config/witnesses.json` | Witness config for Sprint 28 issuer |
+| `services/issuer/config/.gitkeep` | Placeholder for git |
+| `services/verifier/tests/test_local_witnesses.py` | Integration tests |
+| `services/verifier/app/Documentation/PLAN_Sprint27.md` | Archived plan |
+
+### Files Modified
+
+| File | Description |
+|------|-------------|
+| `services/verifier/app/core/config.py` | Added `VVP_LOCAL_WITNESS_URLS` env var support |
+| `SPRINTS.md` | Fixed port documentation, updated exit criteria |
+
+### Known Witness AIDs
+
+| Name | AID | HTTP Port |
+|------|-----|-----------|
+| wan | `BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha` | 5642 |
+| wil | `BLskRTInXnMxWaGqcpSyMgo0nYbalW99cGZESrz3zapM` | 5643 |
+| wes | `BIKKuvBwpmDVA4Ds-EpL5bt9OqPzWPja2LigFYZN2YfX` | 5644 |
+
+### Usage
+
+```bash
+# Start local witnesses
+./scripts/local-witnesses.sh start
+
+# Configure verifier for local witnesses
+export VVP_LOCAL_WITNESS_URLS=http://127.0.0.1:5642,http://127.0.0.1:5643,http://127.0.0.1:5644
+
+# Verify OOBI endpoint
+curl http://127.0.0.1:5642/oobi/BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha/controller
+```
+
+---
+
 ## Phase 0: Monorepo Refactoring (Foundation)
 
 **Date:** 2026-01-31
