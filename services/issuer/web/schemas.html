@@ -2,13 +2,13 @@
 <html>
   <head>
     <meta charset="utf-8"/>
-    <title>VVP Issuer - Schema Browser</title>
+    <title>VVP Issuer - Schema Management</title>
     <style>
       body {
         font-family: system-ui, -apple-system, sans-serif;
         margin: 0;
         padding: 2rem;
-        max-width: 900px;
+        max-width: 1000px;
         background: #f8f9fa;
       }
       h1 { color: #2c3e50; margin-bottom: 0.5rem; }
@@ -40,7 +40,7 @@
       }
       .card h2 { margin-top: 0; color: #34495e; }
       label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
-      input[type="text"], select {
+      input[type="text"], input[type="url"], select, textarea {
         width: 100%;
         padding: 0.75rem;
         border: 1px solid #ddd;
@@ -48,7 +48,8 @@
         font-size: 1rem;
         box-sizing: border-box;
       }
-      input[type="text"]:focus, select:focus {
+      textarea { min-height: 80px; font-family: inherit; }
+      input:focus, select:focus, textarea:focus {
         outline: none;
         border-color: #3498db;
         box-shadow: 0 0 0 2px rgba(52,152,219,0.2);
@@ -65,6 +66,18 @@
       }
       button:hover { background: #2980b9; }
       button:disabled { background: #bdc3c7; cursor: not-allowed; }
+      .btn-secondary { background: #6c757d; }
+      .btn-secondary:hover { background: #5a6268; }
+      .btn-success { background: #28a745; }
+      .btn-success:hover { background: #218838; }
+      .btn-danger { background: #dc3545; }
+      .btn-danger:hover { background: #c82333; }
+      .btn-info { background: #17a2b8; }
+      .btn-info:hover { background: #138496; }
+      .btn-small {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.85rem;
+      }
       .success {
         background: #d4edda;
         border: 1px solid #c3e6cb;
@@ -77,6 +90,14 @@
         background: #f8d7da;
         border: 1px solid #f5c6cb;
         color: #721c24;
+        padding: 1rem;
+        border-radius: 4px;
+        margin-top: 1rem;
+      }
+      .info {
+        background: #d1ecf1;
+        border: 1px solid #bee5eb;
+        color: #0c5460;
         padding: 1rem;
         border-radius: 4px;
         margin-top: 1rem;
@@ -104,17 +125,23 @@
         color: #555;
         margin-bottom: 0.5rem;
       }
+      .schema-item .actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.75rem;
+        flex-wrap: wrap;
+      }
       .badge {
         display: inline-block;
         padding: 0.125rem 0.5rem;
         border-radius: 12px;
         font-size: 0.75rem;
         font-weight: 500;
-        background: #e2e3e5;
-        color: #383d41;
         margin-right: 0.5rem;
       }
-      .badge-type { background: #cce5ff; color: #004085; }
+      .badge-embedded { background: #e2e3e5; color: #383d41; }
+      .badge-imported { background: #cce5ff; color: #004085; }
+      .badge-custom { background: #d4edda; color: #155724; }
       .loading { opacity: 0.6; pointer-events: none; }
       .spinner {
         display: inline-block;
@@ -127,26 +154,35 @@
         margin-right: 0.5rem;
       }
       @keyframes spin { to { transform: rotate(360deg); } }
-      .validate-form {
+      .form-row {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1rem;
+      }
+      .form-row > * { flex: 1; }
+      .form-group { margin-bottom: 1rem; }
+      .tabs {
         display: flex;
         gap: 0.5rem;
-        align-items: flex-end;
+        margin-bottom: 1rem;
+        border-bottom: 2px solid #dee2e6;
+        padding-bottom: 0.5rem;
       }
-      .validate-form .input-group { flex: 1; }
-      .validate-form select { width: auto; min-width: 150px; }
-      .validate-result {
-        margin-top: 1rem;
-        padding: 0.75rem;
-        border-radius: 4px;
+      .tab {
+        padding: 0.5rem 1rem;
+        background: none;
+        border: none;
+        color: #666;
+        cursor: pointer;
+        border-radius: 4px 4px 0 0;
       }
-      .validate-valid {
-        background: #d4edda;
-        color: #155724;
+      .tab:hover { background: #e9ecef; }
+      .tab.active {
+        background: #3498db;
+        color: white;
       }
-      .validate-invalid {
-        background: #f8d7da;
-        color: #721c24;
-      }
+      .tab-panel { display: none; }
+      .tab-panel.active { display: block; }
       .modal-overlay {
         position: fixed;
         top: 0;
@@ -177,18 +213,28 @@
         font-size: 0.85rem;
         line-height: 1.5;
       }
-      .view-btn {
-        padding: 0.25rem 0.5rem;
-        font-size: 0.85rem;
-        background: #17a2b8;
-        margin-top: 0.5rem;
+      .import-list {
+        max-height: 300px;
+        overflow-y: auto;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
       }
-      .view-btn:hover { background: #138496; }
+      .import-item {
+        padding: 0.75rem;
+        border-bottom: 1px solid #dee2e6;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .import-item:last-child { border-bottom: none; }
+      .import-item:hover { background: #f8f9fa; }
+      .import-item .title { font-weight: 500; }
+      .import-item .said { font-family: monospace; font-size: 0.8rem; color: #6c757d; }
     </style>
   </head>
   <body>
     <h1>VVP Issuer</h1>
-    <p class="subtitle">Browse available credential schemas</p>
+    <p class="subtitle">Manage credential schemas</p>
 
     <nav class="nav-links">
       <a href="/create">Identities</a>
@@ -196,40 +242,235 @@
       <a href="/schemas/ui" class="active">Schemas</a>
     </nav>
 
+    <!-- Import / Create Section -->
     <div class="card">
-      <h2>Validate Schema SAID</h2>
-      <form id="validateForm" class="validate-form">
-        <div class="input-group">
-          <label for="said">Schema SAID</label>
-          <input type="text" id="said" name="said" placeholder="e.g., ENPXp1vQzRF6JwIuS..." required>
-        </div>
-        <div>
-          <label for="credentialType">Credential Type</label>
-          <select id="credentialType" name="credentialType">
-            <option value="LE">Legal Entity (LE)</option>
-            <option value="OOR">OOR Authority</option>
-            <option value="ECR">Engagement Context Role</option>
-          </select>
-        </div>
-        <button type="submit" id="validateBtn">Validate</button>
-      </form>
-      <div id="validateResult"></div>
+      <div class="tabs">
+        <button class="tab active" onclick="showTab('import')">Import from WebOfTrust</button>
+        <button class="tab" onclick="showTab('create')">Create New Schema</button>
+        <button class="tab" onclick="showTab('validate')">Validate SAID</button>
+      </div>
+
+      <!-- Import Tab -->
+      <div id="import-panel" class="tab-panel active">
+        <p>Import schemas from the <a href="https://github.com/WebOfTrust/schema" target="_blank">WebOfTrust/schema</a> repository.</p>
+        <button id="loadRegistryBtn" class="btn-secondary" style="margin-bottom:1rem;">Load Available Schemas</button>
+        <div id="importList"></div>
+        <div id="importResult"></div>
+      </div>
+
+      <!-- Create Tab -->
+      <div id="create-panel" class="tab-panel">
+        <form id="createForm">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="schemaTitle">Schema Title *</label>
+              <input type="text" id="schemaTitle" required placeholder="My Custom Credential">
+            </div>
+            <div class="form-group">
+              <label for="credentialType">Credential Type</label>
+              <input type="text" id="credentialType" value="VerifiableCredential" placeholder="VerifiableCredential">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="schemaDescription">Description</label>
+            <textarea id="schemaDescription" placeholder="Optional description of this credential schema"></textarea>
+          </div>
+          <div class="form-group">
+            <label for="schemaProperties">Custom Properties (JSON)</label>
+            <textarea id="schemaProperties" placeholder='{"customField": {"type": "string", "description": "A custom field"}}'></textarea>
+          </div>
+          <button type="submit" id="createBtn" class="btn-success">Create Schema</button>
+        </form>
+        <div id="createResult"></div>
+      </div>
+
+      <!-- Validate Tab -->
+      <div id="validate-panel" class="tab-panel">
+        <form id="validateForm">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="validateSaid">Schema SAID</label>
+              <input type="text" id="validateSaid" required placeholder="e.g., ENPXp1vQzRF6JwIuS...">
+            </div>
+            <div class="form-group">
+              <label for="validateType">Credential Type (optional)</label>
+              <select id="validateType">
+                <option value="">Any</option>
+                <option value="LE">Legal Entity (LE)</option>
+                <option value="OOR">OOR Authority</option>
+                <option value="ECR">Engagement Context Role</option>
+              </select>
+            </div>
+          </div>
+          <button type="submit" id="validateBtn">Validate SAID</button>
+        </form>
+        <div id="validateResult"></div>
+      </div>
     </div>
 
+    <!-- Schema List -->
     <div class="card">
       <h2>Available Schemas</h2>
-      <button id="refreshBtn" style="margin-bottom: 1rem; background: #6c757d;">Refresh List</button>
+      <button id="refreshBtn" class="btn-secondary" style="margin-bottom: 1rem;">Refresh List</button>
       <div id="schemaList">
         <em>Loading...</em>
       </div>
     </div>
 
     <script>
+      // Tab switching
+      function showTab(tabName) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        document.querySelector(`[onclick="showTab('${tabName}')"]`).classList.add('active');
+        document.getElementById(`${tabName}-panel`).classList.add('active');
+      }
+
+      // Elements
+      const schemaList = document.getElementById('schemaList');
+      const refreshBtn = document.getElementById('refreshBtn');
+      const loadRegistryBtn = document.getElementById('loadRegistryBtn');
+      const importList = document.getElementById('importList');
+      const importResult = document.getElementById('importResult');
+      const createForm = document.getElementById('createForm');
+      const createBtn = document.getElementById('createBtn');
+      const createResult = document.getElementById('createResult');
       const validateForm = document.getElementById('validateForm');
       const validateBtn = document.getElementById('validateBtn');
       const validateResult = document.getElementById('validateResult');
-      const schemaList = document.getElementById('schemaList');
-      const refreshBtn = document.getElementById('refreshBtn');
+
+      // Load available schemas from WebOfTrust registry
+      loadRegistryBtn.addEventListener('click', async () => {
+        loadRegistryBtn.disabled = true;
+        loadRegistryBtn.innerHTML = '<span class="spinner"></span>Loading...';
+        importList.innerHTML = '';
+        importResult.innerHTML = '';
+
+        try {
+          const res = await fetch('/schema/weboftrust/registry');
+          const data = await res.json();
+
+          if (!res.ok) {
+            importList.innerHTML = `<div class="error">Error: ${data.detail || res.statusText}</div>`;
+            return;
+          }
+
+          if (data.count === 0) {
+            importList.innerHTML = '<div class="info">No schemas found in registry.</div>';
+            return;
+          }
+
+          let html = `<div class="import-list">`;
+          for (const schema of data.schemas) {
+            html += `<div class="import-item">
+              <div>
+                <div class="title">${schema.title || 'Untitled'}</div>
+                <div class="said">${schema.id}</div>
+              </div>
+              <button class="btn-small btn-success" onclick="importSchema('${schema.id}')">Import</button>
+            </div>`;
+          }
+          html += '</div>';
+          html += `<div class="info" style="margin-top:0.5rem;">Using ref: <code>${data.ref}</code></div>`;
+          importList.innerHTML = html;
+
+        } catch (err) {
+          importList.innerHTML = `<div class="error">Failed to load: ${err.message}</div>`;
+        } finally {
+          loadRegistryBtn.disabled = false;
+          loadRegistryBtn.textContent = 'Load Available Schemas';
+        }
+      });
+
+      // Import a schema from WebOfTrust
+      async function importSchema(schemaId) {
+        importResult.innerHTML = '<div class="info"><span class="spinner"></span>Importing...</div>';
+
+        try {
+          const res = await fetch('/schema/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              source: 'weboftrust',
+              schema_id: schemaId,
+              verify_said: true
+            })
+          });
+          const data = await res.json();
+
+          if (!res.ok) {
+            importResult.innerHTML = `<div class="error">Import failed: ${data.detail || res.statusText}</div>`;
+            return;
+          }
+
+          importResult.innerHTML = `<div class="success">
+            Successfully imported: <strong>${data.title}</strong><br>
+            SAID: <code>${data.said}</code>
+          </div>`;
+          loadSchemas(); // Refresh the list
+
+        } catch (err) {
+          importResult.innerHTML = `<div class="error">Import failed: ${err.message}</div>`;
+        }
+      }
+
+      // Create new schema
+      createForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        createBtn.disabled = true;
+        createBtn.innerHTML = '<span class="spinner"></span>Creating...';
+        createResult.innerHTML = '';
+
+        const title = document.getElementById('schemaTitle').value.trim();
+        const description = document.getElementById('schemaDescription').value.trim();
+        const credentialType = document.getElementById('credentialType').value.trim();
+        const propertiesStr = document.getElementById('schemaProperties').value.trim();
+
+        let properties = null;
+        if (propertiesStr) {
+          try {
+            properties = JSON.parse(propertiesStr);
+          } catch (e) {
+            createResult.innerHTML = '<div class="error">Invalid JSON in properties field</div>';
+            createBtn.disabled = false;
+            createBtn.textContent = 'Create Schema';
+            return;
+          }
+        }
+
+        try {
+          const res = await fetch('/schema/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title,
+              description: description || null,
+              credential_type: credentialType || 'VerifiableCredential',
+              properties
+            })
+          });
+          const data = await res.json();
+
+          if (!res.ok) {
+            createResult.innerHTML = `<div class="error">Creation failed: ${data.detail || res.statusText}</div>`;
+            return;
+          }
+
+          createResult.innerHTML = `<div class="success">
+            Schema created successfully!<br>
+            <strong>SAID:</strong> <code>${data.said}</code><br>
+            <strong>Title:</strong> ${data.title}
+          </div>`;
+          createForm.reset();
+          loadSchemas();
+
+        } catch (err) {
+          createResult.innerHTML = `<div class="error">Creation failed: ${err.message}</div>`;
+        } finally {
+          createBtn.disabled = false;
+          createBtn.textContent = 'Create Schema';
+        }
+      });
 
       // Validate SAID
       validateForm.addEventListener('submit', async (e) => {
@@ -238,46 +479,40 @@
         validateBtn.innerHTML = '<span class="spinner"></span>Validating...';
         validateResult.innerHTML = '';
 
-        const said = document.getElementById('said').value.trim();
-        const credentialType = document.getElementById('credentialType').value;
+        const said = document.getElementById('validateSaid').value.trim();
+        const credentialType = document.getElementById('validateType').value;
 
         try {
           const res = await fetch('/schema/validate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              said: said,
-              credential_type: credentialType
+              said,
+              credential_type: credentialType || null
             })
           });
-
           const data = await res.json();
 
           if (!res.ok) {
-            validateResult.innerHTML = `<div class="validate-result validate-invalid">Error: ${data.detail || 'Unknown error'}</div>`;
+            validateResult.innerHTML = `<div class="error">Error: ${data.detail || res.statusText}</div>`;
             return;
           }
 
           if (data.valid) {
-            validateResult.innerHTML = `<div class="validate-result validate-valid">
-              ✓ Valid schema SAID for ${credentialType} credentials
-              ${data.title ? `<br><strong>Title:</strong> ${data.title}` : ''}
-            </div>`;
+            validateResult.innerHTML = `<div class="success">Valid schema SAID${credentialType ? ' for ' + credentialType : ''}</div>`;
           } else {
-            validateResult.innerHTML = `<div class="validate-result validate-invalid">
-              ✗ ${data.error || 'Schema SAID not recognized'}
-            </div>`;
+            validateResult.innerHTML = `<div class="error">Schema SAID not recognized</div>`;
           }
 
         } catch (err) {
-          validateResult.innerHTML = `<div class="validate-result validate-invalid">Network error: ${err.message}</div>`;
+          validateResult.innerHTML = `<div class="error">Validation failed: ${err.message}</div>`;
         } finally {
           validateBtn.disabled = false;
-          validateBtn.textContent = 'Validate';
+          validateBtn.textContent = 'Validate SAID';
         }
       });
 
-      // Load schemas
+      // Load all schemas
       async function loadSchemas() {
         schemaList.innerHTML = '<em>Loading...</em>';
 
@@ -301,15 +536,24 @@
 
           let html = '<div class="schema-list">';
           for (const schema of data.schemas) {
-            const types = schema.credential_types || [];
-            const typeBadges = types.map(t => `<span class="badge badge-type">${t}</span>`).join('');
+            const badgeClass = {
+              'embedded': 'badge-embedded',
+              'imported': 'badge-imported',
+              'custom': 'badge-custom'
+            }[schema.source] || 'badge-embedded';
+
+            const canDelete = schema.source !== 'embedded';
 
             html += `<div class="schema-item">
+              <span class="badge ${badgeClass}">${schema.source || 'embedded'}</span>
               <h4>${schema.title || 'Untitled Schema'}</h4>
               <div class="said">${schema.said}</div>
               ${schema.description ? `<div class="description">${schema.description}</div>` : ''}
-              <div>${typeBadges}</div>
-              <button class="view-btn" onclick="showSchema('${schema.said}')">View Full Schema</button>
+              <div class="actions">
+                <button class="btn-small btn-info" onclick="showSchema('${schema.said}')">View</button>
+                <button class="btn-small btn-secondary" onclick="verifySaid('${schema.said}')">Verify SAID</button>
+                ${canDelete ? `<button class="btn-small btn-danger" onclick="deleteSchema('${schema.said}')">Delete</button>` : ''}
+              </div>
             </div>`;
           }
           html += '</div>';
@@ -331,16 +575,17 @@
             return;
           }
 
-          const schemaJson = JSON.stringify(data.schema, null, 2);
+          const schemaJson = JSON.stringify(data.schema_document, null, 2);
 
           const modal = document.createElement('div');
           modal.className = 'modal-overlay';
           modal.innerHTML = `<div class="modal-content">
             <h3>${data.title || 'Schema Details'}</h3>
             <p><strong>SAID:</strong> <code>${said}</code></p>
+            <p><strong>Source:</strong> <span class="badge badge-${data.source || 'embedded'}">${data.source || 'embedded'}</span></p>
             ${data.description ? `<p>${data.description}</p>` : ''}
             <pre>${escapeHtml(schemaJson)}</pre>
-            <button onclick="this.closest('.modal-overlay').remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+            <button onclick="this.closest('.modal-overlay').remove()" class="btn-secondary" style="margin-top:1rem;">Close</button>
           </div>`;
           modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
           document.addEventListener('keydown', function escHandler(e) {
@@ -356,7 +601,50 @@
         }
       }
 
-      // Escape HTML for safe display
+      // Verify schema SAID
+      async function verifySaid(said) {
+        try {
+          const res = await fetch(`/schema/${said}/verify`);
+          const data = await res.json();
+
+          if (!res.ok) {
+            alert('Verification failed: ' + (data.detail || 'Unknown error'));
+            return;
+          }
+
+          if (data.valid) {
+            alert('SAID is valid - matches computed value');
+          } else {
+            alert(`SAID mismatch!\nStored: ${said}\nComputed: ${data.computed_said}`);
+          }
+
+        } catch (err) {
+          alert('Verification failed: ' + err.message);
+        }
+      }
+
+      // Delete schema
+      async function deleteSchema(said) {
+        if (!confirm(`Delete schema ${said.slice(0,20)}...?`)) return;
+
+        try {
+          const res = await fetch(`/schema/${said}`, { method: 'DELETE' });
+          const data = await res.json();
+
+          if (!res.ok) {
+            alert('Delete failed: ' + (data.detail || 'Unknown error'));
+            return;
+          }
+
+          alert('Schema deleted');
+          loadSchemas();
+
+        } catch (err) {
+          alert('Delete failed: ' + err.message);
+        }
+      }
+
+      // Escape HTML
       function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;

@@ -142,6 +142,7 @@ class SchemaResponse(BaseModel):
     said: str = Field(..., description="Schema SAID")
     title: str = Field(..., description="Schema title")
     description: Optional[str] = Field(None, description="Schema description")
+    source: Optional[str] = Field(None, description="Schema source (embedded, imported, custom)")
     schema_document: Optional[dict] = Field(None, description="Full JSON schema")
 
 
@@ -165,6 +166,57 @@ class SchemaValidationResponse(BaseModel):
     said: str = Field(..., description="Schema SAID that was validated")
     valid: bool = Field(..., description="Whether the SAID is recognized")
     credential_type: Optional[str] = Field(None, description="Credential type if specified")
+
+
+class SchemaImportRequest(BaseModel):
+    """Request to import a schema."""
+
+    source: str = Field(..., description="Import source: 'weboftrust' or 'url'")
+    schema_id: Optional[str] = Field(None, description="Schema SAID for weboftrust import")
+    url: Optional[str] = Field(None, description="URL for direct URL import")
+    verify_said: bool = Field(True, description="Verify SAID matches computed value")
+
+
+class SchemaImportResponse(BaseModel):
+    """Response from schema import."""
+
+    said: str = Field(..., description="Imported schema SAID")
+    title: str = Field(..., description="Schema title")
+    source: str = Field(..., description="Import source")
+    verified: bool = Field(..., description="Whether SAID was verified")
+
+
+class SchemaCreateRequest(BaseModel):
+    """Request to create a new schema."""
+
+    title: str = Field(..., description="Schema title")
+    description: Optional[str] = Field(None, description="Schema description")
+    credential_type: str = Field("VerifiableCredential", description="Credential type name")
+    properties: Optional[dict] = Field(None, description="Additional schema properties")
+
+
+class SchemaCreateResponse(BaseModel):
+    """Response from schema creation."""
+
+    said: str = Field(..., description="Generated schema SAID")
+    title: str = Field(..., description="Schema title")
+    schema_document: dict = Field(..., description="Full generated schema")
+
+
+class SchemaVerifyResponse(BaseModel):
+    """Response from SAID verification."""
+
+    said: str = Field(..., description="Schema SAID")
+    valid: bool = Field(..., description="Whether stored SAID matches computed")
+    computed_said: Optional[str] = Field(None, description="Computed SAID if different")
+
+
+class WebOfTrustRegistryResponse(BaseModel):
+    """Response listing WebOfTrust registry schemas."""
+
+    schemas: list[dict] = Field(..., description="Available schemas in registry")
+    count: int = Field(..., description="Number of schemas")
+    ref: str = Field(..., description="Git ref used (branch/tag/commit)")
 
 
 # =============================================================================
