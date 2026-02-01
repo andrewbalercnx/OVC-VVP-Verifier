@@ -19,28 +19,28 @@ class IssuerClient:
         self.api_key = api_key
         self._client: httpx.AsyncClient | None = None
 
-    @property
-    def client(self) -> httpx.AsyncClient:
-        """Get or create the HTTP client."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers={"X-API-Key": self.api_key},
-                timeout=30.0,
-            )
-        return self._client
+    def _get_client(self) -> httpx.AsyncClient:
+        """Create a new HTTP client for each request.
+
+        This avoids event loop binding issues when used across different
+        async contexts.
+        """
+        return httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={"X-API-Key": self.api_key},
+            timeout=30.0,
+        )
 
     async def close(self) -> None:
-        """Close the HTTP client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        """Close the HTTP client (no-op, clients are per-request now)."""
+        pass
 
     async def health_check(self) -> dict:
         """Check issuer service health."""
-        response = await self.client.get("/healthz")
-        response.raise_for_status()
-        return response.json()
+        async with self._get_client() as client:
+            response = await client.get("/healthz")
+            response.raise_for_status()
+            return response.json()
 
     async def create_identity(
         self,
@@ -56,21 +56,23 @@ class IssuerClient:
         Returns:
             Response containing identity details
         """
-        response = await self.client.post(
-            "/identity",
-            json={
-                "name": name,
-                "publish_to_witnesses": publish_to_witnesses,
-            },
-        )
-        response.raise_for_status()
-        return response.json()
+        async with self._get_client() as client:
+            response = await client.post(
+                "/identity",
+                json={
+                    "name": name,
+                    "publish_to_witnesses": publish_to_witnesses,
+                },
+            )
+            response.raise_for_status()
+            return response.json()
 
     async def get_identity(self, aid: str) -> dict:
         """Get identity by AID."""
-        response = await self.client.get(f"/identity/{aid}")
-        response.raise_for_status()
-        return response.json()
+        async with self._get_client() as client:
+            response = await client.get(f"/identity/{aid}")
+            response.raise_for_status()
+            return response.json()
 
     async def rotate_identity(
         self,
@@ -96,9 +98,10 @@ class IssuerClient:
         if next_threshold is not None:
             payload["next_threshold"] = next_threshold
 
-        response = await self.client.post(f"/identity/{aid}/rotate", json=payload)
-        response.raise_for_status()
-        return response.json()
+        async with self._get_client() as client:
+            response = await client.post(f"/identity/{aid}/rotate", json=payload)
+            response.raise_for_status()
+            return response.json()
 
     async def create_registry(
         self,
@@ -114,15 +117,16 @@ class IssuerClient:
         Returns:
             Response containing registry details
         """
-        response = await self.client.post(
-            "/registry",
-            json={
-                "name": name,
-                "identity_name": identity_name,
-            },
-        )
-        response.raise_for_status()
-        return response.json()
+        async with self._get_client() as client:
+            response = await client.post(
+                "/registry",
+                json={
+                    "name": name,
+                    "identity_name": identity_name,
+                },
+            )
+            response.raise_for_status()
+            return response.json()
 
     async def issue_credential(
         self,
@@ -164,15 +168,17 @@ class IssuerClient:
         if rules:
             payload["rules"] = rules
 
-        response = await self.client.post("/credential/issue", json=payload)
-        response.raise_for_status()
-        return response.json()
+        async with self._get_client() as client:
+            response = await client.post("/credential/issue", json=payload)
+            response.raise_for_status()
+            return response.json()
 
     async def get_credential(self, said: str) -> dict:
         """Get credential by SAID."""
-        response = await self.client.get(f"/credential/{said}")
-        response.raise_for_status()
-        return response.json()
+        async with self._get_client() as client:
+            response = await client.get(f"/credential/{said}")
+            response.raise_for_status()
+            return response.json()
 
     async def list_credentials(
         self,
@@ -186,9 +192,10 @@ class IssuerClient:
         if status:
             params["status"] = status
 
-        response = await self.client.get("/credential", params=params)
-        response.raise_for_status()
-        return response.json()["credentials"]
+        async with self._get_client() as client:
+            response = await client.get("/credential", params=params)
+            response.raise_for_status()
+            return response.json()["credentials"]
 
     async def revoke_credential(
         self,
@@ -210,9 +217,10 @@ class IssuerClient:
         if reason:
             payload["reason"] = reason
 
-        response = await self.client.post(f"/credential/{said}/revoke", json=payload)
-        response.raise_for_status()
-        return response.json()
+        async with self._get_client() as client:
+            response = await client.post(f"/credential/{said}/revoke", json=payload)
+            response.raise_for_status()
+            return response.json()
 
     async def build_dossier(
         self,
@@ -230,16 +238,17 @@ class IssuerClient:
         Returns:
             Dossier content as bytes
         """
-        response = await self.client.post(
-            "/dossier/build",
-            json={
-                "root_said": root_said,
-                "format": format,
-                "include_tel": include_tel,
-            },
-        )
-        response.raise_for_status()
-        return response.content
+        async with self._get_client() as client:
+            response = await client.post(
+                "/dossier/build",
+                json={
+                    "root_said": root_said,
+                    "format": format,
+                    "include_tel": include_tel,
+                },
+            )
+            response.raise_for_status()
+            return response.content
 
     async def build_aggregate_dossier(
         self,
@@ -257,16 +266,17 @@ class IssuerClient:
         Returns:
             Dossier content as bytes
         """
-        response = await self.client.post(
-            "/dossier/build",
-            json={
-                "root_saids": root_saids,
-                "format": format,
-                "include_tel": include_tel,
-            },
-        )
-        response.raise_for_status()
-        return response.content
+        async with self._get_client() as client:
+            response = await client.post(
+                "/dossier/build",
+                json={
+                    "root_saids": root_saids,
+                    "format": format,
+                    "include_tel": include_tel,
+                },
+            )
+            response.raise_for_status()
+            return response.content
 
     async def get_dossier(
         self,
@@ -285,6 +295,7 @@ class IssuerClient:
             Dossier content as bytes
         """
         params = {"format": format, "include_tel": str(include_tel).lower()}
-        response = await self.client.get(f"/dossier/{said}", params=params)
-        response.raise_for_status()
-        return response.content
+        async with self._get_client() as client:
+            response = await client.get(f"/dossier/{said}", params=params)
+            response.raise_for_status()
+            return response.content

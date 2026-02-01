@@ -65,29 +65,28 @@ class VerifierClient:
             base_url: Base URL of the verifier service (e.g., http://localhost:8000)
         """
         self.base_url = base_url.rstrip("/")
-        self._client: httpx.AsyncClient | None = None
 
-    @property
-    def client(self) -> httpx.AsyncClient:
-        """Get or create the HTTP client."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                timeout=30.0,
-            )
-        return self._client
+    def _get_client(self) -> httpx.AsyncClient:
+        """Create a new HTTP client for each request.
+
+        This avoids event loop binding issues when used across different
+        async contexts.
+        """
+        return httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=30.0,
+        )
 
     async def close(self) -> None:
-        """Close the HTTP client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        """Close the HTTP client (no-op, clients are per-request now)."""
+        pass
 
     async def health_check(self) -> dict:
         """Check verifier service health."""
-        response = await self.client.get("/healthz")
-        response.raise_for_status()
-        return response.json()
+        async with self._get_client() as client:
+            response = await client.get("/healthz")
+            response.raise_for_status()
+            return response.json()
 
     async def verify(
         self,
@@ -115,38 +114,39 @@ class VerifierClient:
 
             received_at = datetime.now(timezone.utc).isoformat()
 
-        response = await self.client.post(
-            "/verify",
-            headers={"VVP-Identity": vvp_identity},
-            json={
-                "passport_jwt": passport_jwt,
-                "context": {
-                    "call_id": call_id,
-                    "received_at": received_at,
+        async with self._get_client() as client:
+            response = await client.post(
+                "/verify",
+                headers={"VVP-Identity": vvp_identity},
+                json={
+                    "passport_jwt": passport_jwt,
+                    "context": {
+                        "call_id": call_id,
+                        "received_at": received_at,
+                    },
                 },
-            },
-        )
-
-        # Don't raise for HTTP errors - the verify endpoint returns 200
-        # even for invalid passports (status is in the response body)
-        if response.status_code != 200:
-            return VerifyResponse(
-                request_id="",
-                overall_status="ERROR",
-                claims=None,
-                errors=[
-                    {
-                        "code": "HTTP_ERROR",
-                        "message": f"HTTP {response.status_code}: {response.text}",
-                    }
-                ],
-                signer_aid=None,
-                delegation_chain=None,
-                has_variant_limitations=False,
-                raw={"http_status": response.status_code, "body": response.text},
             )
 
-        return VerifyResponse.from_dict(response.json())
+            # Don't raise for HTTP errors - the verify endpoint returns 200
+            # even for invalid passports (status is in the response body)
+            if response.status_code != 200:
+                return VerifyResponse(
+                    request_id="",
+                    overall_status="ERROR",
+                    claims=None,
+                    errors=[
+                        {
+                            "code": "HTTP_ERROR",
+                            "message": f"HTTP {response.status_code}: {response.text}",
+                        }
+                    ],
+                    signer_aid=None,
+                    delegation_chain=None,
+                    has_variant_limitations=False,
+                    raw={"http_status": response.status_code, "body": response.text},
+                )
+
+            return VerifyResponse.from_dict(response.json())
 
     @staticmethod
     def build_vvp_identity(
