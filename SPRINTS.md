@@ -492,6 +492,8 @@ services/issuer/app/schema/
 - [x] Edge resolution tests (all edge types including direct SAID, dangling edges)
 - [x] Benchmark results dashboard at `/admin/benchmarks/ui`
 - [x] Azure Blob Storage helper for dossier hosting in Azure mode (SAS URLs)
+- [x] Post-deployment integration tests in CI/CD (runs after deploy)
+- [x] Deployment test results dashboard at `/admin` (shows pass/fail, history)
 
 **Test Scenarios:**
 | Scenario | Description |
@@ -528,11 +530,13 @@ tests/
 scripts/
 └── run-integration-tests.sh         # Run integration tests
 .github/workflows/
-└── integration-tests.yml            # Nightly CI/CD
+├── integration-tests.yml            # Nightly CI/CD
+└── deploy.yml                       # Post-deployment integration tests
 services/issuer/app/api/
-└── admin.py                         # Added /admin/benchmarks endpoint
+└── admin.py                         # /admin/benchmarks + /admin/deployment-tests
 services/issuer/web/
-└── benchmarks.html                  # Benchmark dashboard UI
+├── benchmarks.html                  # Benchmark dashboard UI
+└── admin.html                       # Admin dashboard with deployment test results
 ```
 
 **Configuration:**
@@ -543,6 +547,7 @@ services/issuer/web/
 | `VVP_VERIFIER_URL` | Verifier endpoint |
 | `VVP_TEST_API_KEY` | API key for test operations |
 | `VVP_AZURE_STORAGE_CONNECTION_STRING` | Azure Storage for EVD URL serving |
+| `VVP_ADMIN_API_KEY` | Admin API key for submitting test results (CI/CD secret) |
 
 **Benchmark Thresholds:**
 | Metric | p95 Target | p99 Max |
@@ -557,6 +562,8 @@ services/issuer/web/
 - [x] CI/CD runs integration tests nightly
 - [x] Performance benchmarks with configurable thresholds
 - [x] Benchmark dashboard at /admin/benchmarks/ui
+- [x] Post-deployment integration tests run after Azure deploy
+- [x] Deployment test results visible at /admin with history
 
 ---
 

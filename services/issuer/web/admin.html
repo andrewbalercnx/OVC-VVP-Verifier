@@ -151,6 +151,78 @@
       color: var(--vvp-muted);
     }
 
+    /* Deployment test styles */
+    .deployment-status {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+    .deployment-status.passed {
+      background: #d4edda;
+      border: 1px solid #c3e6cb;
+    }
+    .deployment-status.failed {
+      background: #f8d7da;
+      border: 1px solid #f5c6cb;
+    }
+    .deployment-status.unknown {
+      background: #e2e3e5;
+      border: 1px solid #d6d8db;
+    }
+    .deployment-icon {
+      font-size: 2rem;
+    }
+    .deployment-details {
+      flex: 1;
+    }
+    .deployment-title {
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+    .deployment-meta {
+      font-size: 0.85em;
+      color: var(--vvp-muted);
+    }
+    .deployment-stats {
+      display: flex;
+      gap: 1rem;
+      margin-top: 0.5rem;
+    }
+    .deployment-stat {
+      font-size: 0.9em;
+    }
+    .deployment-stat strong {
+      color: var(--vvp-primary);
+    }
+    .test-history {
+      margin-top: 1rem;
+    }
+    .test-history-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem;
+      border-bottom: 1px solid #eee;
+    }
+    .test-history-item:last-child {
+      border-bottom: none;
+    }
+    .test-history-sha {
+      font-family: monospace;
+      font-size: 0.85em;
+    }
+    .test-history-result {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .test-history-result .badge {
+      font-size: 0.75em;
+    }
+
     .auth-info {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -217,6 +289,37 @@
         </div>
       </div>
     </section>
+
+    <!-- Deployment Test Results -->
+    <details class="config-section" open>
+      <summary>
+        <span class="section-title">Deployment Tests</span>
+        <span class="badge" id="deployment-badge">Loading...</span>
+      </summary>
+      <div style="padding: 1rem;">
+        <div id="deployment-status" class="deployment-status unknown">
+          <span class="deployment-icon" id="deployment-icon">?</span>
+          <div class="deployment-details">
+            <div class="deployment-title" id="deployment-title">No test results</div>
+            <div class="deployment-meta" id="deployment-meta">Run deployment tests to see results</div>
+            <div class="deployment-stats" id="deployment-stats" style="display: none;">
+              <span class="deployment-stat"><strong id="tests-passed">0</strong> passed</span>
+              <span class="deployment-stat"><strong id="tests-failed">0</strong> failed</span>
+              <span class="deployment-stat"><strong id="tests-duration">0</strong>s duration</span>
+            </div>
+          </div>
+        </div>
+
+        <details class="test-history">
+          <summary>Test History</summary>
+          <div id="test-history-list">
+            <div class="test-history-item">
+              <span class="deployment-meta">No test history available</span>
+            </div>
+          </div>
+        </details>
+      </div>
+    </details>
 
     <!-- Service Statistics -->
     <details class="config-section" open>
@@ -360,6 +463,86 @@
 
   <script src="/static/shared.js"></script>
   <script>
+    // Load deployment test results
+    async function loadDeploymentTests() {
+      try {
+        const resp = await fetch('/admin/deployment-tests');
+        if (!resp.ok) {
+          if (resp.status === 401) {
+            document.getElementById('deployment-badge').textContent = 'Auth Required';
+            document.getElementById('deployment-badge').className = 'badge badge-warning';
+            return;
+          }
+          throw new Error('Failed to fetch deployment tests');
+        }
+        const data = await resp.json();
+
+        const badge = document.getElementById('deployment-badge');
+        const statusEl = document.getElementById('deployment-status');
+        const iconEl = document.getElementById('deployment-icon');
+        const titleEl = document.getElementById('deployment-title');
+        const metaEl = document.getElementById('deployment-meta');
+        const statsEl = document.getElementById('deployment-stats');
+
+        if (data.latest) {
+          const latest = data.latest;
+          const timestamp = new Date(latest.timestamp).toLocaleString();
+          const shortSha = latest.git_sha.substring(0, 8);
+
+          if (latest.passed) {
+            badge.textContent = 'Passing';
+            badge.className = 'badge badge-success';
+            statusEl.className = 'deployment-status passed';
+            iconEl.textContent = '\u2713';
+            titleEl.textContent = 'Deployment Tests Passed';
+          } else {
+            badge.textContent = 'Failing';
+            badge.className = 'badge badge-danger';
+            statusEl.className = 'deployment-status failed';
+            iconEl.textContent = '\u2717';
+            titleEl.textContent = 'Deployment Tests Failed';
+          }
+
+          metaEl.innerHTML = `Commit <code>${shortSha}</code> tested at ${timestamp}`;
+          statsEl.style.display = 'flex';
+          document.getElementById('tests-passed').textContent = latest.passed_tests;
+          document.getElementById('tests-failed').textContent = latest.failed_tests;
+          document.getElementById('tests-duration').textContent = latest.duration_seconds.toFixed(1);
+        } else {
+          badge.textContent = 'No Data';
+          badge.className = 'badge badge-muted';
+        }
+
+        // Render history
+        const historyEl = document.getElementById('test-history-list');
+        if (data.history && data.history.length > 0) {
+          historyEl.innerHTML = data.history.map(item => {
+            const timestamp = new Date(item.timestamp).toLocaleString();
+            const shortSha = item.git_sha.substring(0, 8);
+            const badgeClass = item.passed ? 'badge-success' : 'badge-danger';
+            const badgeText = item.passed ? 'PASS' : 'FAIL';
+            return `
+              <div class="test-history-item">
+                <div>
+                  <span class="test-history-sha">${shortSha}</span>
+                  <span class="deployment-meta">${timestamp}</span>
+                </div>
+                <div class="test-history-result">
+                  <span>${item.passed_tests}/${item.total_tests}</span>
+                  <span class="badge ${badgeClass}">${badgeText}</span>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+
+      } catch (err) {
+        console.error('Failed to load deployment tests:', err);
+        document.getElementById('deployment-badge').textContent = 'Error';
+        document.getElementById('deployment-badge').className = 'badge badge-danger';
+      }
+    }
+
     // Load admin data on page load
     async function loadAdminData() {
       try {
@@ -512,7 +695,10 @@
     }
 
     // Load data on page load
-    document.addEventListener('DOMContentLoaded', loadAdminData);
+    document.addEventListener('DOMContentLoaded', () => {
+      loadAdminData();
+      loadDeploymentTests();
+    });
   </script>
 </body>
 </html>

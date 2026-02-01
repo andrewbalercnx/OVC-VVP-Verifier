@@ -615,6 +615,169 @@ class BenchmarkResultsResponse(BaseModel):
     thresholds: dict[str, BenchmarkThreshold]
 
 
+# =============================================================================
+# Deployment Test Results
+# =============================================================================
+
+# Deployment test results storage
+DEPLOYMENT_TEST_RESULTS_FILE = Path(os.getenv(
+    "VVP_DEPLOYMENT_TEST_RESULTS",
+    "/data/vvp-issuer/deployment_tests.json"
+))
+# Local fallback for development
+DEPLOYMENT_TEST_LOCAL_FILE = Path(__file__).parent.parent.parent / "deployment_tests.json"
+
+
+class DeploymentTestResult(BaseModel):
+    """Single deployment test run result."""
+
+    timestamp: str
+    git_sha: str
+    passed: bool
+    total_tests: int
+    passed_tests: int
+    failed_tests: int
+    duration_seconds: float
+    issuer_url: str
+    verifier_url: str
+    details: dict | None = None
+    errors: list[str] | None = None
+
+
+class DeploymentTestHistoryResponse(BaseModel):
+    """Response with deployment test history."""
+
+    latest: DeploymentTestResult | None
+    history: list[DeploymentTestResult]
+
+
+class DeploymentTestSubmission(BaseModel):
+    """Request to submit deployment test results."""
+
+    git_sha: str
+    passed: bool
+    total_tests: int
+    passed_tests: int
+    failed_tests: int
+    duration_seconds: float
+    issuer_url: str
+    verifier_url: str
+    details: dict | None = None
+    errors: list[str] | None = None
+
+
+def _get_deployment_test_file() -> Path:
+    """Get the deployment test results file path."""
+    if DEPLOYMENT_TEST_RESULTS_FILE.parent.exists():
+        return DEPLOYMENT_TEST_RESULTS_FILE
+    # Fall back to local file
+    return DEPLOYMENT_TEST_LOCAL_FILE
+
+
+def _load_deployment_test_history() -> list[DeploymentTestResult]:
+    """Load deployment test history from file."""
+    import json
+
+    results = []
+    test_file = _get_deployment_test_file()
+
+    if test_file.exists():
+        try:
+            data = json.loads(test_file.read_text())
+            for item in data.get("results", []):
+                results.append(DeploymentTestResult(**item))
+        except Exception as e:
+            log.warning(f"Failed to load deployment test history: {e}")
+
+    return results
+
+
+def _save_deployment_test_history(results: list[DeploymentTestResult]) -> None:
+    """Save deployment test history to file."""
+    import json
+
+    test_file = _get_deployment_test_file()
+
+    # Ensure parent directory exists
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+
+    data = {
+        "results": [r.model_dump() for r in results[-20:]]  # Keep last 20
+    }
+    test_file.write_text(json.dumps(data, indent=2))
+
+
+@router.get("/deployment-tests", response_model=DeploymentTestHistoryResponse)
+async def get_deployment_tests(
+    principal: Principal = require_admin,
+) -> DeploymentTestHistoryResponse:
+    """Get deployment test results history.
+
+    Returns the latest deployment test run and historical results (up to 20).
+    Shows pass/fail status for post-deployment integration tests.
+
+    Requires: issuer:admin role
+    """
+    history = _load_deployment_test_history()
+
+    # Sort by timestamp descending
+    history.sort(key=lambda r: r.timestamp, reverse=True)
+
+    return DeploymentTestHistoryResponse(
+        latest=history[0] if history else None,
+        history=history[:20],
+    )
+
+
+@router.post("/deployment-tests", response_model=DeploymentTestResult)
+async def submit_deployment_test(
+    submission: DeploymentTestSubmission,
+    request: Request,
+    principal: Principal = require_admin,
+) -> DeploymentTestResult:
+    """Submit deployment test results.
+
+    Called by CI/CD pipeline after running post-deployment integration tests.
+    Stores results for viewing in the admin dashboard.
+
+    Requires: issuer:admin role
+    """
+    from datetime import datetime, timezone
+
+    audit = get_audit_logger()
+
+    # Create result with timestamp
+    result = DeploymentTestResult(
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        **submission.model_dump(),
+    )
+
+    # Load existing history, add new result, save
+    history = _load_deployment_test_history()
+    history.append(result)
+    _save_deployment_test_history(history)
+
+    # Audit log
+    audit.log_access(
+        principal_id=principal.key_id,
+        resource="admin/deployment-tests",
+        action="submit",
+        request=request,
+        details={
+            "git_sha": result.git_sha,
+            "passed": result.passed,
+            "total_tests": result.total_tests,
+        },
+    )
+
+    log.info(
+        f"Deployment test result submitted by {principal.key_id}: "
+        f"{result.passed_tests}/{result.total_tests} passed (SHA: {result.git_sha[:8]})"
+    )
+
+    return result
+
+
 @router.get("/benchmarks", response_model=BenchmarkResultsResponse)
 async def get_benchmark_results(
     principal: Principal = require_admin,

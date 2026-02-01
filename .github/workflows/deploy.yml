@@ -327,3 +327,143 @@ jobs:
           done
 
           echo "::warning::Witness OOBI endpoint returned $HTTP_CODE after 5 attempts"
+
+  # =========================================================================
+  # POST-DEPLOYMENT INTEGRATION TESTS
+  # =========================================================================
+  # Run full E2E integration tests after deployment to verify the system works
+  post-deployment-tests:
+    needs: [deploy-verifier, deploy-issuer, verify-witnesses]
+    runs-on: ubuntu-latest
+
+    env:
+      VVP_ISSUER_URL: https://vvp-issuer.rcnx.io
+      VVP_VERIFIER_URL: https://vvp-verifier.rcnx.io
+      VVP_TEST_MODE: azure
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install libsodium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsodium-dev
+
+      - name: Install keripy
+        run: pip install keri>=1.2.0
+
+      - name: Install common package
+        working-directory: common
+        run: pip install -e .
+
+      - name: Install test dependencies
+        run: |
+          pip install pytest pytest-asyncio aiohttp httpx pysodium azure-storage-blob
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for issuer and verifier to be ready..."
+          for i in {1..30}; do
+            ISSUER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$VVP_ISSUER_URL/healthz" || echo "000")
+            VERIFIER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$VVP_VERIFIER_URL/healthz" || echo "000")
+            echo "Attempt $i/30: Issuer=$ISSUER_STATUS, Verifier=$VERIFIER_STATUS"
+            if [ "$ISSUER_STATUS" = "200" ] && [ "$VERIFIER_STATUS" = "200" ]; then
+              echo "Both services are ready"
+              break
+            fi
+            sleep 10
+          done
+
+      - name: Run integration tests
+        id: integration_tests
+        env:
+          VVP_TEST_API_KEY: ${{ secrets.VVP_ADMIN_API_KEY }}
+          VVP_AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          START_TIME=$(date +%s)
+          set +e
+
+          # Run a subset of integration tests (skip benchmarks for speed)
+          python -m pytest tests/integration/ \
+            -v \
+            --tb=short \
+            -m "integration and not benchmark" \
+            --ignore=tests/integration/benchmarks/ \
+            2>&1 | tee test_output.txt
+
+          TEST_EXIT_CODE=$?
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          # Parse test results
+          PASSED=$(grep -oP '\d+(?= passed)' test_output.txt | tail -1 || echo "0")
+          FAILED=$(grep -oP '\d+(?= failed)' test_output.txt | tail -1 || echo "0")
+          TOTAL=$((PASSED + FAILED))
+
+          # Set outputs
+          echo "passed=$PASSED" >> $GITHUB_OUTPUT
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "duration=$DURATION" >> $GITHUB_OUTPUT
+          echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
+
+          # Capture errors for reporting
+          if [ $TEST_EXIT_CODE -ne 0 ]; then
+            grep -A 5 "FAILED\|ERROR" test_output.txt > errors.txt || true
+          fi
+
+          exit $TEST_EXIT_CODE
+
+      - name: Submit test results to admin endpoint
+        if: always()
+        env:
+          VVP_TEST_API_KEY: ${{ secrets.VVP_ADMIN_API_KEY }}
+        run: |
+          # Determine pass/fail status
+          if [ "${{ steps.integration_tests.outputs.exit_code }}" = "0" ]; then
+            PASSED_STATUS=true
+          else
+            PASSED_STATUS=false
+          fi
+
+          # Collect errors if any
+          ERRORS="[]"
+          if [ -f errors.txt ]; then
+            ERRORS=$(cat errors.txt | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          fi
+
+          # Submit results
+          curl -X POST "${VVP_ISSUER_URL}/admin/deployment-tests" \
+            -H "Authorization: Bearer ${VVP_TEST_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d @- <<EOF
+          {
+            "git_sha": "${{ github.sha }}",
+            "passed": ${PASSED_STATUS},
+            "total_tests": ${{ steps.integration_tests.outputs.total || 0 }},
+            "passed_tests": ${{ steps.integration_tests.outputs.passed || 0 }},
+            "failed_tests": ${{ steps.integration_tests.outputs.failed || 0 }},
+            "duration_seconds": ${{ steps.integration_tests.outputs.duration || 0 }},
+            "issuer_url": "${VVP_ISSUER_URL}",
+            "verifier_url": "${VVP_VERIFIER_URL}",
+            "errors": ${ERRORS}
+          }
+          EOF
+
+          echo "Test results submitted to ${VVP_ISSUER_URL}/admin/deployment-tests"
+
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            test_output.txt
+            errors.txt
+          retention-days: 7
