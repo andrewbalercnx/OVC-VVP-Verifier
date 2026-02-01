@@ -236,7 +236,20 @@ jobs:
             http_port: 5644
             tcp_port: 5634
 
+    env:
+      WITNESS_IMAGE: ${{ needs.build-witness-image.outputs.image }}
+
     steps:
+      - name: Validate image output
+        run: |
+          if [ -z "$WITNESS_IMAGE" ]; then
+            echo "WARNING: Witness image output is empty, constructing from secrets"
+            # Fallback: construct image URL directly
+            WITNESS_IMAGE="${{ secrets.ACR_LOGIN_SERVER }}/vvp-witness:${{ github.sha }}"
+            echo "WITNESS_IMAGE=$WITNESS_IMAGE" >> $GITHUB_ENV
+          fi
+          echo "Using witness image: $WITNESS_IMAGE"
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
@@ -246,14 +259,13 @@ jobs:
 
       - name: Deploy witness
         run: |
-          IMAGE="${{ needs.build-witness-image.outputs.image }}"
-          echo "Deploying ${{ matrix.witness.name }} with image: $IMAGE"
+          echo "Deploying ${{ matrix.witness.name }} with image: $WITNESS_IMAGE"
 
           # Update the container app with the new image and environment variables
           az containerapp update \
             --name ${{ matrix.witness.name }} \
             --resource-group ${{ secrets.AZURE_RG }} \
-            --image "$IMAGE" \
+            --image "$WITNESS_IMAGE" \
             --set-env-vars \
               "WITNESS_NAME=${{ matrix.witness.witness_name }}" \
               "HTTP_PORT=${{ matrix.witness.http_port }}" \
