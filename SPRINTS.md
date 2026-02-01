@@ -416,27 +416,10 @@ services/witness/
 .gitmodules              # keripy submodule configuration
 ```
 
-**CI/CD Updates:**
-```yaml
-jobs:
-  test-verifier:    # Tests verifier (79% coverage)
-  test-issuer:      # Tests issuer (60% coverage)
-  deploy-verifier:  # Builds and deploys verifier
-  deploy-issuer:    # Builds and deploys issuer (internal ingress)
-```
-
-**Key Files:**
-```
-.github/workflows/deploy.yml              # Updated CI/CD
-Documentation/AZURE_DEPLOYMENT.md         # Setup guide
-Documentation/AZURE_RESTORE.md            # Restore procedures
-services/issuer/scripts/verify-azure-deployment.sh
-scripts/monitor-issuer-deploy.sh
-```
-
-**Manual Steps Required:**
-1. Run Phase 1 commands from `Documentation/AZURE_DEPLOYMENT.md`
-2. Configure backup via `Documentation/AZURE_RESTORE.md`
+**Exit Criteria:** ✅ All met
+- All 5 services deployed and healthy on rcnx.io custom domains
+- CI/CD pipeline successfully builds and deploys all services
+- Witness AIDs match expected deterministic values
 3. Verify deployment with `./services/issuer/scripts/verify-azure-deployment.sh`
 
 **Exit Criteria:**
