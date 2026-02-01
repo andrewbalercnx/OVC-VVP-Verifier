@@ -158,6 +158,12 @@ def ui_admin():
     return FileResponse(WEB_DIR / "admin.html", media_type="text/html")
 
 
+@app.get("/ui/benchmarks", response_class=FileResponse)
+def ui_benchmarks():
+    """Serve the integration test benchmarks web UI."""
+    return FileResponse(WEB_DIR / "benchmarks.html", media_type="text/html")
+
+
 # -----------------------------------------------------------------------------
 # Backwards-compatible Redirects (302 during rollout, switch to 301 later)
 # -----------------------------------------------------------------------------
@@ -190,6 +196,12 @@ def redirect_credentials():
 def redirect_dossier():
     """Redirect legacy /dossier/ui to new /ui/dossier."""
     return RedirectResponse(url="/ui/dossier", status_code=302)
+
+
+@app.get("/admin/benchmarks/ui")
+def redirect_benchmarks():
+    """Redirect /admin/benchmarks/ui to /ui/benchmarks."""
+    return RedirectResponse(url="/ui/benchmarks", status_code=302)
 
 
 # -----------------------------------------------------------------------------

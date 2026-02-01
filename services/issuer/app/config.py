@@ -93,6 +93,16 @@ SERVICE_PORT: int = int(os.getenv("VVP_ISSUER_PORT", "8001"))
 
 
 # =============================================================================
+# AZURE CONFIGURATION
+# =============================================================================
+
+# Azure settings for Container App scaling management (admin feature)
+# These are only required if using the /admin/scaling endpoint
+AZURE_SUBSCRIPTION_ID: str | None = os.getenv("AZURE_SUBSCRIPTION_ID")
+AZURE_RESOURCE_GROUP: str = os.getenv("AZURE_RESOURCE_GROUP", "VVP")
+
+
+# =============================================================================
 # SECURITY CONFIGURATION
 # =============================================================================
 
