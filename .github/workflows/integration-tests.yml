@@ -1,0 +1,212 @@
+name: Integration Tests
+
+on:
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+    inputs:
+      mode:
+        description: 'Test mode (local or azure)'
+        required: false
+        default: 'local'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/integration/**'
+      - '.github/workflows/integration-tests.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # =========================================================================
+  # LOCAL INTEGRATION TESTS
+  # =========================================================================
+  integration-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install libsodium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsodium-dev
+
+      - name: Install Docker Compose
+        run: |
+          sudo apt-get install -y docker-compose
+
+      - name: Install keripy
+        run: pip install keri>=1.2.0
+
+      - name: Install common package
+        working-directory: common
+        run: pip install -e .
+
+      - name: Install issuer dependencies
+        working-directory: services/issuer
+        run: |
+          pip install -e .
+          pip install pytest pytest-asyncio aiohttp
+
+      - name: Install verifier dependencies
+        working-directory: services/verifier
+        run: pip install -e .
+
+      - name: Install integration test dependencies
+        run: |
+          pip install httpx aiohttp pysodium
+
+      - name: Start local stack
+        run: |
+          # Start witnesses and services
+          docker compose --profile full up -d
+
+          # Wait for services to be ready
+          echo "Waiting for services..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8001/healthz > /dev/null && \
+               curl -s http://localhost:8000/healthz > /dev/null; then
+              echo "Services are ready"
+              break
+            fi
+            echo "Attempt $i/30..."
+            sleep 5
+          done
+
+      - name: Run integration tests
+        env:
+          VVP_TEST_MODE: local
+          VVP_ISSUER_URL: http://localhost:8001
+          VVP_VERIFIER_URL: http://localhost:8000
+          VVP_TEST_API_KEY: test-admin-key-12345
+          VVP_BENCHMARK_OUTPUT_DIR: ${{ github.workspace }}/benchmark-output
+        run: |
+          mkdir -p "$VVP_BENCHMARK_OUTPUT_DIR"
+          python -m pytest tests/integration/ \
+            -v \
+            --tb=short \
+            -m "integration and not azure" \
+            --junitxml=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: test-results.xml
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark-output/
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          docker compose logs > docker-logs.txt
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs
+          path: docker-logs.txt
+
+      - name: Stop local stack
+        if: always()
+        run: docker compose down
+
+  # =========================================================================
+  # AZURE INTEGRATION TESTS (Nightly Only)
+  # =========================================================================
+  integration-azure:
+    needs: integration-local
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'azure')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install libsodium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsodium-dev
+
+      - name: Install keripy
+        run: pip install keri>=1.2.0
+
+      - name: Install common package
+        working-directory: common
+        run: pip install -e .
+
+      - name: Install issuer dependencies
+        working-directory: services/issuer
+        run: |
+          pip install -e .
+          pip install pytest pytest-asyncio aiohttp
+
+      - name: Install verifier dependencies
+        working-directory: services/verifier
+        run: pip install -e .
+
+      - name: Install integration test dependencies
+        run: |
+          pip install httpx aiohttp pysodium azure-storage-blob
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run Azure integration tests
+        env:
+          VVP_TEST_MODE: azure
+          VVP_ISSUER_URL: ${{ secrets.AZURE_ISSUER_URL }}
+          VVP_VERIFIER_URL: ${{ secrets.AZURE_VERIFIER_URL }}
+          VVP_TEST_API_KEY: ${{ secrets.AZURE_TEST_API_KEY }}
+          VVP_AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          VVP_BENCHMARK_OUTPUT_DIR: ${{ github.workspace }}/benchmark-output
+        run: |
+          mkdir -p "$VVP_BENCHMARK_OUTPUT_DIR"
+          python -m pytest tests/integration/ \
+            -v \
+            --tb=short \
+            -m "integration" \
+            --junitxml=azure-test-results.xml
+
+      - name: Upload Azure test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-integration-test-results
+          path: azure-test-results.xml
+
+      - name: Upload Azure benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-benchmark-results
+          path: benchmark-output/

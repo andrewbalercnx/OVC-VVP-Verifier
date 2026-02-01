@@ -1,14 +1,16 @@
 """Admin endpoints for VVP Issuer.
 
 Provides administrative operations like API key config reload,
-configuration viewing, log level control, and service statistics.
+configuration viewing, log level control, service statistics,
+and Azure Container App scaling management.
 All endpoints require issuer:admin role.
 """
 
 import logging
+import os
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 
 from app.auth.api_key import get_api_key_store, Principal
@@ -373,3 +375,337 @@ async def get_stats(
             credentials=0,
             schemas=0,
         )
+
+
+# =============================================================================
+# Azure Container App Scaling
+# =============================================================================
+
+# Azure configuration from environment
+AZURE_SUBSCRIPTION_ID = os.getenv("AZURE_SUBSCRIPTION_ID")
+AZURE_RESOURCE_GROUP = os.getenv("AZURE_RESOURCE_GROUP", "VVP")
+AZURE_CONTAINER_APPS = ["vvp-issuer", "vvp-verifier", "vvp-witness1", "vvp-witness2", "vvp-witness3"]
+
+
+class ContainerAppScale(BaseModel):
+    """Scaling configuration for a single Container App."""
+
+    name: str
+    min_replicas: int
+    max_replicas: int
+
+
+class ScaleStatusResponse(BaseModel):
+    """Response with scaling status for all Container Apps."""
+
+    success: bool
+    apps: list[ContainerAppScale]
+    message: str
+
+
+class ScaleUpdateRequest(BaseModel):
+    """Request to update minimum replicas."""
+
+    min_replicas: int  # 0 or 1
+    apps: list[str] | None = None  # Specific apps, or all if None
+
+
+class ScaleUpdateResponse(BaseModel):
+    """Response for scale update."""
+
+    success: bool
+    updated: list[str]
+    failed: list[str]
+    message: str
+
+
+def _get_container_app_client():
+    """Get Azure Container Apps management client.
+
+    Uses DefaultAzureCredential which supports:
+    - Managed Identity (in Azure)
+    - Azure CLI (local development)
+    - Environment variables (CI/CD)
+    """
+    if not AZURE_SUBSCRIPTION_ID:
+        raise HTTPException(
+            status_code=503,
+            detail="AZURE_SUBSCRIPTION_ID not configured. Scaling requires Azure credentials.",
+        )
+
+    try:
+        from azure.identity import DefaultAzureCredential
+        from azure.mgmt.appcontainers import ContainerAppsAPIClient
+
+        credential = DefaultAzureCredential()
+        return ContainerAppsAPIClient(credential, AZURE_SUBSCRIPTION_ID)
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Azure SDK not installed. Install azure-identity and azure-mgmt-appcontainers.",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to authenticate with Azure: {e}",
+        )
+
+
+@router.get("/scaling", response_model=ScaleStatusResponse)
+async def get_scaling_status(
+    principal: Principal = require_admin,
+) -> ScaleStatusResponse:
+    """Get current scaling configuration for all Container Apps.
+
+    Returns min/max replica settings for issuer, verifier, and witnesses.
+
+    Requires: issuer:admin role
+    """
+    client = _get_container_app_client()
+    apps = []
+    errors = []
+
+    for app_name in AZURE_CONTAINER_APPS:
+        try:
+            app = client.container_apps.get(AZURE_RESOURCE_GROUP, app_name)
+            scale = app.template.scale
+            apps.append(ContainerAppScale(
+                name=app_name,
+                min_replicas=scale.min_replicas or 0,
+                max_replicas=scale.max_replicas or 10,
+            ))
+        except Exception as e:
+            log.warning(f"Failed to get scaling for {app_name}: {e}")
+            errors.append(f"{app_name}: {e}")
+
+    return ScaleStatusResponse(
+        success=len(errors) == 0,
+        apps=apps,
+        message="OK" if not errors else f"Errors: {'; '.join(errors)}",
+    )
+
+
+@router.post("/scaling", response_model=ScaleUpdateResponse)
+async def update_scaling(
+    req: ScaleUpdateRequest,
+    request: Request,
+    principal: Principal = require_admin,
+) -> ScaleUpdateResponse:
+    """Update minimum replicas for Container Apps.
+
+    Set min_replicas to:
+    - 0: Scale to zero when idle (cost-saving)
+    - 1: Keep at least one instance warm (lower latency)
+
+    Note: Witnesses with LMDB storage should use min_replicas=1
+    and max_replicas=1 to maintain single-writer constraint.
+
+    Requires: issuer:admin role
+    """
+    if req.min_replicas not in [0, 1]:
+        raise HTTPException(
+            status_code=400,
+            detail="min_replicas must be 0 or 1",
+        )
+
+    client = _get_container_app_client()
+    audit = get_audit_logger()
+
+    target_apps = req.apps if req.apps else AZURE_CONTAINER_APPS
+    updated = []
+    failed = []
+
+    for app_name in target_apps:
+        if app_name not in AZURE_CONTAINER_APPS:
+            failed.append(f"{app_name}: not a VVP app")
+            continue
+
+        try:
+            # Get current app config
+            app = client.container_apps.get(AZURE_RESOURCE_GROUP, app_name)
+
+            # For witnesses, enforce maxReplicas=1 for LMDB safety
+            max_replicas = app.template.scale.max_replicas or 1
+            if app_name.startswith("vvp-witness"):
+                max_replicas = 1
+
+            # Update scale config
+            app.template.scale.min_replicas = req.min_replicas
+            app.template.scale.max_replicas = max_replicas
+
+            # Apply update (this is a long-running operation)
+            client.container_apps.begin_update(
+                AZURE_RESOURCE_GROUP,
+                app_name,
+                app,
+            ).result()  # Wait for completion
+
+            updated.append(app_name)
+            log.info(f"Updated {app_name} min_replicas to {req.min_replicas}")
+
+        except Exception as e:
+            log.error(f"Failed to update {app_name}: {e}")
+            failed.append(f"{app_name}: {e}")
+
+    # Audit log
+    audit.log_access(
+        principal_id=principal.key_id,
+        resource="admin/scaling",
+        action="update",
+        request=request,
+        details={
+            "min_replicas": req.min_replicas,
+            "updated": updated,
+            "failed": failed,
+        },
+    )
+
+    return ScaleUpdateResponse(
+        success=len(failed) == 0,
+        updated=updated,
+        failed=failed,
+        message=f"Updated {len(updated)} apps" if not failed else f"Partial update: {len(updated)} succeeded, {len(failed)} failed",
+    )
+
+
+# =============================================================================
+# Performance Benchmark Results
+# =============================================================================
+
+# Benchmark results storage paths
+# Primary: production path or env override
+# Fallback: local test output directory
+BENCHMARK_RESULTS_DIR = Path(os.getenv("VVP_BENCHMARK_RESULTS_DIR", "/data/vvp-issuer/benchmarks"))
+# Local fallback for development (relative to repo root)
+BENCHMARK_LOCAL_DIR = Path(__file__).parent.parent.parent.parent.parent / "tests" / "integration" / "benchmarks" / "output"
+
+
+class BenchmarkMetrics(BaseModel):
+    """Metrics for a single benchmark test."""
+
+    count: int
+    min: float
+    max: float
+    mean: float
+    p50: float
+    p95: float
+    p99: float
+
+
+class BenchmarkResult(BaseModel):
+    """Single benchmark run result."""
+
+    timestamp: str
+    mode: str
+    tests: dict[str, BenchmarkMetrics]
+
+
+class BenchmarkThreshold(BaseModel):
+    """Threshold configuration for a metric."""
+
+    p95_target: float
+    p99_max: float
+
+
+class BenchmarkResultsResponse(BaseModel):
+    """Response with benchmark results and history."""
+
+    latest: BenchmarkResult | None
+    history: list[BenchmarkResult]
+    thresholds: dict[str, BenchmarkThreshold]
+
+
+@router.get("/benchmarks", response_model=BenchmarkResultsResponse)
+async def get_benchmark_results(
+    principal: Principal = require_admin,
+) -> BenchmarkResultsResponse:
+    """Get integration test benchmark results.
+
+    Returns the latest benchmark run and historical results (up to 10).
+    Also includes configurable thresholds for pass/fail determination.
+
+    Requires: issuer:admin role
+    """
+    import json
+    from datetime import datetime
+
+    # Define thresholds (can be overridden via env vars)
+    thresholds = {
+        "single_credential": BenchmarkThreshold(
+            p95_target=float(os.getenv("VVP_BENCHMARK_SINGLE_P95", "5.0")),
+            p99_max=float(os.getenv("VVP_BENCHMARK_SINGLE_P99", "10.0")),
+        ),
+        "chained_credential": BenchmarkThreshold(
+            p95_target=float(os.getenv("VVP_BENCHMARK_CHAINED_P95", "10.0")),
+            p99_max=float(os.getenv("VVP_BENCHMARK_CHAINED_P99", "20.0")),
+        ),
+        "concurrent_verification": BenchmarkThreshold(
+            p95_target=float(os.getenv("VVP_BENCHMARK_CONCURRENT_P95", "15.0")),
+            p99_max=float(os.getenv("VVP_BENCHMARK_CONCURRENT_P99", "30.0")),
+        ),
+    }
+
+    history = []
+
+    def load_from_directory(dir_path: Path) -> None:
+        """Load benchmark results from a directory."""
+        if not dir_path.exists():
+            return
+
+        # Load timestamped result files
+        result_files = sorted(
+            dir_path.glob("benchmark_results_*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )[:10]
+
+        for result_file in result_files:
+            try:
+                data = json.loads(result_file.read_text())
+                # Check if we already have this timestamp
+                if any(r.timestamp == data.get("timestamp") for r in history):
+                    continue
+                tests = {}
+                for test_name, metrics in data.get("tests", {}).items():
+                    tests[test_name] = BenchmarkMetrics(**metrics)
+                history.append(BenchmarkResult(
+                    timestamp=data.get("timestamp", ""),
+                    mode=data.get("mode", "unknown"),
+                    tests=tests,
+                ))
+            except Exception as e:
+                log.warning(f"Failed to load benchmark result {result_file}: {e}")
+
+        # Also check for a single benchmark_results.json
+        single_result_file = dir_path / "benchmark_results.json"
+        if single_result_file.exists():
+            try:
+                data = json.loads(single_result_file.read_text())
+                if not any(r.timestamp == data.get("timestamp") for r in history):
+                    tests = {}
+                    for test_name, metrics in data.get("tests", {}).items():
+                        tests[test_name] = BenchmarkMetrics(**metrics)
+                    history.insert(0, BenchmarkResult(
+                        timestamp=data.get("timestamp", ""),
+                        mode=data.get("mode", "unknown"),
+                        tests=tests,
+                    ))
+            except Exception as e:
+                log.warning(f"Failed to load benchmark result: {e}")
+
+    # Load from primary directory (production/CI)
+    load_from_directory(BENCHMARK_RESULTS_DIR)
+
+    # Also check local test output directory (development)
+    if BENCHMARK_LOCAL_DIR.exists():
+        load_from_directory(BENCHMARK_LOCAL_DIR)
+
+    # Sort by timestamp descending and limit to 10
+    history.sort(key=lambda r: r.timestamp, reverse=True)
+    history = history[:10]
+
+    return BenchmarkResultsResponse(
+        latest=history[0] if history else None,
+        history=history,
+        thresholds=thresholds,
+    )

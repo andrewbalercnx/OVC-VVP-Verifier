@@ -19,7 +19,8 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 32 | Dossier Assembly | COMPLETE | Sprint 31 |
 | 33 | Azure Deployment | IN PROGRESS | Sprint 32 |
 | 34 | Schema Management | COMPLETE | Sprint 29 |
-| 35 | E2E Integration Testing | Ready | Sprint 33 |
+| 35 | E2E Integration Testing | COMPLETE | Sprint 33 |
+| 36 | Key Management & Rotation | Ready | Sprint 30 |
 
 ---
 
@@ -487,20 +488,23 @@ services/issuer/app/schema/
 
 ---
 
-## Sprint 35: End-to-End Integration Testing
+## Sprint 35: End-to-End Integration Testing (COMPLETE)
 
 **Goal:** Comprehensive integration test suite running against deployed Azure infrastructure.
 
 **Prerequisites:** Sprint 33 (Azure Deployment) complete.
 
 **Deliverables:**
-- [ ] Cross-service integration test framework
-- [ ] Full credential lifecycle test (issue → build dossier → verify)
-- [ ] Tests run against Azure-deployed issuer and verifier
-- [ ] Credential chain tests (root → intermediate → leaf)
-- [ ] All dossier formats tested against verifier `/verify` endpoint
-- [ ] Performance benchmarks for end-to-end flows
-- [ ] CI/CD integration for nightly integration test runs
+- [x] Cross-service integration test framework
+- [x] Full credential lifecycle test (issue → build dossier → verify)
+- [x] Tests run against Azure-deployed issuer and verifier
+- [x] Credential chain tests (root → intermediate → leaf)
+- [x] All dossier formats tested against verifier `/verify` endpoint
+- [x] Performance benchmarks for end-to-end flows
+- [x] CI/CD integration for nightly integration test runs
+- [x] Edge resolution tests (all edge types including direct SAID, dangling edges)
+- [x] Benchmark results dashboard at `/admin/benchmarks/ui`
+- [x] Azure Blob Storage helper for dossier hosting in Azure mode (SAS URLs)
 
 **Test Scenarios:**
 | Scenario | Description |
@@ -516,28 +520,86 @@ services/issuer/app/schema/
 **Key Files:**
 ```
 tests/
-├── integration/
-│   ├── conftest.py              # Azure endpoint fixtures
-│   ├── test_credential_lifecycle.py
-│   ├── test_dossier_verification.py
-│   ├── test_credential_chains.py
-│   └── test_revocation_flow.py
+└── integration/
+    ├── conftest.py                  # Environment fixtures, unified dossier_server
+    ├── pytest.ini                   # Test configuration
+    ├── helpers/
+    │   ├── issuer_client.py         # Issuer API wrapper
+    │   ├── verifier_client.py       # Verifier API wrapper
+    │   ├── passport_generator.py    # PASSporT generation
+    │   ├── mock_dossier_server.py   # Mock HTTP server for local EVD URL
+    │   └── azure_blob_helper.py     # Azure Blob Storage for Azure mode EVD URL
+    ├── test_credential_lifecycle.py # Includes Azure full lifecycle tests
+    ├── test_credential_chains.py
+    ├── test_dossier_formats.py
+    ├── test_revocation_flow.py
+    ├── test_aggregate_dossiers.py
+    ├── test_edge_resolution.py
+    └── benchmarks/
+        ├── conftest.py              # Benchmark fixtures
+        └── test_performance.py      # Performance tests
 scripts/
-└── run-integration-tests.sh     # Run against Azure
+└── run-integration-tests.sh         # Run integration tests
+.github/workflows/
+└── integration-tests.yml            # Nightly CI/CD
+services/issuer/app/api/
+└── admin.py                         # Added /admin/benchmarks endpoint
+services/issuer/web/
+└── benchmarks.html                  # Benchmark dashboard UI
 ```
 
 **Configuration:**
 | Variable | Description |
 |----------|-------------|
-| `VVP_ISSUER_URL` | Azure issuer endpoint |
-| `VVP_VERIFIER_URL` | Azure verifier endpoint |
+| `VVP_TEST_MODE` | Test mode (local, docker, azure) |
+| `VVP_ISSUER_URL` | Issuer endpoint |
+| `VVP_VERIFIER_URL` | Verifier endpoint |
 | `VVP_TEST_API_KEY` | API key for test operations |
+| `VVP_AZURE_STORAGE_CONNECTION_STRING` | Azure Storage for EVD URL serving |
+
+**Benchmark Thresholds:**
+| Metric | p95 Target | p99 Max |
+|--------|-----------|---------|
+| Single credential | < 5s | < 10s |
+| Chained (3 deep) | < 10s | < 20s |
+| Concurrent (10x) | < 15s | < 30s |
 
 **Exit Criteria:**
-- All integration tests pass against Azure deployment
-- Tests cover full issuer → verifier flow
-- CI/CD runs integration tests nightly
-- Performance within acceptable thresholds
+- [x] Integration tests pass locally with docker-compose
+- [x] Tests cover full issuer → verifier flow
+- [x] CI/CD runs integration tests nightly
+- [x] Performance benchmarks with configurable thresholds
+- [x] Benchmark dashboard at /admin/benchmarks/ui
+
+---
+
+## Sprint 36: Key Management & Rotation
+
+**Goal:** Add key management and rotation capabilities for issuer identities.
+
+**Prerequisites:** Sprint 30 (Security Model) complete.
+
+**Deliverables:**
+- [ ] Identity rotation API (`POST /identity/{aid}/rotate`)
+- [ ] Rotation publishing to witnesses (KEL rotation events)
+- [ ] Key state persistence validated after rotation
+- [ ] Rotation audit logging and authorization (admin-only)
+- [ ] Rotation error handling (non-transferable AIDs, invalid thresholds)
+- [ ] Tests for rotation flows (pre/post-rotation verification)
+- [ ] Consider UI functionality needed to expose this sprint's capabilities
+
+**Key Files:**
+```
+services/issuer/app/
+├── api/identity.py           # Rotation endpoint
+├── keri/identity.py          # Rotation logic
+└── tests/test_identity.py    # Rotation tests
+```
+
+**Exit Criteria:**
+- Rotate an identity and publish rotation to witnesses
+- Verifier resolves rotated key state correctly
+- Rotation tests pass for transferable and non-transferable AIDs
 
 ---
 
@@ -553,6 +615,7 @@ To start a sprint, say:
 - "Sprint 33" - Azure deployment
 - "Sprint 34" - Schema management (import, SAID generation, UI)
 - "Sprint 35" - End-to-end integration testing (against Azure)
+- "Sprint 36" - Key management & rotation
 
 Each sprint follows the pair programming workflow:
 1. Plan phase (design, review, approval)
