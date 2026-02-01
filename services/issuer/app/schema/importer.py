@@ -191,9 +191,9 @@ class SchemaImporter:
             except SAIDVerificationError:
                 raise
             except Exception as e:
+                # Log unexpected verification errors (not SAID mismatches) as warnings
+                # but continue - some schemas may use different algorithms
                 log.warning(f"SAID verification failed for {file_path}: {e}")
-                # Don't fail on verification errors - log warning but continue
-                # Some schemas may use different SAID algorithms
 
         log.info(f"Successfully imported schema: {schema.get('$id', 'unknown')[:20]}...")
         return schema

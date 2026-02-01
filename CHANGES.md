@@ -1,5 +1,64 @@
 # VVP Verifier Change Log
 
+## Sprint 34: Schema Management
+
+**Date:** 2026-02-01
+**Status:** APPROVED (Pair Review)
+
+### Summary
+
+Added schema management capabilities to VVP Issuer: SAID computation using keripy's `Saider.saidify()`, schema import from WebOfTrust/schema repository with version pinning, user schema storage with metadata handling, and enhanced UI with import/create/verify functionality.
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `services/issuer/app/schema/said.py` | SAID computation module using keripy Saider |
+| `services/issuer/app/schema/importer.py` | WebOfTrust schema import service |
+| `services/issuer/app/schema/__init__.py` | Module exports |
+| `services/issuer/tests/test_said.py` | SAID computation tests (19 tests) |
+| `services/issuer/tests/test_import.py` | Import service tests (14 tests) |
+| `services/issuer/app/Documentation/PLAN_Sprint34.md` | Archived plan |
+
+### Files Modified
+
+| File | Description |
+|------|-------------|
+| `services/issuer/app/schema/store.py` | Added user schema storage, metadata stripping |
+| `services/issuer/app/api/schema.py` | Added import/create/delete/verify endpoints |
+| `services/issuer/app/api/models.py` | Added request/response models for new endpoints |
+| `services/issuer/web/schemas.html` | Enhanced UI with tabbed interface |
+| `services/issuer/tests/test_schema.py` | Added metadata stripping and verify tests |
+| `SPRINTS.md` | Added Sprint 34 definition |
+
+### Key Features
+
+- **SAID Computation**: Uses `keri.core.coring.Saider.saidify()` for KERI-compliant SAIDs
+- **Version Pinning**: `VVP_SCHEMA_REPO_REF` env var to pin WebOfTrust repo version
+- **Metadata Handling**: `_source` field stored separately, stripped before verification
+- **Storage Separation**: Embedded (read-only) vs user-added (writable) schemas
+
+### New API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/schema/weboftrust/registry` | GET | List schemas in WebOfTrust registry |
+| `/schema/import` | POST | Import schema from URL or WebOfTrust |
+| `/schema/create` | POST | Create new schema with auto-SAID |
+| `/schema/{said}` | DELETE | Remove user-added schema |
+| `/schema/{said}/verify` | GET | Verify schema SAID |
+
+### Test Results
+
+```
+tests/test_schema.py - 13 passed
+tests/test_said.py - 19 passed
+tests/test_import.py - 14 passed, 1 skipped
+Total: 47 passed, 1 skipped
+```
+
+---
+
 ## Sprint 27: Local Witness Infrastructure
 
 **Date:** 2026-01-31

@@ -197,13 +197,23 @@ def reload_embedded_schemas() -> int:
 # ============================================================================
 
 
-def get_schema(schema_said: str) -> dict[str, Any] | None:
+def _strip_metadata(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of schema without internal metadata fields.
+
+    Removes fields like _source that are used for internal tracking
+    but should not be included in API responses or SAID verification.
+    """
+    return {k: v for k, v in schema.items() if not k.startswith("_")}
+
+
+def get_schema(schema_said: str, include_metadata: bool = False) -> dict[str, Any] | None:
     """Get a schema by SAID from any source.
 
     Searches embedded schemas first, then user-added schemas.
 
     Args:
         schema_said: The schema's self-addressing identifier ($id field).
+        include_metadata: If True, include internal metadata fields like _source.
 
     Returns:
         The schema document dict if found, None otherwise.
@@ -217,7 +227,10 @@ def get_schema(schema_said: str) -> dict[str, Any] | None:
 
     # Then check user schemas
     if schema_said in _user_schemas:
-        return _user_schemas[schema_said][0]
+        schema = _user_schemas[schema_said][0]
+        if include_metadata:
+            return schema
+        return _strip_metadata(schema)
 
     return None
 

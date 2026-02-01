@@ -163,3 +163,100 @@ async def test_schema_has_description(client: AsyncClient):
     # Legal Entity vLEI Credential has a description
     assert data["description"] is not None
     assert len(data["description"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_verify_embedded_schema_said(client: AsyncClient):
+    """Test verifying SAID of an embedded schema."""
+    response = await client.get(f"/schema/{KNOWN_EMBEDDED_SAID}/verify")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["said"] == KNOWN_EMBEDDED_SAID
+    assert data["valid"] is True
+    assert data["computed_said"] is None  # None when valid
+
+
+class TestSchemaStoreMetadata:
+    """Tests for schema store metadata handling."""
+
+    def test_get_schema_strips_metadata(self):
+        """get_schema should strip _source metadata by default."""
+        from app.schema.store import (
+            add_schema,
+            get_schema,
+            remove_schema,
+            reload_all_schemas,
+        )
+        from app.schema.said import inject_said
+
+        # Force reload to clear cache
+        reload_all_schemas()
+
+        # Create a test schema with SAID
+        template = {
+            "$id": "",
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "title": "Test Metadata Schema",
+            "type": "object",
+        }
+        schema = inject_said(template)
+        said = schema["$id"]
+
+        try:
+            # Add it (this injects _source metadata)
+            add_schema(schema, source="test")
+
+            # Get it back - should NOT have _source
+            retrieved = get_schema(said)
+            assert retrieved is not None
+            assert "_source" not in retrieved
+            assert retrieved["$id"] == said
+
+            # Get with metadata - SHOULD have _source
+            retrieved_with_meta = get_schema(said, include_metadata=True)
+            assert retrieved_with_meta is not None
+            assert "_source" in retrieved_with_meta
+            assert retrieved_with_meta["_source"] == "test"
+        finally:
+            # Clean up
+            remove_schema(said)
+            reload_all_schemas()
+
+    def test_user_schema_verifies_correctly(self):
+        """User schemas should verify correctly after stripping metadata."""
+        from app.schema.store import (
+            add_schema,
+            get_schema,
+            remove_schema,
+            reload_all_schemas,
+        )
+        from app.schema.said import inject_said, verify_schema_said
+
+        # Force reload to clear cache
+        reload_all_schemas()
+
+        # Create a test schema with SAID
+        template = {
+            "$id": "",
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "title": "Test Verify Schema",
+            "type": "object",
+        }
+        schema = inject_said(template)
+        said = schema["$id"]
+
+        try:
+            # Add it as imported (this injects _source metadata)
+            add_schema(schema, source="imported")
+
+            # Get the schema (metadata stripped)
+            retrieved = get_schema(said)
+            assert retrieved is not None
+
+            # Verify the SAID - should work because _source is stripped
+            assert verify_schema_said(retrieved) is True
+        finally:
+            # Clean up
+            remove_schema(said)
+            reload_all_schemas()
