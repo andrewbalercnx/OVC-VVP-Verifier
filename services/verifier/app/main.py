@@ -368,17 +368,34 @@ async def admin_witness_discover():
         from app.vvp.keri.witness_pool import get_witness_pool
 
         pool = get_witness_pool()
+
+        # Check if GLEIF discovery is actually enabled
+        gleif_enabled = pool._gleif_discovery_enabled
+        gleif_url = pool._gleif_oobi_url
+
+        if not gleif_enabled or not gleif_url:
+            return {
+                "success": False,
+                "gleif_enabled": gleif_enabled,
+                "gleif_url_configured": bool(gleif_url),
+                "message": "GLEIF discovery not configured. Set GLEIF_OOBI_URL environment variable.",
+                "configured_witnesses": pool.configured_count,
+                "discovered_witnesses": pool.discovered_count
+            }
+
         # Force rediscovery by resetting the discovery flag
         pool._gleif_discovered = False
         await pool._ensure_gleif_discovered()
-        witnesses = await pool.get_all_witnesses()
 
-        log.info(f"GLEIF witness discovery triggered via admin endpoint, found {len(witnesses)} witnesses")
+        log.info(f"GLEIF witness discovery triggered via admin endpoint, found {pool.discovered_count} GLEIF witnesses")
 
         return {
             "success": True,
-            "count": len(witnesses),
-            "message": f"Discovered {len(witnesses)} witnesses"
+            "gleif_enabled": True,
+            "configured_witnesses": pool.configured_count,
+            "discovered_witnesses": pool.discovered_count,
+            "total_witnesses": pool.total_count,
+            "message": f"Discovered {pool.discovered_count} GLEIF witnesses"
         }
     except Exception as e:
         log.error(f"Failed to discover witnesses: {e}")

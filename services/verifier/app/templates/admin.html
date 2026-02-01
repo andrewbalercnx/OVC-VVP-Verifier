@@ -341,10 +341,12 @@ async function discoverWitnesses() {
         });
         const result = await resp.json();
         if (result.success) {
-            showToast('Discovered ' + result.count + ' witnesses', 'success');
+            showToast(`Discovered ${result.discovered_witnesses} GLEIF witnesses (${result.total_witnesses} total)`, 'success');
             loadAdminData(); // Refresh
+        } else if (result.gleif_enabled === false || result.gleif_url_configured === false) {
+            showToast('GLEIF discovery not configured - set GLEIF_OOBI_URL env var', 'warning');
         } else {
-            showToast('Discovery failed: ' + (result.detail || result.error), 'error');
+            showToast('Discovery failed: ' + (result.detail || result.message || result.error), 'error');
         }
     } catch (err) {
         showToast('Discovery failed: ' + err.message, 'error');
