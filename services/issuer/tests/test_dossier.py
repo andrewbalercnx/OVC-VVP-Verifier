@@ -153,20 +153,22 @@ def test_extract_edge_targets_mixed():
     assert "Edirect_target" in targets
 
 
-def test_extract_edge_targets_skips_non_said():
-    """Test that non-SAID strings are skipped."""
+def test_extract_edge_targets_accepts_all_strings():
+    """Test that all string edge values are accepted (matching verifier behavior)."""
     from app.dossier.builder import DossierBuilder
 
     builder = DossierBuilder()
     edges = {
-        "valid": "Evalid_said",
-        "invalid": "not_a_said",  # Doesn't start with E
-        "also_invalid": {"n": "not_a_said"},
+        "e_prefix": "Evalid_said",
+        "other_prefix": "Dother_said",  # D prefix (e.g., delegated AID)
+        "structured": {"n": "Bstructured_target"},  # B prefix
     }
 
     targets = builder._extract_edge_targets(edges)
-    assert len(targets) == 1
+    assert len(targets) == 3
     assert "Evalid_said" in targets
+    assert "Dother_said" in targets
+    assert "Bstructured_target" in targets
 
 
 # =============================================================================

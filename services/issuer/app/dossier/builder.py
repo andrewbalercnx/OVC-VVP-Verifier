@@ -249,7 +249,7 @@ class DossierBuilder:
         """Extract SAIDs referenced in edges.
 
         Handles both structured edges (dict with 'n' key) and direct SAID strings.
-        Matches verifier's extract_edge_targets() logic.
+        Matches verifier's extract_edge_targets() logic exactly.
 
         Args:
             edges: The 'e' section of a credential
@@ -264,11 +264,9 @@ class DossierBuilder:
                 continue  # Skip edge block's own SAID
 
             if isinstance(edge_ref, dict) and "n" in edge_ref:
-                # Structured edge: {"n": "Exxx...", "s": "Eschema..."}
-                target = edge_ref["n"]
-                if isinstance(target, str) and target.startswith("E"):
-                    targets.append(target)
-            elif isinstance(edge_ref, str) and edge_ref.startswith("E"):
+                # Structured edge: {"n": "...", "s": "..."}
+                targets.append(edge_ref["n"])
+            elif isinstance(edge_ref, str):
                 # Direct SAID string
                 targets.append(edge_ref)
 

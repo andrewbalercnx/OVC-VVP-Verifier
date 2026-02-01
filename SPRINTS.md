@@ -19,6 +19,7 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 32 | Dossier Assembly | COMPLETE | Sprint 31 |
 | 33 | Azure Deployment | Ready | Sprint 32 |
 | 34 | Schema Management | COMPLETE | Sprint 29 |
+| 35 | E2E Integration Testing | Ready | Sprint 33 |
 
 ---
 
@@ -471,6 +472,60 @@ services/issuer/app/schema/
 
 ---
 
+## Sprint 35: End-to-End Integration Testing
+
+**Goal:** Comprehensive integration test suite running against deployed Azure infrastructure.
+
+**Prerequisites:** Sprint 33 (Azure Deployment) complete.
+
+**Deliverables:**
+- [ ] Cross-service integration test framework
+- [ ] Full credential lifecycle test (issue → build dossier → verify)
+- [ ] Tests run against Azure-deployed issuer and verifier
+- [ ] Credential chain tests (root → intermediate → leaf)
+- [ ] All dossier formats tested against verifier `/verify` endpoint
+- [ ] Performance benchmarks for end-to-end flows
+- [ ] CI/CD integration for nightly integration test runs
+
+**Test Scenarios:**
+| Scenario | Description |
+|----------|-------------|
+| Single credential | Issue one TN Allocation, build dossier, verify |
+| Chained credentials | Issue chain (LE → TN Alloc), verify full chain |
+| Aggregate dossier | Multiple root credentials in one dossier |
+| CESR format | Build CESR dossier, verify via `/verify` |
+| JSON format | Build JSON array dossier, verify via `/verify` |
+| Revocation | Issue, revoke, verify rejection |
+| Edge resolution | Verify all edge types parsed correctly |
+
+**Key Files:**
+```
+tests/
+├── integration/
+│   ├── conftest.py              # Azure endpoint fixtures
+│   ├── test_credential_lifecycle.py
+│   ├── test_dossier_verification.py
+│   ├── test_credential_chains.py
+│   └── test_revocation_flow.py
+scripts/
+└── run-integration-tests.sh     # Run against Azure
+```
+
+**Configuration:**
+| Variable | Description |
+|----------|-------------|
+| `VVP_ISSUER_URL` | Azure issuer endpoint |
+| `VVP_VERIFIER_URL` | Azure verifier endpoint |
+| `VVP_TEST_API_KEY` | API key for test operations |
+
+**Exit Criteria:**
+- All integration tests pass against Azure deployment
+- Tests cover full issuer → verifier flow
+- CI/CD runs integration tests nightly
+- Performance within acceptable thresholds
+
+---
+
 ## Quick Reference
 
 To start a sprint, say:
@@ -482,6 +537,7 @@ To start a sprint, say:
 - "Sprint 32" - Dossier assembly
 - "Sprint 33" - Azure deployment
 - "Sprint 34" - Schema management (import, SAID generation, UI)
+- "Sprint 35" - End-to-end integration testing (against Azure)
 
 Each sprint follows the pair programming workflow:
 1. Plan phase (design, review, approval)
