@@ -266,11 +266,15 @@ class IssuerClient:
         Returns:
             Dossier content as bytes
         """
+        if not root_saids:
+            raise ValueError("root_saids cannot be empty")
+
         async with self._get_client() as client:
             response = await client.post(
                 "/dossier/build",
                 json={
-                    "root_saids": root_saids,
+                    "root_said": root_saids[0],  # Primary root (required by API)
+                    "root_saids": root_saids,    # All roots for aggregate
                     "format": format,
                     "include_tel": include_tel,
                 },

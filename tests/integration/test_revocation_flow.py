@@ -246,5 +246,5 @@ class TestRevocationFlow:
         # Get credential
         retrieved = await issuer_client.get_credential(credential["said"])
 
-        assert retrieved["credential"]["status"] == "revoked"
-        assert retrieved["credential"]["revocation_dt"] is not None
+        assert retrieved["status"] == "revoked"
+        assert retrieved["revocation_dt"] is not None

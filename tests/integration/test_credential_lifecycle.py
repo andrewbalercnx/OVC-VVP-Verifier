@@ -197,8 +197,8 @@ class TestSingleCredentialLifecycle:
         # Retrieve by SAID
         retrieved = await issuer_client.get_credential(credential["said"])
 
-        assert retrieved["credential"]["said"] == credential["said"]
-        assert retrieved["credential"]["status"] == "issued"
+        assert retrieved["said"] == credential["said"]
+        assert retrieved["status"] == "issued"
 
 
 @pytest.mark.integration
