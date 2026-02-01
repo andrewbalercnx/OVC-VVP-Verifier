@@ -68,7 +68,7 @@ def environment_config() -> EnvironmentConfig:
 # Service Clients
 # =============================================================================
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def issuer_client(
     environment_config: EnvironmentConfig,
 ) -> AsyncGenerator[IssuerClient, None]:
@@ -81,7 +81,7 @@ async def issuer_client(
     await client.close()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def verifier_client(
     environment_config: EnvironmentConfig,
 ) -> AsyncGenerator[VerifierClient, None]:
@@ -95,7 +95,7 @@ async def verifier_client(
 # Mock Dossier Server (for local/docker tests)
 # =============================================================================
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def mock_dossier_server(
     environment_config: EnvironmentConfig,
 ) -> AsyncGenerator[MockDossierServer | None, None]:
@@ -114,7 +114,7 @@ async def mock_dossier_server(
     await server.stop()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def azure_blob_server(
     environment_config: EnvironmentConfig,
 ) -> AsyncGenerator[AzureBlobDossierServer | None, None]:
@@ -144,7 +144,7 @@ async def azure_blob_server(
     await server.stop()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def dossier_server(
     environment_config: EnvironmentConfig,
     mock_dossier_server: MockDossierServer | None,
@@ -175,7 +175,7 @@ async def dossier_server(
 # Test Identity and Registry Fixtures
 # =============================================================================
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def test_identity(issuer_client: IssuerClient) -> dict:
     """Create a test identity for credential issuance.
 
@@ -188,7 +188,7 @@ async def test_identity(issuer_client: IssuerClient) -> dict:
     return result["identity"]
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def test_registry(issuer_client: IssuerClient, test_identity: dict) -> dict:
     """Create a test registry linked to test identity."""
     import uuid

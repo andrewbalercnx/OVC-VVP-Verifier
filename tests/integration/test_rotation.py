@@ -222,5 +222,5 @@ async def test_credential_still_valid_after_rotation(
 
     # Verify credential is still accessible
     cred = await issuer_client.get_credential(cred_said)
-    assert cred["said"] == cred_said
-    assert cred["status"] == "issued"
+    assert cred["credential"]["said"] == cred_said
+    assert cred["credential"]["status"] == "issued"
