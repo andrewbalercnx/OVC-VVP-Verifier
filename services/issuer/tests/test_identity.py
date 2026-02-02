@@ -623,3 +623,80 @@ def test_get_oobi_base_urls_empty_config(monkeypatch):
     result = identity._get_oobi_base_urls()
 
     assert result == []
+
+
+# =============================================================================
+# Delete Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_delete_identity_success(client: AsyncClient):
+    """Test successful identity deletion via API."""
+    name = unique_name("delete")
+
+    # Create identity first
+    create_response = await client.post(
+        "/identity",
+        json={"name": name, "publish_to_witnesses": False},
+    )
+    assert create_response.status_code == 200
+    aid = create_response.json()["identity"]["aid"]
+
+    # Delete the identity
+    delete_response = await client.delete(f"/identity/{aid}")
+    assert delete_response.status_code == 200
+    data = delete_response.json()
+
+    assert data["deleted"] is True
+    assert data["resource_type"] == "identity"
+    assert data["resource_id"] == aid
+    assert "message" in data
+
+    # Verify identity is no longer found
+    get_response = await client.get(f"/identity/{aid}")
+    assert get_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_identity_not_found(client: AsyncClient):
+    """Test 404 when deleting non-existent identity."""
+    response = await client.delete("/identity/Eunknown123456789012345678901234567890123")
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_delete_identity_unit(temp_dir):
+    """Test identity deletion at the manager level."""
+    from app.keri.identity import IssuerIdentityManager
+    from app.keri.exceptions import IdentityNotFoundError
+
+    name = unique_name("delete-unit")
+
+    mgr = IssuerIdentityManager(
+        name="test-delete",
+        base_dir=temp_dir,
+        temp=True,
+    )
+    await mgr.initialize()
+
+    # Create identity
+    info = await mgr.create_identity(name=name)
+    aid = info.aid
+
+    # Verify it exists
+    assert await mgr.get_identity(aid) is not None
+
+    # Delete it
+    result = await mgr.delete_identity(aid)
+    assert result is True
+
+    # Verify it's gone
+    assert await mgr.get_identity(aid) is None
+
+    # Verify delete of non-existent raises error
+    with pytest.raises(IdentityNotFoundError):
+        await mgr.delete_identity(aid)
+
+    await mgr.close()

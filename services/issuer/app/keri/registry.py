@@ -296,6 +296,36 @@ class CredentialRegistryManager:
                 registries.append(info)
             return registries
 
+    async def delete_registry(self, registry_key: str) -> bool:
+        """Delete a registry from local storage.
+
+        Note: This only removes the registry from local storage. The registry
+        and its TEL events still exist in the KERI ecosystem and cannot be
+        truly deleted from the global state.
+
+        Args:
+            registry_key: The registry prefix (regk) to delete
+
+        Returns:
+            True if deleted successfully
+
+        Raises:
+            ValueError: If registry not found
+        """
+        async with self._lock:
+            registry = self.regery.regs.get(registry_key)
+            if registry is None:
+                raise ValueError(f"Registry not found: {registry_key}")
+
+            name = registry.name
+
+            # Remove from Regery's internal structures
+            if registry_key in self.regery.regs:
+                del self.regery.regs[registry_key]
+
+            log.info(f"Deleted registry from local storage: {name} ({registry_key[:16]}...)")
+            return True
+
     async def get_tel_bytes(self, registry_key: str) -> bytes:
         """Get serialized TEL inception event for witness publishing.
 

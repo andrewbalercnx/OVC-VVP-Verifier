@@ -352,6 +352,8 @@ async def delete_identity(
 
     except IdentityNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         log.error(f"Failed to delete identity: {e}")
         raise HTTPException(status_code=500, detail="Internal error deleting identity")

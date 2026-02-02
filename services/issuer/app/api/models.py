@@ -115,6 +115,15 @@ class IdentityListResponse(BaseModel):
     count: int
 
 
+class DeleteResponse(BaseModel):
+    """Response confirming deletion."""
+
+    deleted: bool = Field(..., description="Whether deletion was successful")
+    resource_type: str = Field(..., description="Type of resource deleted")
+    resource_id: str = Field(..., description="ID of deleted resource")
+    message: Optional[str] = Field(None, description="Additional information")
+
+
 class ErrorResponse(BaseModel):
     """Error response."""
 

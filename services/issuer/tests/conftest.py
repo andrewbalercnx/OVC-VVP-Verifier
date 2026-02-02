@@ -166,15 +166,26 @@ async def identity_with_registry(
 
     Uses the client fixture to ensure proper singleton initialization,
     then creates an identity that can be used for registry creation.
+    Cleans up the identity after the test completes.
     """
-    # Create a test identity via API
+    import uuid
+    # Create a test identity via API with unique name
+    identity_name = f"test-issuer-{uuid.uuid4().hex[:8]}"
     response = await client.post(
         "/identity",
-        json={"name": "test-issuer-for-registry", "publish_to_witnesses": False},
+        json={"name": identity_name, "publish_to_witnesses": False},
     )
     assert response.status_code == 200, f"Failed to create identity: {response.text}"
     identity_data = response.json()
-    yield identity_data["identity"]
+    identity = identity_data["identity"]
+
+    yield identity
+
+    # Cleanup: Delete the identity after test
+    try:
+        await client.delete(f"/identity/{identity['aid']}")
+    except Exception:
+        pass  # Best effort cleanup
 
 
 @pytest.fixture

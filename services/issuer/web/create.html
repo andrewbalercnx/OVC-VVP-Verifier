@@ -203,6 +203,7 @@
               <div>
                 <button onclick="showOobi('${identity.aid}')" style="margin-top:0.5rem;padding:0.25rem 0.5rem;font-size:0.85rem;background:#17a2b8;">View OOBI URLs</button>
                 ${rotateBtn}
+                <button onclick="deleteIdentity('${identity.aid}', '${identity.name}')" style="margin-top:0.5rem;margin-left:0.5rem;padding:0.25rem 0.5rem;font-size:0.85rem;background:#dc3545;">Delete</button>
               </div>
             </div>`;
           }
@@ -319,6 +320,61 @@
 
           modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;max-height:80vh;overflow:auto;">
             ${html}
+            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+          </div>`;
+
+          // Refresh the identity list
+          loadIdentities();
+
+        } catch (err) {
+          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
+            <div class="error">Network error: ${err.message}</div>
+            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+          </div>`;
+        }
+      }
+
+      // Delete identity
+      async function deleteIdentity(aid, name) {
+        if (!confirm(`Are you sure you want to delete "${name}"?\n\nThis removes the identity from local storage only. The identity still exists in the KERI ecosystem (witnesses, watchers, etc.).`)) {
+          return;
+        }
+
+        // Show loading modal
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;z-index:1000;';
+        modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;text-align:center;">
+          <span class="spinner"></span> Deleting identity...
+        </div>`;
+        document.body.appendChild(modal);
+
+        try {
+          const res = await fetch(`/identity/${aid}`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            }
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
+              <div class="error">
+                <strong>Deletion Failed</strong><br>
+                ${data.detail || 'Unknown error'}
+              </div>
+              <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+            </div>`;
+            return;
+          }
+
+          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
+            <div class="success">
+              <strong>Identity Deleted</strong><br>
+              ${data.message || 'Identity removed from local storage.'}
+            </div>
             <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
           </div>`;
 

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from app.api.models import (
     CreateRegistryRequest,
     CreateRegistryResponse,
+    DeleteResponse,
     RegistryResponse,
     RegistryListResponse,
     WitnessPublishResult,
@@ -172,3 +173,56 @@ async def get_registry(registry_key: str) -> RegistryResponse:
     except Exception as e:
         log.exception(f"Failed to get registry {registry_key}: {e}")
         raise HTTPException(status_code=500, detail="Internal error getting registry")
+
+
+@router.delete("/{registry_key}", response_model=DeleteResponse)
+async def delete_registry(
+    registry_key: str,
+    http_request: Request,
+    principal: Principal = require_admin,
+) -> DeleteResponse:
+    """Delete a registry from local storage.
+
+    Note: This only removes the registry from local storage. The registry
+    and its TEL events still exist in the KERI ecosystem and cannot be
+    truly deleted from the global state.
+
+    Requires: issuer:admin role
+    """
+    registry_mgr = await get_registry_manager()
+    audit = get_audit_logger()
+
+    try:
+        # Get registry info before deletion for audit
+        info = await registry_mgr.get_registry(registry_key)
+        if info is None:
+            raise HTTPException(status_code=404, detail=f"Registry not found: {registry_key}")
+
+        registry_name = info.name
+
+        # Delete the registry
+        await registry_mgr.delete_registry(registry_key)
+
+        # Audit log the deletion
+        audit.log_access(
+            action="registry.delete",
+            principal_id=principal.key_id,
+            resource=registry_key,
+            details={"name": registry_name},
+            request=http_request,
+        )
+
+        return DeleteResponse(
+            deleted=True,
+            resource_type="registry",
+            resource_id=registry_key,
+            message=f"Registry '{registry_name}' removed from local storage. Note: The registry still exists in the KERI ecosystem.",
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception(f"Failed to delete registry: {e}")
+        raise HTTPException(status_code=500, detail="Internal error deleting registry")

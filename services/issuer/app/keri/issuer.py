@@ -471,6 +471,43 @@ class CredentialIssuer:
             except Exception:
                 return None
 
+    async def delete_credential(self, credential_said: str) -> bool:
+        """Delete a credential from local storage.
+
+        Note: This only removes the credential from local storage. The credential
+        and its TEL events still exist in the KERI ecosystem and cannot be
+        truly deleted from the global state.
+
+        Args:
+            credential_said: SAID of the credential to delete
+
+        Returns:
+            True if deleted successfully
+
+        Raises:
+            ValueError: If credential not found
+        """
+        async with self._lock:
+            registry_mgr = await get_registry_manager()
+            reger = registry_mgr.regery.reger
+
+            # Check credential exists
+            creder = reger.creds.get(keys=(credential_said,))
+            if creder is None:
+                raise ValueError(f"Credential not found: {credential_said}")
+
+            # Remove from creds database
+            reger.creds.rem(keys=(credential_said,))
+
+            # Remove from cancs (cancel/anchor info)
+            try:
+                reger.cancs.rem(keys=(credential_said,))
+            except Exception:
+                pass  # May not exist
+
+            log.info(f"Deleted credential from local storage: {credential_said[:16]}...")
+            return True
+
     async def list_credentials(
         self,
         registry_key: Optional[str] = None,

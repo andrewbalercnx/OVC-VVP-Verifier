@@ -380,3 +380,49 @@ async def test_registry_witness_publishing_integration():
             f"Expected all 3 witnesses to succeed, got {success_count}. "
             f"Results: {publish_results}"
         )
+
+
+# =============================================================================
+# Delete Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_delete_registry_success(client: AsyncClient):
+    """Test successful registry deletion via API."""
+    # Create identity and registry
+    identity = await create_test_identity(client)
+    registry_name = unique_name("delete-registry")
+
+    create_response = await client.post(
+        "/registry",
+        json={
+            "name": registry_name,
+            "identity_name": identity["name"],
+            "publish_to_witnesses": False,
+        },
+    )
+    assert create_response.status_code == 200
+    registry_key = create_response.json()["registry"]["registry_key"]
+
+    # Delete the registry
+    delete_response = await client.delete(f"/registry/{registry_key}")
+    assert delete_response.status_code == 200
+    data = delete_response.json()
+
+    assert data["deleted"] is True
+    assert data["resource_type"] == "registry"
+    assert data["resource_id"] == registry_key
+    assert "message" in data
+
+    # Verify registry is no longer found
+    get_response = await client.get(f"/registry/{registry_key}")
+    assert get_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_registry_not_found(client: AsyncClient):
+    """Test 404 when deleting non-existent registry."""
+    response = await client.delete("/registry/Eunknown123456789012345678901234567890123")
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()

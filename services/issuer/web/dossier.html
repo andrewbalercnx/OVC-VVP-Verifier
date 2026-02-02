@@ -75,6 +75,16 @@
       </div>
     </div>
 
+    <!-- Existing Credentials (potential dossier roots) -->
+    <div class="card">
+      <h2>Existing Credentials</h2>
+      <p class="subtitle">Manage credentials that can be used as dossier roots</p>
+      <button id="refreshCredentialsBtn" style="margin-bottom: 1rem; background: #6c757d;">Refresh List</button>
+      <div id="allCredentialsList">
+        <em>Loading...</em>
+      </div>
+    </div>
+
     <script>
       let credentials = [];
       let selectedSaid = null;
@@ -291,6 +301,179 @@
         if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
       }
+
+      // Load all credentials for management
+      async function loadAllCredentials() {
+        const list = document.getElementById('allCredentialsList');
+        list.innerHTML = '<em>Loading...</em>';
+
+        try {
+          const response = await fetch('/credential');
+          if (!response.ok) throw new Error('Failed to fetch credentials');
+
+          const data = await response.json();
+          const allCreds = data.credentials || [];
+
+          if (allCreds.length === 0) {
+            list.innerHTML = '<div class="info">No credentials found. <a href="/ui/credentials">Issue some credentials</a> first.</div>';
+            return;
+          }
+
+          let html = `
+            <table>
+              <thead>
+                <tr>
+                  <th>SAID</th>
+                  <th>Schema</th>
+                  <th>Status</th>
+                  <th>Issued</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+          `;
+
+          for (const cred of allCreds) {
+            const statusClass = cred.status === 'revoked' ? 'status-revoked' : 'status-issued';
+            html += `
+              <tr>
+                <td class="said-cell" title="${cred.said}">${cred.said}</td>
+                <td class="said-cell" title="${cred.schema_said}">${cred.schema_said.substring(0, 16)}...</td>
+                <td><span class="status-badge ${statusClass}">${cred.status}</span></td>
+                <td>${cred.issuance_dt ? new Date(cred.issuance_dt).toLocaleString() : '-'}</td>
+                <td>
+                  ${cred.status === 'issued' ? `<button onclick="revokeCredential('${cred.said}')" style="padding:0.25rem 0.5rem;font-size:0.85rem;background:#ffc107;color:#000;margin-right:0.5rem;">Revoke</button>` : ''}
+                  <button onclick="deleteCredential('${cred.said}')" style="padding:0.25rem 0.5rem;font-size:0.85rem;background:#dc3545;">Delete</button>
+                </td>
+              </tr>
+            `;
+          }
+
+          html += '</tbody></table>';
+          list.innerHTML = html;
+
+        } catch (error) {
+          list.innerHTML = `<div class="error">Failed to load credentials: ${error.message}</div>`;
+        }
+      }
+
+      // Revoke a credential
+      async function revokeCredential(said) {
+        if (!confirm(`Are you sure you want to revoke this credential?\n\nSAID: ${said.substring(0, 24)}...\n\nThis creates a TEL revocation event and cannot be undone.`)) {
+          return;
+        }
+
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;z-index:1000;';
+        modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;text-align:center;">
+          <span class="spinner"></span> Revoking credential...
+        </div>`;
+        document.body.appendChild(modal);
+
+        try {
+          const res = await fetch(`/credential/${said}/revoke`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ publish_to_witnesses: true })
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
+              <div class="error">
+                <strong>Revocation Failed</strong><br>
+                ${data.detail || 'Unknown error'}
+              </div>
+              <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+            </div>`;
+            return;
+          }
+
+          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
+            <div class="success">
+              <strong>Credential Revoked</strong><br>
+              TEL revocation event created.
+            </div>
+            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+          </div>`;
+
+          loadCredentials();
+          loadAllCredentials();
+
+        } catch (err) {
+          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
+            <div class="error">Network error: ${err.message}</div>
+            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+          </div>`;
+        }
+      }
+
+      // Delete a credential
+      async function deleteCredential(said) {
+        if (!confirm(`Are you sure you want to delete this credential?\n\nSAID: ${said.substring(0, 24)}...\n\nThis removes it from local storage only. The credential still exists in the KERI ecosystem.`)) {
+          return;
+        }
+
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;z-index:1000;';
+        modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;text-align:center;">
+          <span class="spinner"></span> Deleting credential...
+        </div>`;
+        document.body.appendChild(modal);
+
+        try {
+          const res = await fetch(`/credential/${said}`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            }
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
+              <div class="error">
+                <strong>Deletion Failed</strong><br>
+                ${data.detail || 'Unknown error'}
+              </div>
+              <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+            </div>`;
+            return;
+          }
+
+          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
+            <div class="success">
+              <strong>Credential Deleted</strong><br>
+              ${data.message || 'Credential removed from local storage.'}
+            </div>
+            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+          </div>`;
+
+          loadCredentials();
+          loadAllCredentials();
+
+        } catch (err) {
+          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
+            <div class="error">Network error: ${err.message}</div>
+            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
+          </div>`;
+        }
+      }
+
+      // Refresh button
+      document.getElementById('refreshCredentialsBtn').addEventListener('click', () => {
+        loadCredentials();
+        loadAllCredentials();
+      });
+
+      // Load all credentials on page load
+      loadAllCredentials();
     </script>
     <script src="/static/shared.js"></script>
   </body>

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from keri.kering import LikelyDuplicitousError, ValidationError
 
 from app.api.models import (
+    DeleteResponse,
     IssueCredentialRequest,
     IssueCredentialResponse,
     CredentialResponse,
@@ -266,3 +267,54 @@ async def revoke_credential(
     except Exception as e:
         log.exception(f"Failed to revoke credential {said}: {e}")
         raise HTTPException(status_code=500, detail="Internal error revoking credential")
+
+
+@router.delete("/{said}", response_model=DeleteResponse)
+async def delete_credential(
+    said: str,
+    http_request: Request,
+    principal: Principal = require_admin,
+) -> DeleteResponse:
+    """Delete a credential from local storage.
+
+    Note: This only removes the credential from local storage. The credential
+    and its TEL events still exist in the KERI ecosystem and cannot be
+    truly deleted from the global state.
+
+    Requires: issuer:admin role
+    """
+    issuer = await get_credential_issuer()
+    audit = get_audit_logger()
+
+    try:
+        # Verify credential exists before deletion
+        cred_info = await issuer.get_credential(said)
+        if cred_info is None:
+            raise HTTPException(status_code=404, detail=f"Credential not found: {said}")
+
+        # Delete the credential
+        await issuer.delete_credential(said)
+
+        # Audit log the deletion
+        audit.log_access(
+            action="credential.delete",
+            principal_id=principal.key_id,
+            resource=said,
+            details={},
+            request=http_request,
+        )
+
+        return DeleteResponse(
+            deleted=True,
+            resource_type="credential",
+            resource_id=said,
+            message="Credential removed from local storage. Note: The credential still exists in the KERI ecosystem.",
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception(f"Failed to delete credential {said}: {e}")
+        raise HTTPException(status_code=500, detail="Internal error deleting credential")

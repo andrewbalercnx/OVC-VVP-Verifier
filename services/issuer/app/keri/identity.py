@@ -212,6 +212,10 @@ class IssuerIdentityManager:
     async def get_identity(self, aid: str) -> Optional[IdentityInfo]:
         """Get identity info by AID."""
         async with self._lock:
+            # Check if AID is in our managed prefixes (handles deleted identities)
+            if aid not in self.hby.prefixes:
+                return None
+
             hab = self.hby.habByPre(aid)
             if hab is None:
                 return None
@@ -231,6 +235,10 @@ class IssuerIdentityManager:
         async with self._lock:
             hab = self.hby.habByName(name)
             if hab is None:
+                return None
+
+            # Check if AID is in our managed prefixes (handles deleted identities)
+            if hab.pre not in self.hby.prefixes:
                 return None
 
             return IdentityInfo(
@@ -347,6 +355,46 @@ class IssuerIdentityManager:
         except ValueError:
             # Weighted threshold format (e.g., "1/2,1/2") - defer to keripy validation
             pass
+
+    async def delete_identity(self, aid: str) -> bool:
+        """Delete an identity from local storage.
+
+        Note: This only removes the identity from local storage. The identity
+        still exists in the KERI ecosystem (witnesses, watchers, etc.) and
+        cannot be truly deleted from the global state.
+
+        Args:
+            aid: The AID of the identity to delete
+
+        Returns:
+            True if deleted successfully
+
+        Raises:
+            IdentityNotFoundError: If AID not found
+        """
+        async with self._lock:
+            # Check if identity exists in our managed prefixes
+            if aid not in self.hby.prefixes:
+                raise IdentityNotFoundError(f"Identity not found: {aid}")
+
+            hab = self.hby.habByPre(aid)
+            if hab is None:
+                raise IdentityNotFoundError(f"Identity not found: {aid}")
+
+            name = hab.name
+            pre = hab.pre
+
+            # Remove from Habery's internal structures
+            # hby.habs is keyed by prefix (AID)
+            if pre in self.hby.habs:
+                del self.hby.habs[pre]
+
+            # Remove from prefixes set
+            if pre in self.hby.prefixes:
+                self.hby.prefixes.remove(pre)
+
+            log.info(f"Deleted identity from local storage: {name} ({aid[:16]}...)")
+            return True
 
     async def rotate_identity(
         self,
