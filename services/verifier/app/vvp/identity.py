@@ -36,12 +36,17 @@ class IssuerIdentity:
         lei: Legal Entity Identifier (ISO 17442) from LE credential.
         source_said: SAID of the LE credential this came from.
             None if from well-known registry (static fallback).
+        role: How this identity was derived:
+            - "issuee": AID is the issuee/subject of an LE credential
+            - "issuer": AID issued a self-issued LE credential (no explicit issuee)
+            - "wellknown": Identity from static well-known AIDs registry
     """
 
     aid: str
     legal_name: Optional[str] = None
     lei: Optional[str] = None
     source_said: Optional[str] = None
+    role: Optional[str] = None
 
 
 # =============================================================================
@@ -137,6 +142,7 @@ def get_wellknown_identity(aid: str) -> Optional[IssuerIdentity]:
             legal_name=name,
             lei=lei,
             source_said=None,  # No credential source, from static registry
+            role="wellknown",
         )
     return None
 
@@ -221,20 +227,30 @@ def build_issuer_identity_map(
         # The issuee (subject) of the LE credential is the AID being identified
         issuee = acdc.attributes.get("issuee") or acdc.attributes.get("i")
 
-        # If no explicit issuee, the credential identifies its own issuer
-        # (self-issued LE credentials)
-        if not issuee:
-            issuee = acdc.issuer_aid
-
         if issuee:
+            # Credential has explicit issuee - identity describes that AID
             identity_map[issuee] = IssuerIdentity(
                 aid=issuee,
                 legal_name=legal_name,
                 lei=lei,
                 source_said=acdc.said,
+                role="issuee",
             )
             log.debug(
-                f"Identity from dossier: {issuee[:16]}... = "
+                f"Identity from dossier (issuee): {issuee[:16]}... = "
+                f"{legal_name or 'LEI:' + str(lei)}"
+            )
+        else:
+            # Self-issued credential - identity describes the issuer itself
+            identity_map[acdc.issuer_aid] = IssuerIdentity(
+                aid=acdc.issuer_aid,
+                legal_name=legal_name,
+                lei=lei,
+                source_said=acdc.said,
+                role="issuer",
+            )
+            log.debug(
+                f"Identity from dossier (self-issued): {acdc.issuer_aid[:16]}... = "
                 f"{legal_name or 'LEI:' + str(lei)}"
             )
 

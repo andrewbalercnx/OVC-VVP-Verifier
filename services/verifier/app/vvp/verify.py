@@ -1676,6 +1676,7 @@ async def verify_vvp(
                     lei=ident.lei,
                     source_said=ident.source_said,
                     identity_source="dossier" if ident.source_said else "wellknown",
+                    credential_role=ident.role,
                 )
                 for aid, ident in identity_map.items()
             }

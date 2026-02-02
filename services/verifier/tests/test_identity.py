@@ -46,6 +46,16 @@ class TestIssuerIdentityDataclass:
         assert identity.legal_name is None
         assert identity.lei is None
         assert identity.source_said is None
+        assert identity.role is None
+
+    def test_role_field(self):
+        """Identity with role field set."""
+        identity = IssuerIdentity(
+            aid="ETestAID123456789012345678901234567890123",
+            legal_name="Test Corp",
+            role="issuee",
+        )
+        assert identity.role == "issuee"
 
 
 class TestGetWellknownIdentity:
@@ -64,6 +74,13 @@ class TestGetWellknownIdentity:
         """Unknown AID returns None."""
         identity = get_wellknown_identity("EUnknownAID123456789012345678901234567")
         assert identity is None
+
+    def test_wellknown_identity_has_role(self):
+        """Well-known identity has role='wellknown'."""
+        gleif_aid = "EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao"
+        identity = get_wellknown_identity(gleif_aid)
+        assert identity is not None
+        assert identity.role == "wellknown"
 
 
 class TestBuildIssuerIdentityMap:
@@ -275,6 +292,52 @@ class TestBuildIssuerIdentityMap:
         assert "ESelfIssuer12345678901234567890123456789" in result
         identity = result["ESelfIssuer12345678901234567890123456789"]
         assert identity.legal_name == "Self-Issued Corp"
+
+    def test_le_credential_issuee_has_role(self):
+        """LE credential identity has role='issuee' when explicit issuee."""
+        acdc = self._make_acdc(
+            said="ESAID1234567890123456789012345678901234567",
+            issuer_aid="EIssuer12345678901234567890123456789012",
+            attributes={
+                "legalName": "Acme Corporation",
+                "issuee": "EIssuee12345678901234567890123456789012",
+            },
+        )
+        result = build_issuer_identity_map([acdc])
+
+        identity = result["EIssuee12345678901234567890123456789012"]
+        assert identity.role == "issuee"
+
+    def test_self_issued_credential_has_issuer_role(self):
+        """Self-issued LE credential identity has role='issuer'."""
+        acdc = self._make_acdc(
+            said="ESAID1234567890123456789012345678901234567",
+            issuer_aid="ESelfIssuer12345678901234567890123456789",
+            attributes={
+                "legalName": "Self Corp",
+                # No issuee field - self-issued
+            },
+        )
+        result = build_issuer_identity_map([acdc])
+
+        identity = result["ESelfIssuer12345678901234567890123456789"]
+        assert identity.role == "issuer"
+
+    def test_wellknown_fallback_has_role(self):
+        """Well-known fallback identity has role='wellknown'."""
+        gleif_aid = "EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao"
+        acdc = self._make_acdc(
+            said="ESAID1234567890123456789012345678901234567",
+            issuer_aid=gleif_aid,
+            attributes={
+                "someField": "someValue",
+                # No identity info
+            },
+        )
+        result = build_issuer_identity_map([acdc])
+
+        identity = result[gleif_aid]
+        assert identity.role == "wellknown"
 
     def test_wellknown_fallback_for_issuer(self):
         """Well-known AIDs provide fallback identity for issuers."""

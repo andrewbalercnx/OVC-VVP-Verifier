@@ -130,6 +130,7 @@ class IssuerInfo:
         lei: Legal Entity Identifier from LE credential (if available).
         gleif_legal_name: Legal name from GLEIF API lookup (if LEI available).
         key_state: Resolved key state info (if AID was resolved via OOBI).
+        identity_role: How identity was derived ("issuee", "issuer", "wellknown").
     """
 
     aid: str
@@ -139,6 +140,26 @@ class IssuerInfo:
     lei: Optional[str] = None
     gleif_legal_name: Optional[str] = None
     key_state: Optional[KeyStateInfo] = None
+    identity_role: Optional[str] = None
+
+
+@dataclass
+class SubjectInfo:
+    """Subject/issuee identity for credential card display.
+
+    Attributes:
+        aid: Full subject AID string (the issuee of the credential).
+        aid_short: Truncated AID for display (first 16 chars + "...").
+        display_name: Human-readable name from LE credential (if available).
+        lei: Legal Entity Identifier from LE credential (if available).
+        gleif_legal_name: Legal name from GLEIF API lookup (if LEI available).
+    """
+
+    aid: str
+    aid_short: Optional[str] = None
+    display_name: Optional[str] = None
+    lei: Optional[str] = None
+    gleif_legal_name: Optional[str] = None
 
 
 @dataclass
@@ -536,7 +557,8 @@ class CredentialCardViewModel:
         variant: ACDC variant (full, compact, partial).
         status: ClaimStatus from chain validation (VALID, INVALID, INDETERMINATE).
         revocation: Revocation state (separate from status).
-        issuer: Issuer identity info.
+        issuer: Issuer identity info (who signed the credential).
+        subject: Subject/issuee identity info (who the credential is about).
         primary: Primary attribute for prominent display.
         secondary: Up to 3 secondary attributes (for backwards compatibility).
         sections: Categorized attribute sections for collapsible display.
@@ -564,8 +586,10 @@ class CredentialCardViewModel:
     edges: Dict[str, EdgeLink]
     limitations: VariantLimitations
     raw: RawACDCData
+    # Optional fields with defaults
     raw_contents: List[AttributeDisplay] = field(default_factory=list)
     vcard: Optional[VCardInfo] = None
+    subject: Optional[SubjectInfo] = None  # Subject/issuee of the credential
     # Sprint 24 additions
     chain_status: str = "INDETERMINATE"
     schema_info: Optional[SchemaValidationInfo] = None
@@ -1546,7 +1570,29 @@ def build_credential_card_vm(
         lei=lei,
         gleif_legal_name=gleif_legal_name,
         key_state=key_state_info,
+        identity_role=issuer_identity.role if issuer_identity else None,
     )
+
+    # Build subject info if credential has explicit issuee
+    subject: Optional[SubjectInfo] = None
+    if isinstance(acdc.attributes, dict):
+        subject_aid = acdc.attributes.get("issuee") or acdc.attributes.get("i")
+        if subject_aid and subject_aid != issuer_aid:
+            # Get identity for subject from the identities map
+            subject_identity = (issuer_identities or {}).get(subject_aid)
+            subject_lei = subject_identity.lei if subject_identity else None
+            subject_gleif_name = None
+            if subject_lei:
+                subject_lei_record = lookup_lei(subject_lei)
+                if subject_lei_record:
+                    subject_gleif_name = subject_lei_record.legal_name
+            subject = SubjectInfo(
+                aid=subject_aid,
+                aid_short=_truncate_aid(subject_aid),
+                display_name=subject_identity.legal_name if subject_identity else None,
+                lei=subject_lei,
+                gleif_legal_name=subject_gleif_name,
+            )
 
     # Build primary attribute
     primary = _get_primary_attribute(credential_type, acdc.attributes, said)
@@ -1641,6 +1687,7 @@ def build_credential_card_vm(
         raw=raw,
         raw_contents=raw_contents,
         vcard=vcard_info,
+        subject=subject,
         # Sprint 24: Explicit chain validation result for validation summary
         chain_status=status,
     )

@@ -306,6 +306,10 @@ class IssuerIdentityInfo(BaseModel):
         lei: Legal Entity Identifier (ISO 17442) if present.
         source_said: SAID of the LE credential providing this identity.
         identity_source: Provenance of the identity data.
+        credential_role: How this identity was derived:
+            - "issuee": AID is the issuee/subject of an LE credential
+            - "issuer": AID issued a self-issued LE credential
+            - "wellknown": Identity from static well-known AIDs registry
     """
 
     aid: str
@@ -313,6 +317,7 @@ class IssuerIdentityInfo(BaseModel):
     lei: Optional[str] = None
     source_said: Optional[str] = None
     identity_source: Literal["dossier", "wellknown"] = "dossier"
+    credential_role: Optional[str] = None
 
 
 class VerifyResponse(BaseModel):

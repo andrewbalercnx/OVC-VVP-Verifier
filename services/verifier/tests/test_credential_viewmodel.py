@@ -24,6 +24,7 @@ from app.vvp.ui.credential_viewmodel import (
     IssuerInfo,
     RawACDCData,
     RevocationStatus,
+    SubjectInfo,
     VariantLimitations,
     _build_attribute_sections,
     _flatten_nested,
@@ -1740,3 +1741,215 @@ class TestVmWithIssuerIdentities:
 
         # Should not have display_name since issuer not in map
         assert vm.issuer.display_name is None
+
+
+# =============================================================================
+# Subject Info Tests
+# =============================================================================
+
+
+class TestSubjectInfo:
+    """Tests for subject/issuee identity on credential cards."""
+
+    def test_vm_has_subject_when_issuee_present(self):
+        """View model includes subject info when credential has issuee."""
+        from app.vvp.ui.credential_viewmodel import IssuerIdentity, SubjectInfo
+
+        issuer_aid = "D" + "I" * 43
+        subject_aid = "D" + "S" * 43
+
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=issuer_aid,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "issuee": subject_aid,
+                "legalName": "Subject Corp",
+            },
+            edges=None,
+            variant="full",
+        )
+
+        # Identity map for the subject
+        issuer_identities = {
+            subject_aid: IssuerIdentity(
+                aid=subject_aid,
+                legal_name="Subject Corp",
+                lei="549300SUBJECT",
+            )
+        }
+
+        vm = build_credential_card_vm(acdc, issuer_identities=issuer_identities)
+
+        assert vm.subject is not None
+        assert vm.subject.aid == subject_aid
+        assert vm.subject.display_name == "Subject Corp"
+        assert vm.subject.lei == "549300SUBJECT"
+
+    def test_vm_has_subject_from_i_field(self):
+        """View model extracts subject from 'i' field in attributes."""
+        from app.vvp.ui.credential_viewmodel import IssuerIdentity
+
+        issuer_aid = "D" + "I" * 43
+        subject_aid = "D" + "S" * 43
+
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=issuer_aid,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "i": subject_aid,  # 'i' field instead of 'issuee'
+                "legalName": "Subject Corp",
+            },
+            edges=None,
+            variant="full",
+        )
+
+        issuer_identities = {
+            subject_aid: IssuerIdentity(
+                aid=subject_aid,
+                legal_name="Subject Corp",
+            )
+        }
+
+        vm = build_credential_card_vm(acdc, issuer_identities=issuer_identities)
+
+        assert vm.subject is not None
+        assert vm.subject.aid == subject_aid
+
+    def test_vm_no_subject_when_no_issuee(self):
+        """View model has no subject when credential has no issuee field."""
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "legalName": "Self Corp",
+                # No issuee field - self-issued credential
+            },
+            edges=None,
+            variant="full",
+        )
+
+        vm = build_credential_card_vm(acdc)
+
+        assert vm.subject is None
+
+    def test_vm_no_subject_when_issuee_equals_issuer(self):
+        """View model has no subject when issuee equals issuer (self-issued)."""
+        issuer_aid = "D" + "I" * 43
+
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=issuer_aid,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "issuee": issuer_aid,  # Same as issuer
+                "legalName": "Self Corp",
+            },
+            edges=None,
+            variant="full",
+        )
+
+        vm = build_credential_card_vm(acdc)
+
+        assert vm.subject is None
+
+    def test_vm_subject_without_identity_map(self):
+        """View model creates subject even without identity map (no display_name)."""
+        issuer_aid = "D" + "I" * 43
+        subject_aid = "D" + "S" * 43
+
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=issuer_aid,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "issuee": subject_aid,
+            },
+            edges=None,
+            variant="full",
+        )
+
+        vm = build_credential_card_vm(acdc)
+
+        assert vm.subject is not None
+        assert vm.subject.aid == subject_aid
+        assert vm.subject.display_name is None
+
+    def test_vm_subject_aid_truncated(self):
+        """Subject AID is truncated for display."""
+        issuer_aid = "D" + "I" * 43
+        subject_aid = "D" + "S" * 43
+
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=issuer_aid,
+            schema_said="E" + "S" * 43,
+            attributes={
+                "issuee": subject_aid,
+            },
+            edges=None,
+            variant="full",
+        )
+
+        vm = build_credential_card_vm(acdc)
+
+        assert vm.subject is not None
+        assert vm.subject.aid_short is not None
+        assert len(vm.subject.aid_short) < len(subject_aid)
+        assert "..." in vm.subject.aid_short
+
+
+class TestIssuerInfoIdentityRole:
+    """Tests for identity_role field on IssuerInfo."""
+
+    def test_issuer_info_has_identity_role(self):
+        """IssuerInfo has identity_role field populated from identity map."""
+        from app.vvp.ui.credential_viewmodel import IssuerIdentity
+
+        issuer_aid = "D" + "I" * 43
+
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=issuer_aid,
+            schema_said="E" + "S" * 43,
+            attributes={"role": "Operator"},
+            edges=None,
+            variant="full",
+        )
+
+        issuer_identities = {
+            issuer_aid: IssuerIdentity(
+                aid=issuer_aid,
+                legal_name="Issuer Corp",
+                role="issuer",
+            )
+        }
+
+        vm = build_credential_card_vm(acdc, issuer_identities=issuer_identities)
+
+        assert vm.issuer.identity_role == "issuer"
+
+    def test_issuer_info_identity_role_none_without_map(self):
+        """IssuerInfo identity_role is None without identity map."""
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid="D" + "I" * 43,
+            schema_said="E" + "S" * 43,
+            attributes={"role": "Operator"},
+            edges=None,
+            variant="full",
+        )
+
+        vm = build_credential_card_vm(acdc)
+
+        assert vm.issuer.identity_role is None
