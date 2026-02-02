@@ -67,6 +67,7 @@ WITNESS_CONFIG: dict[str, Any] = _load_witness_config()
 WITNESS_IURLS: list[str] = WITNESS_CONFIG.get("iurls", [])
 WITNESS_AIDS: dict[str, str] = WITNESS_CONFIG.get("witness_aids", {})
 WITNESS_PORTS: dict[str, dict[str, int]] = WITNESS_CONFIG.get("ports", {})
+WITNESS_OOBI_BASE_URLS: list[str] = WITNESS_CONFIG.get("oobi_base_urls", [])
 
 # Witness interaction settings
 WITNESS_TIMEOUT_SECONDS: float = float(os.getenv("VVP_WITNESS_TIMEOUT", "10.0"))

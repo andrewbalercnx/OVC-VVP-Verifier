@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from app.api.models import (
     CreateIdentityRequest,
     CreateIdentityResponse,
+    DeleteResponse,
     IdentityResponse,
     IdentityListResponse,
     OobiResponse,
@@ -17,7 +18,7 @@ from app.api.models import (
 from app.auth.api_key import Principal
 from app.auth.roles import require_admin, require_readonly
 from app.audit import get_audit_logger
-from app.config import WITNESS_IURLS
+from app.config import WITNESS_IURLS, WITNESS_OOBI_BASE_URLS
 from app.keri.identity import get_identity_manager
 from app.keri.witness import get_witness_publisher
 from app.keri.exceptions import (
@@ -28,6 +29,20 @@ from app.keri.exceptions import (
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/identity", tags=["identity"])
+
+
+def _get_oobi_base_urls() -> list[str]:
+    """Get base URLs for external OOBI generation.
+
+    Uses oobi_base_urls if configured (for public/external URLs),
+    otherwise falls back to extracting from iurls for backwards compatibility.
+    """
+    if WITNESS_OOBI_BASE_URLS:
+        return WITNESS_OOBI_BASE_URLS
+    # Fallback: extract from iurls (may contain internal Docker hostnames)
+    if not WITNESS_IURLS:
+        log.warning("No OOBI base URLs configured - OOBIs may be unreachable externally")
+    return [iurl.split("/oobi/")[0] for iurl in WITNESS_IURLS if "/oobi/" in iurl]
 
 
 @router.post("", response_model=CreateIdentityResponse)
@@ -57,12 +72,11 @@ async def create_identity(
             nsith=request.next_threshold,
         )
 
-        # Generate OOBI URLs
-        oobi_urls = []
-        for iurl in WITNESS_IURLS:
-            base_url = iurl.split("/oobi/")[0] if "/oobi/" in iurl else iurl
-            oobi_url = mgr.get_oobi_url(info.aid, base_url)
-            oobi_urls.append(oobi_url)
+        # Generate OOBI URLs using external base URLs
+        oobi_urls = [
+            mgr.get_oobi_url(info.aid, base_url)
+            for base_url in _get_oobi_base_urls()
+        ]
 
         # Publish KEL to witnesses for OOBI resolution
         publish_results: list[WitnessPublishResult] | None = None
@@ -182,11 +196,10 @@ async def get_oobi(aid: str) -> OobiResponse:
     if info is None:
         raise HTTPException(status_code=404, detail=f"Identity not found: {aid}")
 
-    oobi_urls = []
-    for iurl in WITNESS_IURLS:
-        base_url = iurl.split("/oobi/")[0] if "/oobi/" in iurl else iurl
-        oobi_url = mgr.get_oobi_url(aid, base_url)
-        oobi_urls.append(oobi_url)
+    oobi_urls = [
+        mgr.get_oobi_url(aid, base_url)
+        for base_url in _get_oobi_base_urls()
+    ]
 
     return OobiResponse(aid=aid, oobi_urls=oobi_urls)
 
@@ -291,3 +304,54 @@ async def rotate_identity(
     except Exception as e:
         log.error(f"Failed to rotate identity: {e}")
         raise HTTPException(status_code=500, detail="Internal error rotating identity")
+
+
+@router.delete("/{aid}", response_model=DeleteResponse)
+async def delete_identity(
+    aid: str,
+    http_request: Request,
+    principal: Principal = require_admin,
+) -> DeleteResponse:
+    """Delete an identity from local storage.
+
+    Note: This only removes the identity from local storage. The identity
+    still exists in the KERI ecosystem (witnesses, watchers, etc.) and
+    cannot be truly deleted from the global state.
+
+    Requires: issuer:admin role
+    """
+    mgr = await get_identity_manager()
+    audit = get_audit_logger()
+
+    try:
+        # Get identity name before deletion for audit
+        info = await mgr.get_identity(aid)
+        if info is None:
+            raise HTTPException(status_code=404, detail=f"Identity not found: {aid}")
+
+        identity_name = info.name
+
+        # Delete the identity
+        await mgr.delete_identity(aid)
+
+        # Audit log the deletion
+        audit.log_access(
+            action="identity.delete",
+            principal_id=principal.key_id,
+            resource=aid,
+            details={"name": identity_name},
+            request=http_request,
+        )
+
+        return DeleteResponse(
+            deleted=True,
+            resource_type="identity",
+            resource_id=aid,
+            message=f"Identity '{identity_name}' removed from local storage. Note: The identity still exists in the KERI ecosystem.",
+        )
+
+    except IdentityNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        log.error(f"Failed to delete identity: {e}")
+        raise HTTPException(status_code=500, detail="Internal error deleting identity")

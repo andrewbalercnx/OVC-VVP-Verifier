@@ -563,3 +563,63 @@ async def test_rotate_endpoint_invalid_threshold(client: AsyncClient):
     )
     assert rotate_response.status_code == 400
     assert "threshold" in rotate_response.json()["detail"].lower()
+
+
+# =============================================================================
+# OOBI URL Generation Tests
+# =============================================================================
+
+
+def test_get_oobi_base_urls_uses_configured_urls(monkeypatch):
+    """Test that _get_oobi_base_urls uses oobi_base_urls when configured."""
+    from app.api import identity
+
+    # Patch the config values
+    monkeypatch.setattr(identity, "WITNESS_OOBI_BASE_URLS", [
+        "https://witness1.example.com",
+        "https://witness2.example.com",
+    ])
+    monkeypatch.setattr(identity, "WITNESS_IURLS", [
+        "http://internal:5642/oobi/ABC123/controller",
+        "http://internal:5643/oobi/DEF456/controller",
+    ])
+
+    result = identity._get_oobi_base_urls()
+
+    # Should use oobi_base_urls, not extract from iurls
+    assert result == [
+        "https://witness1.example.com",
+        "https://witness2.example.com",
+    ]
+
+
+def test_get_oobi_base_urls_fallback_to_iurls(monkeypatch):
+    """Test that _get_oobi_base_urls falls back to extracting from iurls."""
+    from app.api import identity
+
+    # Patch with empty oobi_base_urls to trigger fallback
+    monkeypatch.setattr(identity, "WITNESS_OOBI_BASE_URLS", [])
+    monkeypatch.setattr(identity, "WITNESS_IURLS", [
+        "http://internal:5642/oobi/ABC123/controller",
+        "http://internal:5643/oobi/DEF456/controller",
+    ])
+
+    result = identity._get_oobi_base_urls()
+
+    # Should extract base URLs from iurls
+    assert result == [
+        "http://internal:5642",
+        "http://internal:5643",
+    ]
+
+
+def test_get_oobi_base_urls_empty_config(monkeypatch):
+    """Test _get_oobi_base_urls with empty configuration."""
+    from app.api import identity
+
+    monkeypatch.setattr(identity, "WITNESS_OOBI_BASE_URLS", [])
+    monkeypatch.setattr(identity, "WITNESS_IURLS", [])
+
+    result = identity._get_oobi_base_urls()
+
+    assert result == []
