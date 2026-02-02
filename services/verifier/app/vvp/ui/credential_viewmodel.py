@@ -203,14 +203,16 @@ class EdgeLink:
     """Normalized edge link for chain expansion.
 
     Attributes:
-        said: Target credential SAID, or None if edge is malformed.
+        said: Target credential SAID or AID, or None if edge is malformed.
         label: Human-readable label (e.g., "Vetted By", "Legal Entity").
         available: True if the target credential exists in the current dossier.
+        identity_name: Resolved identity name if target is an AID (e.g., "Provenant Global").
     """
 
     said: Optional[str]
     label: str
     available: bool
+    identity_name: Optional[str] = None
 
 
 @dataclass
@@ -1167,12 +1169,15 @@ def _detect_redacted_fields(attributes: Any) -> List[str]:
 def _build_edges(
     edges: Optional[Dict[str, Any]],
     available_saids: Optional[Set[str]],
+    issuer_identities: Optional[Dict[str, "IssuerIdentity"]] = None,
 ) -> tuple[Dict[str, EdgeLink], List[str]]:
     """Build normalized edge links.
 
     Args:
         edges: Raw ACDC edges dict.
         available_saids: Set of SAIDs available in dossier for expansion.
+        issuer_identities: Optional AID→IssuerIdentity mapping for resolving
+            edge targets that are AIDs (not credential SAIDs) to identity names.
 
     Returns:
         Tuple of (edges dict, list of missing SAIDs).
@@ -1183,6 +1188,7 @@ def _build_edges(
     result = {}
     missing = []
     available = available_saids or set()
+    identities = issuer_identities or {}
 
     for key, value in edges.items():
         # Skip metadata fields
@@ -1196,10 +1202,16 @@ def _build_edges(
         if said and not is_available:
             missing.append(said)
 
+        # Resolve identity name if edge target is an AID in the identity map
+        identity_name = None
+        if said and said in identities:
+            identity_name = identities[said].legal_name
+
         result[key] = EdgeLink(
             said=said,
             label=label,
             available=is_available,
+            identity_name=identity_name,
         )
 
     return result, missing
@@ -1612,8 +1624,8 @@ def build_credential_card_vm(
     # Build attribute sections (new categorized display)
     sections = _build_attribute_sections(acdc.attributes, primary_field)
 
-    # Build edges
-    edges, missing_edges = _build_edges(acdc.edges, available_saids)
+    # Build edges (pass issuer_identities to resolve AID edge values)
+    edges, missing_edges = _build_edges(acdc.edges, available_saids, issuer_identities)
 
     # Detect limitations
     is_compact = variant == "compact" or not isinstance(acdc.attributes, dict)

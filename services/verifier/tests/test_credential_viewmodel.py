@@ -1953,3 +1953,101 @@ class TestIssuerInfoIdentityRole:
         vm = build_credential_card_vm(acdc)
 
         assert vm.issuer.identity_role is None
+
+
+# =============================================================================
+# Edge Identity Resolution Tests
+# =============================================================================
+
+
+class TestEdgeIdentityResolution:
+    """Tests for edge AID→identity resolution on credential cards."""
+
+    def test_edge_resolves_aid_to_identity_name(self):
+        """Edge pointing to an AID resolves to identity name."""
+        from app.vvp.ui.credential_viewmodel import IssuerIdentity
+
+        issuer_aid = "D" + "I" * 43
+        edge_target_aid = "E" + "T" * 43  # An AID in the identity map
+
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=issuer_aid,
+            schema_said="E" + "S" * 43,
+            attributes={"role": "Operator"},
+            edges={
+                "issuer": edge_target_aid,  # Edge points to an AID
+            },
+            variant="full",
+        )
+
+        # Identity map includes the edge target AID
+        issuer_identities = {
+            edge_target_aid: IssuerIdentity(
+                aid=edge_target_aid,
+                legal_name="Provenant Global",
+                role="wellknown",
+            )
+        }
+
+        vm = build_credential_card_vm(acdc, issuer_identities=issuer_identities)
+
+        assert "issuer" in vm.edges
+        assert vm.edges["issuer"].said == edge_target_aid
+        assert vm.edges["issuer"].identity_name == "Provenant Global"
+
+    def test_edge_no_identity_when_not_in_map(self):
+        """Edge pointing to unknown AID has no identity name."""
+        issuer_aid = "D" + "I" * 43
+        edge_target_aid = "E" + "U" * 43  # Unknown AID
+
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=issuer_aid,
+            schema_said="E" + "S" * 43,
+            attributes={"role": "Operator"},
+            edges={
+                "issuer": edge_target_aid,
+            },
+            variant="full",
+        )
+
+        vm = build_credential_card_vm(acdc)  # No identity map
+
+        assert "issuer" in vm.edges
+        assert vm.edges["issuer"].identity_name is None
+
+    def test_edge_dict_with_n_field_resolves_identity(self):
+        """Edge with dict format {n: AID} also resolves identity."""
+        from app.vvp.ui.credential_viewmodel import IssuerIdentity
+
+        issuer_aid = "D" + "I" * 43
+        edge_target_aid = "E" + "T" * 43
+
+        acdc = ACDC(
+            version="ACDC10JSON00011c_",
+            said="E" + "A" * 43,
+            issuer_aid=issuer_aid,
+            schema_said="E" + "S" * 43,
+            attributes={"role": "Operator"},
+            edges={
+                "auth": {"n": edge_target_aid},  # Dict format with 'n' key
+            },
+            variant="full",
+        )
+
+        issuer_identities = {
+            edge_target_aid: IssuerIdentity(
+                aid=edge_target_aid,
+                legal_name="GLEIF",
+                role="wellknown",
+            )
+        }
+
+        vm = build_credential_card_vm(acdc, issuer_identities=issuer_identities)
+
+        assert "auth" in vm.edges
+        assert vm.edges["auth"].said == edge_target_aid
+        assert vm.edges["auth"].identity_name == "GLEIF"
