@@ -38,8 +38,10 @@
                     <input
                         type="text"
                         id="dossier-said"
+                        name="dossier_said"
                         placeholder="EEgz2TdB8ldZ9wAKJBtwIlu5OnJ6xWPPrnYUtwLep6Lq"
                         style="flex: 1; min-width: 300px; font-family: monospace;"
+                        required
                     >
                     <button type="submit" style="white-space: nowrap;">
                         <span class="htmx-indicator">Fetching...</span>
@@ -149,7 +151,16 @@
             patternInput.addEventListener('input', constructEvdUrl);
         }
         if (saidForm) {
-            saidForm.addEventListener('htmx:beforeRequest', constructEvdUrl);
+            saidForm.addEventListener('htmx:beforeRequest', function(evt) {
+                const said = document.getElementById('dossier-said').value.trim();
+                if (!said) {
+                    evt.preventDefault();
+                    const dossierResult = document.getElementById('dossier-result');
+                    dossierResult.innerHTML = '<p style="color: var(--vvp-error, #dc3545);"><strong>Error:</strong> Please enter a dossier SAID.</p>';
+                    return;
+                }
+                constructEvdUrl();
+            });
         }
     });
 
