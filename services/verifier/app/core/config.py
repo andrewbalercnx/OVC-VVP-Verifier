@@ -468,9 +468,22 @@ ENFORCE_VETTER_CONSTRAINTS: bool = os.getenv(
     "VVP_ENFORCE_VETTER_CONSTRAINTS", "false"
 ).lower() == "true"
 
-# Enable external resolution of vetter certifications
-# When False (default): Only look for vetter certifications in the dossier
-# When True: Attempt to fetch certifications not in dossier from witnesses
-VETTER_CERT_EXTERNAL_RESOLUTION: bool = os.getenv(
-    "VVP_VETTER_CERT_EXTERNAL_RESOLUTION", "false"
-).lower() == "true"
+# NOTE: External resolution of vetter certifications (fetching from witnesses
+# when not in dossier) was considered but not implemented. Per spec, credentials
+# must include certification edges pointing to certifications IN the dossier.
+
+
+# =============================================================================
+# DOSSIER SAID RESOLUTION (UI convenience feature)
+# =============================================================================
+# Default EVD URL pattern for resolving dossiers by SAID.
+# This allows users to paste a dossier SAID in the UI and have it automatically
+# construct the full evd URL.
+#
+# The pattern must contain {SAID} placeholder which will be replaced with the actual SAID.
+# Example: https://origin.demo.provenant.net/v1/agent/public/{SAID}/dossier.cesr
+
+DEFAULT_EVD_URL_PATTERN: str = os.getenv(
+    "VVP_DEFAULT_EVD_URL_PATTERN",
+    "https://origin.demo.provenant.net/v1/agent/public/{SAID}/dossier.cesr"
+)

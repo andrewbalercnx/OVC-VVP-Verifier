@@ -28,8 +28,46 @@
 
 <section id="dossier-section">
     <h2>Dossier (Evidence)</h2>
+
+    <details open style="margin-bottom: 1rem;">
+        <summary style="cursor: pointer; font-weight: 500;">Browse by Dossier SAID</summary>
+        <div style="padding: 0.75rem; background: var(--vvp-surface, #f8f9fa); border-radius: 0.25rem; margin-top: 0.5rem;">
+            <p style="font-size: 0.9em; margin-bottom: 0.5rem;">Enter a dossier SAID to fetch it directly from Provenant:</p>
+            <form id="said-form" hx-post="/ui/fetch-dossier" hx-target="#dossier-result" hx-swap="innerHTML">
+                <div style="display: flex; gap: 0.5rem; align-items: flex-start; flex-wrap: wrap;">
+                    <input
+                        type="text"
+                        id="dossier-said"
+                        placeholder="EEgz2TdB8ldZ9wAKJBtwIlu5OnJ6xWPPrnYUtwLep6Lq"
+                        style="flex: 1; min-width: 300px; font-family: monospace;"
+                    >
+                    <button type="submit" style="white-space: nowrap;">
+                        <span class="htmx-indicator">Fetching...</span>
+                        <span>Fetch</span>
+                    </button>
+                </div>
+
+                <details style="margin-top: 0.5rem;">
+                    <summary style="cursor: pointer; font-size: 0.85em;">EVD URL Pattern (advanced)</summary>
+                    <div style="padding: 0.5rem; margin-top: 0.25rem;">
+                        <label for="evd-pattern" style="font-size: 0.85em;">URL Pattern (use {SAID} as placeholder)</label>
+                        <input
+                            type="text"
+                            id="evd-pattern"
+                            value="https://origin.demo.provenant.net/v1/agent/public/{SAID}/dossier.cesr"
+                            style="font-family: monospace; font-size: 0.85em;"
+                        >
+                    </div>
+                </details>
+
+                <input type="hidden" id="evd_url" name="evd_url" value="">
+                <input type="hidden" name="kid_url" value="">
+            </form>
+        </div>
+    </details>
+
     <div id="dossier-result">
-        <p><em>Parse a JWT first to see the evidence URL, then fetch the dossier.</em></p>
+        <p><em>Parse a JWT first to see the evidence URL, or enter a SAID above to fetch a dossier directly.</em></p>
     </div>
 </section>
 
@@ -88,6 +126,33 @@
 
 {% block scripts %}
 <script>
+    // Construct EVD URL from SAID and pattern
+    function constructEvdUrl() {
+        const said = document.getElementById('dossier-said').value.trim();
+        const pattern = document.getElementById('evd-pattern').value.trim();
+        if (said && pattern) {
+            const evdUrl = pattern.replace('{SAID}', said);
+            document.getElementById('evd_url').value = evdUrl;
+        }
+    }
+
+    // Set up SAID form listeners on DOM ready
+    document.addEventListener('DOMContentLoaded', function() {
+        const saidInput = document.getElementById('dossier-said');
+        const patternInput = document.getElementById('evd-pattern');
+        const saidForm = document.getElementById('said-form');
+
+        if (saidInput) {
+            saidInput.addEventListener('input', constructEvdUrl);
+        }
+        if (patternInput) {
+            patternInput.addEventListener('input', constructEvdUrl);
+        }
+        if (saidForm) {
+            saidForm.addEventListener('htmx:beforeRequest', constructEvdUrl);
+        }
+    });
+
     // Handle JWT parsing result - update dossier section if evd URL is found
     document.body.addEventListener('htmx:afterSwap', function(evt) {
         if (evt.detail.target.id === 'jwt-result') {

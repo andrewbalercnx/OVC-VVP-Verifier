@@ -31,8 +31,78 @@
     </form>
 </section>
 
-<section id="result">
-    <p><em>Paste a JWT above and click "Verify" to see the complete credential chain.</em></p>
+<hr>
+
+<section id="dossier-said-section">
+    <h3>Browse Dossier by SAID</h3>
+    <p>Enter a dossier SAID to browse its credentials directly (without a PASSporT).</p>
+
+    <form id="said-form" hx-post="/ui/fetch-dossier" hx-target="#result" hx-swap="innerHTML" hx-indicator="#said-loading">
+        <label for="dossier-said">Dossier SAID</label>
+        <div style="display: flex; gap: 0.5rem; align-items: flex-start;">
+            <input
+                type="text"
+                id="dossier-said"
+                placeholder="EEgz2TdB8ldZ9wAKJBtwIlu5OnJ6xWPPrnYUtwLep6Lq"
+                style="flex: 1; font-family: monospace;"
+            >
+        </div>
+
+        <details style="margin: 0.5rem 0;">
+            <summary style="cursor: pointer; font-size: 0.9em;">EVD URL Pattern (advanced)</summary>
+            <div style="padding: 0.5rem; background: var(--vvp-surface, #f8f9fa); border-radius: 0.25rem; margin-top: 0.5rem;">
+                <label for="evd-pattern" style="font-size: 0.85em;">URL Pattern (use {SAID} as placeholder)</label>
+                <input
+                    type="text"
+                    id="evd-pattern"
+                    value="https://origin.demo.provenant.net/v1/agent/public/{SAID}/dossier.cesr"
+                    style="font-family: monospace; font-size: 0.85em;"
+                >
+            </div>
+        </details>
+
+        <input type="hidden" id="evd_url" name="evd_url" value="">
+        <input type="hidden" name="kid_url" value="">
+
+        <button type="submit">
+            <span id="said-loading" class="htmx-indicator">Fetching...</span>
+            <span>Browse Dossier</span>
+        </button>
+    </form>
 </section>
 
+<section id="result">
+    <p><em>Paste a JWT above and click "Verify" to see the complete credential chain, or enter a SAID to browse a dossier directly.</em></p>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function constructEvdUrl() {
+    const said = document.getElementById('dossier-said').value.trim();
+    const pattern = document.getElementById('evd-pattern').value.trim();
+    if (said && pattern) {
+        const evdUrl = pattern.replace('{SAID}', said);
+        document.getElementById('evd_url').value = evdUrl;
+    }
+}
+
+// Construct URL on form submit and input change
+document.addEventListener('DOMContentLoaded', function() {
+    const saidInput = document.getElementById('dossier-said');
+    const patternInput = document.getElementById('evd-pattern');
+    const saidForm = document.getElementById('said-form');
+
+    if (saidInput) {
+        saidInput.addEventListener('input', constructEvdUrl);
+    }
+    if (patternInput) {
+        patternInput.addEventListener('input', constructEvdUrl);
+    }
+    if (saidForm) {
+        saidForm.addEventListener('htmx:beforeRequest', constructEvdUrl);
+    }
+});
+</script>
 {% endblock %}
