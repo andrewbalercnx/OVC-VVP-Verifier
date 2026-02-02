@@ -206,7 +206,10 @@ jobs:
             --name "vvp-issuer" \
             --image "$IMAGE" \
             --min-replicas 1 \
-            --set-env-vars "GIT_SHA=${{ github.sha }}" "GITHUB_REPOSITORY=${{ github.repository }}"
+            --set-env-vars \
+              "GIT_SHA=${{ github.sha }}" \
+              "GITHUB_REPOSITORY=${{ github.repository }}" \
+              "VVP_WITNESS_CONFIG=/srv/config/witnesses-azure.json"
 
   # =========================================================================
   # BUILD WITNESS IMAGE
