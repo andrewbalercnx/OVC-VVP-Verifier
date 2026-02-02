@@ -246,7 +246,10 @@
         try {
           const res = await fetch('/schema/import', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
             body: JSON.stringify({
               source: 'weboftrust',
               schema_id: schemaId,
@@ -298,7 +301,10 @@
         try {
           const res = await fetch('/schema/create', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
             body: JSON.stringify({
               title,
               description: description || null,
@@ -342,7 +348,10 @@
         try {
           const res = await fetch('/schema/validate', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
             body: JSON.stringify({
               said,
               credential_type: credentialType || null

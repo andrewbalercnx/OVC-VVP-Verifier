@@ -168,7 +168,10 @@
         try {
           const res = await fetch('/registry', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
             body: JSON.stringify({
               name: registryName,
               identity_name: identityName,

@@ -882,7 +882,10 @@
       try {
         const resp = await fetch('/admin/log-level', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
           body: JSON.stringify({ level: level })
         });
         const result = await resp.json();
@@ -900,7 +903,10 @@
       try {
         const resp = await fetch('/admin/auth/reload', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          }
         });
         const result = await resp.json();
         if (result.success) {
@@ -918,7 +924,10 @@
       try {
         const resp = await fetch('/admin/witnesses/reload', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          }
         });
         const result = await resp.json();
         if (result.success) {

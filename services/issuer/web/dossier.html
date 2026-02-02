@@ -163,7 +163,10 @@
           // Get info first
           const infoResponse = await fetch('/dossier/build/info', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
             body: JSON.stringify({
               root_said: selectedSaid,
               format: format,
@@ -194,7 +197,10 @@
           // Get actual content
           const contentResponse = await fetch('/dossier/build', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
             body: JSON.stringify({
               root_said: selectedSaid,
               format: format,
@@ -239,7 +245,10 @@
         try {
           const response = await fetch('/dossier/build', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
             body: JSON.stringify({
               root_said: selectedSaid,
               format: format,
