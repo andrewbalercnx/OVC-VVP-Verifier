@@ -568,8 +568,8 @@ class TestVerifyVVPIntegration:
             assert len(resp.claims) == 1
             root = resp.claims[0]
             assert root.name == "caller_authorised"
-            # 4 children: passport_verified, dossier_verified, authorization_valid, context_aligned
-            assert len(root.children) == 4
+            # 5 children: passport_verified, dossier_verified, authorization_valid, context_aligned, vetter_constraints_valid
+            assert len(root.children) == 5
 
             # All children should be REQUIRED
             assert root.children[0].required is True

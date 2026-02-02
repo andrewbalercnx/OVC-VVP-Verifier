@@ -87,6 +87,13 @@
               "SIP context not provided"
             ]
           }
+        },
+        {
+          "required": false,
+          "node": {
+            "name": "vetter_constraints_valid",
+            "status": "VALID"
+          }
         }
       ]
     },

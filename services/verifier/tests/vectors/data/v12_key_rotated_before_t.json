@@ -65,6 +65,16 @@
               "SIP context not provided"
             ]
           }
+        },
+        {
+          "required": false,
+          "node": {
+            "name": "vetter_constraints_valid",
+            "status": "INDETERMINATE",
+            "reasons_contain": [
+              "Cannot validate vetter constraints"
+            ]
+          }
         }
       ]
     },
