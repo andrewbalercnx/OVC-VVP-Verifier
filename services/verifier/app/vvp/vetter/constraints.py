@@ -207,6 +207,33 @@ def extract_tn_from_credential(credential: Any) -> Optional[str]:
     return None
 
 
+def extract_assertion_country(credential: Any) -> Optional[str]:
+    """Extract assertion country from a brand credential.
+
+    Per the VVP Multichannel Vetters spec, brand credentials should include
+    an explicit assertionCountry field (ISO 3166-1 alpha-3).
+
+    Args:
+        credential: Brand ACDC
+
+    Returns:
+        ISO 3166-1 alpha-3 country code or None
+    """
+    attrs = _get_attributes(credential)
+    if not attrs:
+        return None
+
+    # Check for explicit assertionCountry field (extended brand schema)
+    if "assertionCountry" in attrs:
+        return normalize_country_code(str(attrs["assertionCountry"]))
+
+    # Check for assertion_country variant
+    if "assertion_country" in attrs:
+        return normalize_country_code(str(attrs["assertion_country"]))
+
+    return None
+
+
 def _get_attributes(credential: Any) -> Optional[dict[str, Any]]:
     """Extract attributes dict from credential."""
     if isinstance(credential, dict):
@@ -349,20 +376,27 @@ def verify_vetter_constraints(
         cred_said = _get_credential_said(cred)
         cert = find_vetter_certification(cred, dossier_acdcs)
 
+        # First check for explicit assertion country from credential
+        # (extended brand schema), then fall back to dest TN
+        brand_assertion_country = extract_assertion_country(cred)
+        if not brand_assertion_country:
+            brand_assertion_country = assertion_country  # From dest TN
+
         if not cert:
             results[cred_said] = VetterConstraintResult(
                 credential_said=cred_said,
                 credential_type=CredentialType.BRAND,
                 vetter_certification_said=None,
                 constraint_type=ConstraintType.JURISDICTION,
-                target_value=assertion_country or "",
+                target_value=brand_assertion_country or "",
                 allowed_values=[],
                 is_authorized=False,
-                reason="Vetter certification not found for brand credential",
+                reason="Vetter certification not found for brand credential "
+                "(missing required certification edge)",
             )
             continue
 
-        if not assertion_country:
+        if not brand_assertion_country:
             results[cred_said] = VetterConstraintResult(
                 credential_said=cred_said,
                 credential_type=CredentialType.BRAND,
@@ -371,12 +405,13 @@ def verify_vetter_constraints(
                 target_value="",
                 allowed_values=cert.jurisdiction_targets,
                 is_authorized=False,
-                reason="Cannot determine brand assertion country (no destination TN)",
+                reason="Cannot determine brand assertion country "
+                "(no assertionCountry attribute and no destination TN)",
             )
             continue
 
         status, reason = validate_jurisdiction_constraint(
-            assertion_country, cert, "brand assertion"
+            brand_assertion_country, cert, "brand assertion"
         )
 
         results[cred_said] = VetterConstraintResult(
@@ -384,7 +419,7 @@ def verify_vetter_constraints(
             credential_type=CredentialType.BRAND,
             vetter_certification_said=cert.said,
             constraint_type=ConstraintType.JURISDICTION,
-            target_value=assertion_country,
+            target_value=brand_assertion_country,
             allowed_values=cert.jurisdiction_targets,
             is_authorized=(status == ClaimStatus.VALID),
             reason=reason,

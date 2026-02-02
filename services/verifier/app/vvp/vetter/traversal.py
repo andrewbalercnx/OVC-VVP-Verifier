@@ -16,93 +16,133 @@ from app.vvp.vetter.certification import (
 
 log = logging.getLogger(__name__)
 
-# Edge names that may reference a vetter certification
-CERTIFICATION_EDGE_NAMES = ["certification", "vetter", "vetter_cert", "cert"]
+# Spec-required edge name for vetter certification backlink
+# Per VVP Multichannel Vetters spec: credentials must use "certification" edge
+SPEC_CERTIFICATION_EDGE_NAME = "certification"
+
+# Alternative edge names that may appear in legacy dossiers
+# These are logged as warnings but still processed for backward compatibility
+LEGACY_CERTIFICATION_EDGE_NAMES = ["vetter", "vetter_cert", "cert"]
 
 
 def find_vetter_certification(
     credential: Any,
     dossier_acdcs: dict[str, Any],
 ) -> Optional[VetterCertification]:
-    """Find the Vetter Certification for a credential.
-
-    Traverses the credential's edges looking for a "certification" backlink
-    that references a Vetter Certification credential.
+    """Find the Vetter Certification for a credential via required edge.
 
     Per the VVP Multichannel Vetters spec: "Each of these credentials
     contains an edge, which is a backlink to CertificationB."
+
+    This function ONLY finds certifications via explicit edges. Credentials
+    without a proper certification edge will return None, indicating the
+    credential is not spec-compliant for vetter constraint validation.
 
     Args:
         credential: The ACDC to find certification for (dict or object)
         dossier_acdcs: All ACDCs in the current dossier, keyed by SAID
 
     Returns:
-        VetterCertification if found, None otherwise
+        VetterCertification if found via edge, None if no edge or not found
     """
     # Extract edges from credential
     edges = _get_edges(credential)
     if not edges:
-        log.debug(f"Credential has no edges, cannot find vetter certification")
+        log.debug("Credential has no edges - missing required certification backlink")
         return None
 
-    # Look for certification edge by known names
-    for edge_name in CERTIFICATION_EDGE_NAMES:
+    # First check for spec-required "certification" edge
+    if SPEC_CERTIFICATION_EDGE_NAME in edges:
+        result = _resolve_certification_edge(
+            edges[SPEC_CERTIFICATION_EDGE_NAME],
+            SPEC_CERTIFICATION_EDGE_NAME,
+            dossier_acdcs,
+        )
+        if result:
+            return result
+
+    # Check for legacy edge names with warning
+    for edge_name in LEGACY_CERTIFICATION_EDGE_NAMES:
         if edge_name not in edges:
             continue
 
-        edge_ref = edges[edge_name]
-        cert_said = _extract_edge_said(edge_ref)
+        log.warning(
+            f"Credential uses non-standard edge name '{edge_name}' instead of "
+            f"spec-required 'certification' - consider updating credential"
+        )
+        result = _resolve_certification_edge(
+            edges[edge_name],
+            edge_name,
+            dossier_acdcs,
+        )
+        if result:
+            return result
 
-        if not cert_said:
-            log.debug(f"Edge '{edge_name}' has no SAID reference")
-            continue
+    # No certification edge found - credential is not spec-compliant
+    # NOTE: We intentionally do NOT fall back to issuer-AID matching
+    # as this would bypass the spec requirement for explicit backlink edges
+    log.debug(
+        "No certification edge found - credential missing required "
+        "backlink to vetter certification"
+    )
+    return None
 
-        # Try to find certification in dossier
-        if cert_said in dossier_acdcs:
-            cert_acdc = dossier_acdcs[cert_said]
 
-            # Verify it's actually a vetter certification
-            schema_said = _get_schema_said(cert_acdc)
-            if schema_said and is_vetter_certification_schema(schema_said):
-                parsed = parse_vetter_certification(cert_acdc)
-                if parsed:
-                    log.debug(
-                        f"Found vetter certification {cert_said[:16]}... "
-                        f"via edge '{edge_name}'"
-                    )
-                    return parsed
-            else:
-                # May still be a vetter certification with unknown schema
-                # Try parsing anyway
-                parsed = parse_vetter_certification(cert_acdc)
-                if parsed and parsed.ecc_targets and parsed.jurisdiction_targets:
-                    log.debug(
-                        f"Found vetter certification {cert_said[:16]}... "
-                        f"via edge '{edge_name}' (schema not in known list)"
-                    )
-                    return parsed
+def _resolve_certification_edge(
+    edge_ref: Any,
+    edge_name: str,
+    dossier_acdcs: dict[str, Any],
+) -> Optional[VetterCertification]:
+    """Resolve a certification edge to a VetterCertification.
 
+    Args:
+        edge_ref: The edge reference (dict or string SAID)
+        edge_name: Name of the edge (for logging)
+        dossier_acdcs: All ACDCs in the dossier
+
+    Returns:
+        VetterCertification if found and valid, None otherwise
+    """
+    cert_said = _extract_edge_said(edge_ref)
+    if not cert_said:
+        log.debug(f"Edge '{edge_name}' has no SAID reference")
+        return None
+
+    # Try to find certification in dossier
+    if cert_said not in dossier_acdcs:
         log.debug(
             f"Certification SAID {cert_said[:16]}... "
-            f"not found in dossier or not a valid certification"
+            f"referenced by '{edge_name}' edge not found in dossier"
         )
+        return None
 
-    # Check if any credential in dossier looks like a vetter certification
-    # that issued this credential (fallback for legacy dossiers)
-    issuer_aid = _get_issuer_aid(credential)
-    if issuer_aid:
-        for said, acdc in dossier_acdcs.items():
-            schema_said = _get_schema_said(acdc)
-            if schema_said and is_vetter_certification_schema(schema_said):
-                parsed = parse_vetter_certification(acdc)
-                if parsed and parsed.vetter_aid == issuer_aid:
-                    log.debug(
-                        f"Found vetter certification {said[:16]}... "
-                        f"by matching issuer AID (fallback)"
-                    )
-                    return parsed
+    cert_acdc = dossier_acdcs[cert_said]
 
-    log.debug("No vetter certification found for credential")
+    # Verify it's actually a vetter certification
+    schema_said = _get_schema_said(cert_acdc)
+    if schema_said and is_vetter_certification_schema(schema_said):
+        parsed = parse_vetter_certification(cert_acdc)
+        if parsed:
+            log.debug(
+                f"Found vetter certification {cert_said[:16]}... "
+                f"via edge '{edge_name}'"
+            )
+            return parsed
+
+    # May still be a vetter certification with unknown schema
+    # Try parsing anyway (handles custom schemas with same structure)
+    parsed = parse_vetter_certification(cert_acdc)
+    if parsed and parsed.ecc_targets and parsed.jurisdiction_targets:
+        log.debug(
+            f"Found vetter certification {cert_said[:16]}... "
+            f"via edge '{edge_name}' (schema not in known list)"
+        )
+        return parsed
+
+    log.debug(
+        f"Credential {cert_said[:16]}... referenced by '{edge_name}' "
+        f"is not a valid vetter certification"
+    )
     return None
 
 
@@ -167,7 +207,12 @@ def get_certification_edge_said(credential: Any) -> Optional[str]:
     if not edges:
         return None
 
-    for edge_name in CERTIFICATION_EDGE_NAMES:
+    # Check spec-required edge name first
+    if SPEC_CERTIFICATION_EDGE_NAME in edges:
+        return _extract_edge_said(edges[SPEC_CERTIFICATION_EDGE_NAME])
+
+    # Check legacy edge names
+    for edge_name in LEGACY_CERTIFICATION_EDGE_NAMES:
         if edge_name in edges:
             return _extract_edge_said(edges[edge_name])
 

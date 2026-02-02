@@ -1383,31 +1383,44 @@ async def verify_vvp(
 
         if orig_tn_for_vetter:
             # Identify credential types for vetter constraint validation
-            # TN credentials: schema contains "tn" or "TNAllocation"
-            # Identity credentials: schema contains "LegalEntity" or "Identity"
-            # Brand credentials: schema contains "Brand"
+            # Classification is based on attributes content (case-insensitive)
             tn_credentials = []
             identity_credentials = []
             brand_credentials = []
 
             for said, acdc in dossier_acdcs.items():
-                schema_said = getattr(acdc, "schema_said", "") or ""
                 raw = getattr(acdc, "raw", {}) or {}
-                schema = raw.get("s", schema_said)
-
-                # For now, classify by schema SAID patterns or attribute content
-                # TODO: Use proper schema registry lookup when available
                 attrs = raw.get("a", {})
-                if isinstance(attrs, dict):
-                    # TN credential if has numbers.tn or tn field
-                    if "numbers" in attrs or "tn" in attrs:
-                        tn_credentials.append(raw)
-                    # Identity credential if has lei or incorporation-related fields
-                    elif "lei" in attrs or "country" in attrs or "jurisdiction" in attrs:
-                        identity_credentials.append(raw)
-                    # Brand credential if has brand-related fields
-                    elif "card" in attrs or "brand" in attrs or "logo" in attrs:
-                        brand_credentials.append(raw)
+                if not isinstance(attrs, dict):
+                    continue
+
+                # Get lowercase keys for case-insensitive matching
+                attrs_lower = {k.lower(): v for k, v in attrs.items()}
+
+                # TN credential: has numbers.tn or tn field
+                if "numbers" in attrs_lower or "tn" in attrs_lower:
+                    tn_credentials.append(raw)
+                # Brand credential: has assertionCountry, brandName, or brand-related fields
+                # Check brand BEFORE identity since brand may also have country fields
+                elif (
+                    "assertioncountry" in attrs_lower
+                    or "brandname" in attrs_lower
+                    or "branddisplayname" in attrs_lower
+                    or "card" in attrs_lower
+                    or "logo" in attrs_lower
+                    or "logourl" in attrs_lower
+                ):
+                    brand_credentials.append(raw)
+                # Identity credential: has LEI or incorporation-related fields
+                elif (
+                    "lei" in attrs_lower
+                    or "country" in attrs_lower
+                    or "jurisdiction" in attrs_lower
+                    or "incorporation_country" in attrs_lower
+                    or "incorporationcountry" in attrs_lower
+                    or "legalname" in attrs_lower
+                ):
+                    identity_credentials.append(raw)
 
             # Build dossier_acdcs dict in raw format for vetter module
             dossier_raw_acdcs = {said: acdc.raw for said, acdc in dossier_acdcs.items()}

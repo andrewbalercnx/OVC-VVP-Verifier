@@ -348,6 +348,108 @@ class TestEdgeTraversal:
         edge_said = get_certification_edge_said(tn_credential_with_cert_edge)
         assert edge_said == vetter_certification_acdc["d"]
 
+    def test_no_fallback_to_issuer_aid_matching(self, vetter_certification_acdc):
+        """Credentials without certification edge do NOT match by issuer AID.
+
+        Per spec: "Each of these credentials contains an edge, which is a
+        backlink to CertificationB." Without the explicit edge, the credential
+        is not spec-compliant and should NOT be matched via issuer AID.
+        """
+        # Credential with same issuer AID as vetter's vetter_aid but NO edge
+        credential = {
+            "d": "ETestCredSAID",
+            "i": "ETestVetterAID0000000000000000000000000000000",  # Same as vetter_aid
+            "a": {"numbers": {"tn": ["+447884666200"]}},
+            # No 'e' field at all - no edges
+        }
+        dossier_acdcs = {
+            vetter_certification_acdc["d"]: vetter_certification_acdc,
+            credential["d"]: credential,
+        }
+
+        # Should NOT find certification via AID matching
+        cert = find_vetter_certification(credential, dossier_acdcs)
+        assert cert is None
+
+    def test_legacy_edge_names_still_work(self, vetter_certification_acdc):
+        """Legacy edge names like 'vetter' still work but are non-standard."""
+        credential = {
+            "d": "ETestCredSAID",
+            "i": "ETestIssuer",
+            "a": {"numbers": {"tn": ["+447884666200"]}},
+            "e": {
+                "d": "EEdgeBlockSAID",
+                "vetter": {  # Legacy name, not spec-compliant "certification"
+                    "n": vetter_certification_acdc["d"],
+                    "s": vetter_certification_acdc["s"],
+                },
+            },
+        }
+        dossier_acdcs = {
+            vetter_certification_acdc["d"]: vetter_certification_acdc,
+            credential["d"]: credential,
+        }
+
+        # Should still find via legacy edge name
+        cert = find_vetter_certification(credential, dossier_acdcs)
+        assert cert is not None
+        assert cert.said == vetter_certification_acdc["d"]
+
+    def test_spec_certification_edge_preferred(self, vetter_certification_acdc):
+        """Spec-compliant 'certification' edge is preferred over legacy names."""
+        credential = {
+            "d": "ETestCredSAID",
+            "i": "ETestIssuer",
+            "a": {"numbers": {"tn": ["+447884666200"]}},
+            "e": {
+                "d": "EEdgeBlockSAID",
+                "certification": {  # Spec-compliant edge name
+                    "n": vetter_certification_acdc["d"],
+                    "s": vetter_certification_acdc["s"],
+                },
+            },
+        }
+        dossier_acdcs = {
+            vetter_certification_acdc["d"]: vetter_certification_acdc,
+            credential["d"]: credential,
+        }
+
+        cert = find_vetter_certification(credential, dossier_acdcs)
+        assert cert is not None
+        assert cert.said == vetter_certification_acdc["d"]
+
+    def test_empty_edges_block(self, vetter_certification_acdc):
+        """Credential with empty edges block returns None."""
+        credential = {
+            "d": "ETestCredSAID",
+            "i": "ETestIssuer",
+            "a": {"numbers": {"tn": ["+447884666200"]}},
+            "e": {},  # Empty edges
+        }
+        dossier_acdcs = {
+            vetter_certification_acdc["d"]: vetter_certification_acdc,
+            credential["d"]: credential,
+        }
+
+        cert = find_vetter_certification(credential, dossier_acdcs)
+        assert cert is None
+
+    def test_missing_edges_field(self, vetter_certification_acdc):
+        """Credential without 'e' field returns None."""
+        credential = {
+            "d": "ETestCredSAID",
+            "i": "ETestIssuer",
+            "a": {"numbers": {"tn": ["+447884666200"]}},
+            # No 'e' field
+        }
+        dossier_acdcs = {
+            vetter_certification_acdc["d"]: vetter_certification_acdc,
+            credential["d"]: credential,
+        }
+
+        cert = find_vetter_certification(credential, dossier_acdcs)
+        assert cert is None
+
 
 # =============================================================================
 # ECC Constraint Validation Tests

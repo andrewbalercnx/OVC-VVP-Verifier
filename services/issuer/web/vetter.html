@@ -373,10 +373,12 @@
 
     // Build selector UI
     function buildSelector(container, codes, type) {
+      // Only add "+" prefix for E.164 codes, not for ISO alpha-3 jurisdiction codes
+      const prefix = type === 'ecc' ? '+' : '';
       container.innerHTML = codes.map(c => `
         <div class="country-item">
           <input type="checkbox" id="${type}_${c.code}" value="${c.code}" onchange="updateCount('${type}')">
-          <label for="${type}_${c.code}">+${c.code} ${c.name}</label>
+          <label for="${type}_${c.code}">${prefix}${c.code} ${c.name}</label>
         </div>
       `).join('');
     }

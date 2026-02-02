@@ -6463,3 +6463,1271 @@ Check API response includes `toip_warnings` array when warnings present.
 All 15 ToIP warning tests pass.
 
 
+
+---
+
+# PLAN_ExternalSAIDResolution.md
+
+# Phase: External SAID Resolution from Witnesses
+
+**Status:** IMPLEMENTED
+**Date:** 2026-01-28
+
+## Problem Statement
+
+When a compact ACDC has edge references to credentials not included in the dossier, the verifier returns INDETERMINATE per VVP §2.2. However, these external credentials may be resolvable from KERI witnesses via their credential registry endpoints.
+
+**User requirement:** "If the SAIDs are not included in the dossier can we attempt to retrieve those SAIDs from the witness in the dossier?"
+
+## Spec References
+
+- **VVP §2.2**: "Uncertainty must be explicit" - INDETERMINATE when verification cannot determine status definitively
+- **VVP §1.4**: Verifiers MUST support ACDC variants (compact, partial, aggregate)
+- **VVP §6.3.x**: Credential chain validation rules for APE/DE/TNAlloc
+
+## Current State
+
+### Detection Points (where INDETERMINATE is set)
+
+1. **verifier.py:255-277** - `validate_edge_semantics()`: Edge target SAID not in dossier
+2. **verifier.py:566-578** - `walk_chain()`: Parent SAID from edge not in `dossier_acdcs`
+
+### Current behavior
+```python
+if parent_said not in dossier_acdcs:
+    current_variant = getattr(current, 'variant', 'full')
+    if current_variant == 'compact':
+        errors.append(f"Cannot verify edge target {parent_said[:20]}...")
+        chain_status = ClaimStatus.INDETERMINATE
+        return None  # Cannot verify chain
+```
+
+### Available Infrastructure
+
+| Component | Location | Relevance |
+|-----------|----------|-----------|
+| TELClient | tel_client.py | Has witness query patterns, `/credentials/{said}` endpoint |
+| OOBI dereferencing | oobi.py | HTTP client patterns with timeout, error handling |
+| Key state cache | cache.py | Two-level caching pattern with TTL and LRU |
+| Config | config.py | Environment variable patterns for feature flags |
+
+---
+
+## Implemented Solution
+
+### Approach
+
+Created a **`CredentialResolver`** module that attempts to fetch missing credentials from witnesses BEFORE falling back to INDETERMINATE.
+
+**Why this approach?**
+- Separates credential fetching from TEL (revocation) queries
+- Keeps verifier.py focused on validation logic
+- Testable in isolation with mocked HTTP
+
+### Data Flow
+
+```
+1. walk_chain() encounters edge target not in dossier_acdcs
+                |
+                v
+2. Check if credential_resolver is enabled
+                |
+        +-------+-------+
+        |               |
+    Disabled        Enabled
+        |               |
+        v               v
+    INDETERMINATE   3. Query witnesses at /credentials/{said}
+                           |
+                           v
+                    4. Parse CESR response, extract ACDC
+                           |
+                           v
+                    5. Validate SAID matches, verify signature
+                           |
+                    +------+------+
+                    |             |
+                Valid         Invalid/Not found
+                    |             |
+                    v             v
+            6. Add to dossier_acdcs  7. INDETERMINATE (compact)
+               Continue validation       or INVALID (full)
+```
+
+---
+
+## Files Created/Modified
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `app/vvp/keri/credential_resolver.py` | **Created** | New CredentialResolver class |
+| `app/vvp/keri/credential_cache.py` | **Created** | Credential-specific cache |
+| `app/core/config.py` | Modified | Add configuration constants |
+| `app/vvp/acdc/verifier.py` | Modified | Integrate resolver into chain validation |
+| `app/vvp/verify.py` | Modified | Pass resolver and witness URLs |
+| `app/vvp/keri/__init__.py` | Modified | Export new components |
+| `tests/test_credential_resolver.py` | **Created** | Unit tests for resolver |
+| `tests/test_credential_cache.py` | **Created** | Unit tests for cache |
+| `tests/test_acdc.py` | Modified | Integration tests for external resolution |
+
+---
+
+## Detailed Design
+
+### 1. Configuration (config.py)
+
+```python
+# SPRINT 25: EXTERNAL SAID RESOLUTION (§2.2 / §1.4)
+EXTERNAL_SAID_RESOLUTION_ENABLED: bool = os.getenv(
+    "VVP_EXTERNAL_SAID_RESOLUTION", "false"
+).lower() == "true"
+
+EXTERNAL_SAID_RESOLUTION_TIMEOUT: float = float(
+    os.getenv("VVP_EXTERNAL_SAID_TIMEOUT", "5.0")
+)
+
+EXTERNAL_SAID_MAX_DEPTH: int = int(
+    os.getenv("VVP_EXTERNAL_SAID_MAX_DEPTH", "3")
+)
+
+EXTERNAL_SAID_CACHE_TTL_SECONDS: int = int(
+    os.getenv("VVP_EXTERNAL_SAID_CACHE_TTL", "300")
+)
+
+EXTERNAL_SAID_CACHE_MAX_ENTRIES: int = int(
+    os.getenv("VVP_EXTERNAL_SAID_CACHE_MAX_ENTRIES", "500")
+)
+```
+
+**Default: disabled** - Opt-in feature to avoid unexpected network calls.
+
+### 2. CredentialResolver (credential_resolver.py)
+
+```python
+@dataclass
+class ResolvedCredential:
+    acdc: ACDC
+    source_url: str
+    signature: Optional[bytes]
+
+class CredentialResolver:
+    def __init__(self, config: CredentialResolverConfig = None):
+        self._config = config or CredentialResolverConfig()
+        self._cache: Dict[str, ResolvedCredential] = {}
+        self._in_flight: Set[str] = set()  # Recursion guard
+
+    async def resolve(
+        self,
+        said: str,
+        witness_base_urls: List[str],
+    ) -> Optional[ResolvedCredential]:
+        """
+        Attempt to resolve a credential SAID from witnesses.
+
+        Returns:
+            ResolvedCredential if found and valid, None otherwise
+        """
+        # 1. Check cache
+        # 2. Check recursion guard
+        # 3. Query witnesses in parallel (first 3)
+        # 4. Parse CESR response
+        # 5. Validate SAID matches
+        # 6. Cache and return
+```
+
+### 3. Verifier Integration (verifier.py)
+
+Modified `walk_chain()` at line ~566:
+
+```python
+if parent_said not in dossier_acdcs:
+    # NEW: Attempt external resolution if enabled
+    resolved = False
+    if credential_resolver and witness_urls:
+        result = await credential_resolver.resolve(parent_said, witness_urls)
+        if result:
+            dossier_acdcs[parent_said] = result.acdc
+            log.info(f"Resolved external credential {parent_said[:20]}...")
+            resolved = True
+    if not resolved:
+        # Resolution failed, fall back to current behavior
+        if current_variant == 'compact':
+            chain_status = ClaimStatus.INDETERMINATE
+            return None
+        raise ACDCChainInvalid(...)
+```
+
+### 4. Orchestration (verify.py)
+
+Pass resolver to `validate_credential_chain()`:
+
+```python
+# Extract witness URL from PASSporT kid
+if EXTERNAL_SAID_RESOLUTION_ENABLED and witness_urls:
+    credential_resolver = CredentialResolver(
+        config=CredentialResolverConfig(
+            enabled=True,
+            timeout_seconds=EXTERNAL_SAID_RESOLUTION_TIMEOUT,
+            max_recursion_depth=EXTERNAL_SAID_MAX_DEPTH,
+        )
+    )
+```
+
+---
+
+## Error Handling Strategy
+
+| Error Type | Behavior | Result |
+|------------|----------|--------|
+| Network timeout | Log warning | INDETERMINATE |
+| HTTP 404 | Credential not found | INDETERMINATE |
+| HTTP 5xx | Server error | INDETERMINATE |
+| Parse error | Invalid CESR/JSON | INDETERMINATE |
+| SAID mismatch | Fetched credential has wrong SAID | INDETERMINATE |
+| Signature invalid | Crypto verification failed | **INVALID** |
+| Recursion limit | Too many nested externals | INDETERMINATE |
+
+**Key principle:** Only signature verification failure produces INVALID. All other resolution failures are recoverable and produce INDETERMINATE.
+
+---
+
+## Test Results
+
+```
+1463 passed in 99.32s
+```
+
+---
+
+## Implementation Notes
+
+### Deviations from Plan
+
+None - implementation followed the approved plan.
+
+### Review Fixes Applied
+
+1. **Signature verification for resolved credentials** (verifier.py:589-653)
+   - When credential resolved WITH signature: verify against issuer key state
+   - Verification success → VALID path possible
+   - Verification failure → INVALID (cryptographic failure)
+   - Key resolution failure → INDETERMINATE
+
+2. **CESR response parsing** (credential_resolver.py:371-391)
+   - Uses `parse_cesr_stream()` for proper attachment handling
+   - Extracts signatures from `-A` controller signature attachments
+   - Falls back to plain JSON if CESR parsing fails
+
+3. **Cache config wiring** (verify.py:923-975)
+   - `EXTERNAL_SAID_CACHE_TTL_SECONDS` and `EXTERNAL_SAID_CACHE_MAX_ENTRIES` now passed to resolver
+
+### Key Technical Details
+
+1. **Async walk_chain**: Made `walk_chain()` async to support async credential resolution
+2. **Parallel witness queries**: Up to 3 witnesses queried in parallel for faster resolution
+3. **Recursion guard**: `_in_flight` set prevents infinite loops when credentials reference each other
+4. **LRU cache with TTL**: Credential cache uses same pattern as key state cache
+5. **Signature verification**: Resolved credentials with signatures are cryptographically verified
+6. **INDETERMINATE for unverified**: Credentials without signatures cannot produce VALID
+
+### Files Changed
+
+| File | Lines | Summary |
+|------|-------|---------|
+| `app/core/config.py` | +15 | Added 5 configuration constants |
+| `app/vvp/keri/credential_cache.py` | +200 | New credential cache module |
+| `app/vvp/keri/credential_resolver.py` | +250 | New credential resolver module with CESR parsing |
+| `app/vvp/acdc/verifier.py` | +80 | Added resolver integration with signature verification |
+| `app/vvp/verify.py` | +30 | Pass resolver with full cache config when enabled |
+| `app/vvp/keri/__init__.py` | +15 | Export new components |
+| `tests/test_credential_cache.py` | +276 | Cache unit tests |
+| `tests/test_credential_resolver.py` | +520 | Resolver unit tests including CESR parsing |
+| `tests/test_acdc.py` | +130 | Integration tests including signature behavior |
+
+---
+
+# PLAN_Sprint27.md
+
+# Sprint 27: Local Witness Infrastructure
+
+## Problem Statement
+
+The VVP Issuer service requires local KERI witnesses for development and testing. Currently, the verifier relies on remote Provenant staging witnesses, but for local development of the issuer, we need witnesses running locally that can:
+1. Accept OOBI requests for AID resolution
+2. Store and serve KEL events
+3. Provide witness receipts for credential issuance
+
+Without local witnesses, developers cannot test issuer functionality without network connectivity to external witness infrastructure.
+
+## Spec References
+
+- SPRINTS.md §Sprint 27: Defines deliverables and exit criteria
+- keripy witness demo: Uses `kli witness demo` to run deterministic demo witnesses
+
+## Current State
+
+- **No docker-compose.yml exists** - The project uses Azure Container Apps for deployment
+- **Verifier has mature OOBI resolution** via `services/verifier/app/vvp/keri/witness_pool.py`
+- **Configured with Provenant staging witnesses** as default fallback
+- **keripy vendored** at `/keripy` with witness demo support
+
+## Proposed Solution
+
+### Approach
+
+Use the `gleif/keri:latest` Docker image with `kli witness demo` to run three demo witnesses (wan, wil, wes) in a single container. Add environment variable support to the verifier config so it can use local witnesses instead of Provenant staging.
+
+**Why this approach:**
+1. `gleif/keri:latest` is the official GLEIF KERI image, well-maintained and tested
+2. `kli witness demo` runs all witnesses in one process with deterministic AIDs
+3. Single container simplifies orchestration (vs. 3 separate containers)
+4. Environment variable override is non-invasive and backwards-compatible
+
+### Alternatives Considered
+
+| Alternative | Pros | Cons | Why Rejected |
+|-------------|------|------|--------------|
+| Build from vendored keripy | Full control, exact version match | Slower builds, more maintenance, dependency issues | Vendored keripy is for reference, not production |
+| Separate container per witness | Better isolation, independent scaling | Requires keystore pre-initialization, more complex | Overkill for local dev |
+| Modify default config | Simpler code | Breaks production, not backwards-compatible | Environment variable is cleaner |
+
+### Detailed Design
+
+#### Component 1: docker-compose.yml
+
+**Purpose:** Multi-service orchestration for local development
+**Location:** `/docker-compose.yml` (repository root)
+
+```yaml
+version: "3.8"
+
+services:
+  witnesses:
+    image: gleif/keri:latest
+    container_name: vvp-witnesses
+    command: ["kli", "witness", "demo"]
+    ports:
+      - "5632:5632"  # wan TCP
+      - "5633:5633"  # wil TCP
+      - "5634:5634"  # wes TCP
+      - "5642:5642"  # wan HTTP
+      - "5643:5643"  # wil HTTP
+      - "5644:5644"  # wes HTTP
+    volumes:
+      - witness-data:/usr/local/var/keri
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5642/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - vvp-network
+
+  verifier:
+    build:
+      context: .
+      dockerfile: services/verifier/Dockerfile
+    container_name: vvp-verifier
+    ports:
+      - "8000:8000"
+    environment:
+      - VVP_LOCAL_WITNESS_URLS=http://witnesses:5642,http://witnesses:5643,http://witnesses:5644
+      - VVP_GLEIF_WITNESS_DISCOVERY=false
+    depends_on:
+      witnesses:
+        condition: service_healthy
+    networks:
+      - vvp-network
+    profiles:
+      - full  # Only with: docker-compose --profile full up
+
+networks:
+  vvp-network:
+    name: vvp-internal
+
+volumes:
+  witness-data:
+```
+
+#### Component 2: scripts/local-witnesses.sh
+
+**Purpose:** Convenience script for starting/stopping witnesses
+**Location:** `/scripts/local-witnesses.sh`
+
+**Commands:**
+- `start` - `docker-compose up -d witnesses` + health check
+- `stop` - `docker-compose down`
+- `status` - Check health of all three witnesses, print OOBI URLs
+- `logs` - View witness logs
+
+**Key features:**
+- Color-coded output for status
+- Health check verifies all three HTTP ports respond
+- Prints OOBI URLs and environment variable for copy/paste
+
+#### Component 3: services/issuer/config/witnesses.json
+
+**Purpose:** Witness configuration for future issuer service (Sprint 28)
+**Location:** `/services/issuer/config/witnesses.json`
+
+```json
+{
+  "dt": "2026-01-31T00:00:00.000000+00:00",
+  "iurls": [
+    "http://witnesses:5642/oobi/BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha/controller",
+    "http://witnesses:5643/oobi/BLskRTInXnMxWaGqcpSyMgo0nYbalW99cGZESrz3zapM/controller",
+    "http://witnesses:5644/oobi/BIKKuvBwpmDVA4Ds-EpL5bt9OqPzWPja2LigFYZN2YfX/controller"
+  ],
+  "witness_aids": {
+    "wan": "BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha",
+    "wil": "BLskRTInXnMxWaGqcpSyMgo0nYbalW99cGZESrz3zapM",
+    "wes": "BIKKuvBwpmDVA4Ds-EpL5bt9OqPzWPja2LigFYZN2YfX"
+  },
+  "ports": {
+    "wan": {"tcp": 5632, "http": 5642},
+    "wil": {"tcp": 5633, "http": 5643},
+    "wes": {"tcp": 5634, "http": 5644}
+  }
+}
+```
+
+#### Component 4: Config Update (config.py)
+
+**Purpose:** Add environment variable support for local witness override
+**Location:** `/services/verifier/app/core/config.py` (modify lines 390-396)
+
+**Change:**
+```python
+# Before (hardcoded):
+PROVENANT_WITNESS_URLS: list[str] = [
+    "http://witness4.stage.provenant.net:5631",
+    ...
+]
+
+# After (environment variable with fallback):
+def _parse_witness_urls() -> list[str]:
+    """Parse witness URLs from environment or use defaults."""
+    local_urls = os.getenv("VVP_LOCAL_WITNESS_URLS", "")
+    if local_urls:
+        return [url.strip() for url in local_urls.split(",") if url.strip()]
+    return [
+        "http://witness4.stage.provenant.net:5631",
+        "http://witness5.stage.provenant.net:5631",
+        "http://witness6.stage.provenant.net:5631",
+    ]
+
+PROVENANT_WITNESS_URLS: list[str] = _parse_witness_urls()
+```
+
+#### Component 5: Integration Tests
+
+**Purpose:** Verify witness functionality
+**Location:** `/services/verifier/tests/test_local_witnesses.py`
+
+**Tests (require `--run-local-witnesses` flag):**
+1. `test_witness_wan_responds` - Verify port 5642 responds
+2. `test_witness_wil_responds` - Verify port 5643 responds
+3. `test_witness_wes_responds` - Verify port 5644 responds
+4. `test_oobi_endpoint_returns_keri_data` - Verify OOBI returns KERI messages
+5. `test_witness_pool_with_local_urls` - Verify WitnessPool integration
+
+### Data Flow
+
+```
+Developer Machine                    Docker Network
+┌─────────────────┐                 ┌─────────────────────────────┐
+│                 │   docker-compose│                             │
+│  ./scripts/     │ ───────────────>│  witnesses container        │
+│  local-witnesses│    up           │  ├── wan :5642              │
+│  .sh start      │                 │  ├── wil :5643              │
+│                 │                 │  └── wes :5644              │
+└─────────────────┘                 │                             │
+                                    │  verifier container         │
+┌─────────────────┐                 │  └── uses local witnesses   │
+│  Verifier       │   env var       │      via VVP_LOCAL_WITNESS_ │
+│  (local dev)    │ ───────────────>│      URLS env var           │
+│                 │                 └─────────────────────────────┘
+└─────────────────┘
+        │
+        │ export VVP_LOCAL_WITNESS_URLS=...
+        ▼
+    Uses local witnesses instead of Provenant
+```
+
+### Error Handling
+
+- Docker not installed: Script exits with clear error message
+- Witnesses fail to start: Health check reports which witness failed
+- Port conflicts: User must stop conflicting services (ports 5632-5634, 5642-5644)
+
+### Test Strategy
+
+1. **Unit tests:** None needed (configuration change only)
+2. **Integration tests:** New `test_local_witnesses.py` with pytest marker
+3. **Manual verification:** Script includes `status` command for health check
+
+## Files to Create/Modify
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `docker-compose.yml` | Create | Multi-service orchestration |
+| `scripts/local-witnesses.sh` | Create | Start/stop convenience script |
+| `services/issuer/config/witnesses.json` | Create | Issuer witness config (Sprint 28) |
+| `services/issuer/config/.gitkeep` | Create | Ensure directory in git |
+| `services/verifier/app/core/config.py` | Modify | Add env var support |
+| `services/verifier/tests/test_local_witnesses.py` | Create | Integration tests |
+
+## Open Questions
+
+1. **Port conflicts:** Should we add a check for port availability before starting witnesses, or just document the requirement?
+
+2. **Verifier in docker-compose:** The plan includes verifier as optional (`--profile full`). Should it be included by default, or is witnesses-only the primary use case?
+
+## Risks and Mitigations
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| `gleif/keri:latest` unavailable | Low | High | Fall back to building from vendored keripy |
+| Port conflicts | Medium | Medium | Document requirements, add check in script |
+| Docker not installed | Medium | Low | Document as prerequisite |
+| Witness AIDs change | Low | Low | AIDs are deterministic from hardcoded salts |
+
+## Known Witness AIDs
+
+These are deterministic from `kli witness demo` salts:
+
+| Name | AID | TCP Port | HTTP Port |
+|------|-----|----------|-----------|
+| wan | `BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha` | 5632 | 5642 |
+| wil | `BLskRTInXnMxWaGqcpSyMgo0nYbalW99cGZESrz3zapM` | 5633 | 5643 |
+| wes | `BIKKuvBwpmDVA4Ds-EpL5bt9OqPzWPja2LigFYZN2YfX` | 5634 | 5644 |
+
+## Exit Criteria
+
+Per SPRINTS.md:
+- [ ] `docker-compose up` starts all witnesses
+- [ ] `curl http://127.0.0.1:5642/oobi/{wan_aid}/controller` returns valid OOBI
+- [ ] Verifier tests pass with local witness resolution
+
+---
+
+## Implementation Notes
+
+### Reviewer Feedback Incorporated
+
+1. **Healthcheck alignment**: Changed healthcheck from `http://localhost:5642/` to OOBI endpoint for stronger readiness signal
+2. **Port check added**: `local-witnesses.sh` includes port availability check before starting
+3. **Port discrepancy fixed**: Updated SPRINTS.md to show correct ports from `kli witness demo`
+4. **Verifier profile**: Kept optional via `--profile full` as recommended
+
+### Deviations from Plan
+
+None - implementation matches approved plan.
+
+### Files Changed
+
+| File | Lines | Summary |
+|------|-------|---------|
+| `docker-compose.yml` | +87 | Docker orchestration for witnesses + optional verifier |
+| `scripts/local-witnesses.sh` | +175 | Start/stop script with health checks |
+| `services/issuer/config/witnesses.json` | +24 | Witness config for Sprint 28 issuer |
+| `services/issuer/config/.gitkeep` | +1 | Placeholder for git |
+| `services/verifier/app/core/config.py` | +22 | VVP_LOCAL_WITNESS_URLS env var support |
+| `services/verifier/tests/test_local_witnesses.py` | +175 | Integration tests |
+| `SPRINTS.md` | +4 | Fixed port documentation |
+
+### Test Results
+
+Docker is not available on the current machine. Manual verification required:
+
+```bash
+# Start witnesses
+./scripts/local-witnesses.sh start
+
+# Verify OOBI endpoint
+curl http://127.0.0.1:5642/oobi/BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha/controller
+
+# Run integration tests
+export VVP_LOCAL_WITNESS_URLS=http://127.0.0.1:5642,http://127.0.0.1:5643,http://127.0.0.1:5644
+./scripts/run-tests.sh tests/test_local_witnesses.py -v --run-local-witnesses
+```
+
+---
+
+# PLAN_Sprint34.md
+
+# Sprint 34: Schema Management
+
+## Goal
+Import schemas from WebOfTrust/schema repository, add SAID generation capability, and enhance schema management UI.
+
+## Background
+
+The [WebOfTrust/schema repository](https://github.com/WebOfTrust/schema/tree/main) provides:
+- **registry.json** - Schema registry listing all available schemas with metadata
+- **kaslcred/** - Tool for creating JSON Schema ACDCs with proper SAID computation
+- **vLEI schemas** - Legal Entity, QVI, OOR, ECR credentials used by GLEIF
+
+Currently our issuer embeds schemas as pre-loaded JSON files with hard-coded SAIDs. This sprint adds:
+1. Import schemas from WebOfTrust repository
+2. Compute SAIDs for new/modified schemas
+3. UI for schema management (view, create, validate)
+
+## Proposed Solution
+
+### Approach
+Extend the schema subsystem with three new capabilities:
+1. **Schema Import** - Fetch and validate schemas from WebOfTrust repository
+2. **SAID Generation** - Compute SAIDs for new schemas using KERI canonical form
+3. **Schema Management UI** - Enhanced interface for viewing, importing, and creating schemas
+
+### Key Design Decisions
+
+1. **SAID Computation**: Use keripy's `Saider.saidify()` directly - battle-tested, handles all edge cases
+2. **Version Pinning**: Support commit SHA/tag via `VVP_SCHEMA_REPO_REF` environment variable
+3. **Storage Separation**: Embedded (read-only) vs user-added (writable) schemas
+4. **Metadata Handling**: Store `_source` metadata separately, strip before SAID verification
+
+## Files Created/Modified
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `services/issuer/app/schema/said.py` | Created | SAID computation module |
+| `services/issuer/app/schema/importer.py` | Created | Schema import service |
+| `services/issuer/app/schema/store.py` | Modified | Add write capability, metadata stripping |
+| `services/issuer/app/schema/__init__.py` | Created | Module exports |
+| `services/issuer/app/api/schema.py` | Modified | Add import/create/delete/verify endpoints |
+| `services/issuer/app/api/models.py` | Modified | Add request/response models |
+| `services/issuer/web/schemas.html` | Modified | Enhanced UI with tabs |
+| `services/issuer/tests/test_said.py` | Created | SAID computation tests (19 tests) |
+| `services/issuer/tests/test_import.py` | Created | Import service tests (14 tests) |
+| `services/issuer/tests/test_schema.py` | Modified | Added metadata/verification tests (3 tests) |
+| `SPRINTS.md` | Modified | Added Sprint 34 definition |
+
+## Exit Criteria - All Met
+
+- [x] SAID computation produces correct SAIDs for all vLEI schemas
+- [x] Import from WebOfTrust registry works end-to-end
+- [x] Create new schema with auto-SAID works
+- [x] UI shows schema source (embedded/imported/custom)
+- [x] Delete works only for user-added schemas
+- [x] All tests passing (47 passed, 1 skipped)
+
+---
+
+## Implementation Notes
+
+### Code Review Iterations
+
+**Round 1 - CHANGES_REQUESTED:**
+- [Medium] `_source` metadata injected into stored schemas broke SAID verification
+- [Low] Comment in `fetch_schema_by_path()` didn't match behavior
+
+**Round 2 - APPROVED:**
+- Added `_strip_metadata()` function to remove internal fields before verification
+- Modified `get_schema()` to strip metadata by default
+- Fixed misleading comment in importer
+- Added tests for metadata stripping behavior
+
+### Test Results
+```
+tests/test_schema.py - 13 passed
+tests/test_said.py - 19 passed
+tests/test_import.py - 14 passed, 1 skipped
+Total: 47 passed, 1 skipped
+```
+
+### API Endpoints Added
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/schema/weboftrust/registry` | GET | readonly | List schemas in WebOfTrust registry |
+| `/schema/import` | POST | admin | Import schema from URL or WebOfTrust |
+| `/schema/create` | POST | admin | Create new schema with SAID |
+| `/schema/{said}` | DELETE | admin | Remove user-added schema |
+| `/schema/{said}/verify` | GET | readonly | Verify schema SAID |
+
+### Review History
+- Plan Review 1: CHANGES_REQUESTED - SAID algorithm underspecified, path mismatch
+- Plan Review 2: APPROVED
+- Code Review 1: CHANGES_REQUESTED - _source metadata issue
+- Code Review 2: APPROVED
+
+---
+
+# PLAN_Tier2Completion.md
+
+# Phase: Completing Tier 2 KERI Verification
+
+**Status:** COMPLETED
+**Date:** 2026-01-28
+
+## Problem Statement
+
+The verifier currently treats KERI resolution as an experimental feature and lacks support for binary CESR format and strict KERI canonicalization. This prevents true "Tier 2" checks against standard KERI witnesses in a production environment.
+
+## Spec References
+
+- **VVP Spec v1.5 Section 7.3**: Witness receipt validation and threshold requirements
+- **KERI Spec (IETF draft-ssmith-keri)**: CESR encoding, canonical serialization, SAID computation
+- **ACDC Spec**: Schema SAID computation (uses sorted keys, different from KEL events)
+
+## Implementation Summary
+
+### Phase 1: Canonicalization Foundation
+- Flipped defaults in `validate_kel_chain()` to `use_canonical=True`, `validate_saids=True`
+- Added `compute_kel_event_said()` routing function to separate KEL from ACDC SAID computation
+- Updated ACDC SAID documentation in `parser.py` and `schema_fetcher.py`
+- Updated all test fixtures to use canonical serialization
+
+### Phase 2: CESR Binary Support
+- Added CESR exception types: `CESRFramingError`, `CESRMalformedError`, `UnsupportedSerializationKind`
+- Implemented version string parser with MGPK/CBOR rejection
+- Completed -D transferable receipt parsing
+- Completed -V attachment group parsing with framing validation
+- Added negative tests for all CESR error conditions
+
+### Phase 3: Production Enablement
+- Removed TEST-ONLY warnings from `kel_resolver.py` and `signature.py`
+- Added environment variable support for `TIER2_KEL_RESOLUTION_ENABLED`
+- Production defaults now use strict validation
+
+### Phase 4: Golden Fixtures
+- Created fixture generation script using vendored keripy (`scripts/generate_keripy_fixtures.py`)
+- Generated binary CESR fixtures with real Ed25519 signatures
+- Added golden tests comparing parser output to keripy reference
+- Fixed CESR signature decoding to strip 2 lead bytes from indexed signatures
+- Fixed KERI key decoding to handle CESR qb64 lead bytes (0x04 for B-prefix, 0x0c for D-prefix)
+- Added `generate_witness_receipts_fixture()` for properly signed witness receipts
+- Fixed test helpers to use proper CESR B-prefix encoding
+
+## Files Changed
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `app/vvp/keri/kel_parser.py` | Modified | Flip defaults, add `compute_kel_event_said()`, fix key decoding |
+| `app/vvp/keri/cesr.py` | Modified | Binary CESR, -D/-V parsing, counter table, framing validation, signature lead byte fix |
+| `app/vvp/keri/keri_canonical.py` | Modified | Version string validation |
+| `app/vvp/keri/kel_resolver.py` | Modified | Remove TEST-ONLY, update docstrings |
+| `app/vvp/keri/signature.py` | Modified | Remove TEST-ONLY warnings |
+| `app/vvp/keri/exceptions.py` | Modified | Add `CESRFramingError`, `CESRMalformedError`, `UnsupportedSerializationKind` |
+| `app/core/config.py` | Modified | Add env var support |
+| `app/vvp/acdc/parser.py` | Modified | Document ACDC SAID computation |
+| `app/vvp/acdc/schema_fetcher.py` | Modified | Document schema SAID (sorted keys) |
+| `tests/test_cesr_parser.py` | Modified | Binary CESR tests |
+| `tests/test_cesr_negative.py` | Created | Negative tests for framing/counter errors |
+| `tests/test_keripy_integration.py` | Created | Golden fixture tests |
+| `tests/test_witness_receipts.py` | Modified | Fix CESR B-prefix encoding |
+| `tests/test_kel_integration.py` | Modified | Fix CESR B-prefix encoding |
+| `tests/fixtures/keri/binary_kel.json` | Created | Binary CESR fixture |
+| `tests/fixtures/keri/witness_receipts_keripy.json` | Created | Witness receipts fixture |
+| `scripts/generate_keripy_fixtures.py` | Created | Fixture generation from keripy |
+
+## Key Technical Details
+
+### CESR Signature Lead Bytes
+Indexed CESR signatures (codes 0A, 0B, 0C, 0D, AA) include 2 lead bytes:
+- 88-char qb64 decodes to 66 bytes
+- First 2 bytes are code/index prefix
+- Remaining 64 bytes are the Ed25519 signature
+
+### CESR Key Lead Bytes
+CESR qb64 keys (44 chars) decode to 33 bytes with 1 lead byte:
+- B-prefix (Ed25519N non-transferable): lead byte 0x04
+- D-prefix (Ed25519 transferable): lead byte 0x0c
+- Legacy format detection via lead byte check with fallback
+
+### Witness Fixture Generation
+Proper CESR B-prefix encoding for witnesses:
+```python
+cesr_lead_byte = bytes([0x04])  # Ed25519N
+full_bytes = cesr_lead_byte + public_key
+aid = base64.urlsafe_b64encode(full_bytes).decode().rstrip("=")
+```
+
+## Test Results
+
+```
+1408 passed, 19 warnings in 97.81s
+```
+
+## Review History
+
+- **Phase 1**: APPROVED
+- **Phase 2**: APPROVED
+- **Phase 3**: APPROVED
+- **Phase 4 Rev 0**: CHANGES_REQUESTED - Rotation signed with wrong key, missing validate_kel_chain test
+- **Phase 4 Rev 1**: CHANGES_REQUESTED - CESR signature/key lead byte handling incorrect
+- **Phase 4 Rev 2**: APPROVED - All fixes applied, witness fixture regenerated
+
+---
+
+# PLAN_CESR.md (Root-level)
+
+# Plan: CESR Parsing + KERI Canonicalization (Tier 2 Enablement)
+
+## Goal
+Enable Tier 2 KEL resolution against real OOBIs by implementing CESR stream parsing, KERI‑compliant canonicalization/serialization, and SAID validation. This removes the current JSON‑only, test‑mode limitation and allows `TIER2_KEL_RESOLUTION_ENABLED` to be safely enabled in production.
+
+## Scope
+- CESR parsing of KEL streams (events + attachments)
+- KERI canonicalization for signing input
+- SAID computation using “most compact form”
+- Signature verification against canonical bytes
+- OOBI content-type handling for CESR vs JSON test mode
+- Tests with real CESR fixtures
+- Documentation updates and feature‑flag transition plan
+
+Out of scope:
+- Full KERI agent integration
+- Delegated event resolution (dip/drt) beyond detection and INDETERMINATE
+
+---
+
+## Workstream 1: CESR Stream Parsing
+
+### Deliverables
+- `app/vvp/keri/cesr.py` (new) or extend `kel_parser.py` with CESR parsing
+
+### Tasks
+1. Implement a CESR tokenizer that iterates a byte stream and extracts:
+   - Event payload (JSON)
+   - Controller signatures
+   - Witness receipts
+2. Support common attachment types needed for KEL validation:
+   - Indexed controller signatures (0A/0B/0C...)
+   - Witness receipts (`rcts`)
+3. Return a structured result:
+   - `event_raw: dict`
+   - `signatures: List[bytes]`
+   - `witness_receipts: List[WitnessReceipt]`
+   - `metadata` for debugging (count codes, lengths)
+
+### Tests
+- `tests/test_cesr_parser.py`:
+  - Valid CESR KEL stream parses into correct event + attachments
+  - Truncated/invalid count codes raise `ResolutionFailedError`
+
+---
+
+## Workstream 2: KERI Canonicalization / Serialization
+
+### Deliverables
+- `app/vvp/keri/keri_canonical.py` (new)
+
+### Tasks
+1. Implement `canonical_event_bytes(event_raw) -> bytes` using KERI label ordering by event type.
+2. Ensure serialization matches KERI expectations:
+   - No whitespace
+   - Stable field ordering per event type
+3. Replace `_compute_signing_input()` to use canonical bytes (not JSON sorted keys).
+
+### Tests
+- `tests/test_canonicalization.py`:
+  - Canonical bytes match known fixtures for icp/rot/ixn
+
+---
+
+## Workstream 3: SAID Computation (Most Compact Form)
+
+### Deliverables
+- Update `compute_said()` to use KERI canonical bytes
+- Enable `_validate_event_said()` by default for CESR inputs
+
+### Tasks
+1. Build “most compact form” with placeholder `d`.
+2. Hash canonical bytes (blake3‑256) and encode with derivation code.
+3. Compare computed SAID to event’s `d` and raise on mismatch.
+
+### Tests
+- `tests/test_said.py`:
+  - Computed SAID matches known KERI vectors for icp/rot events
+  - Invalid `d` triggers `KELChainInvalidError`
+
+---
+
+## Workstream 4: Chain Validation Against Canonical Bytes
+
+### Deliverables
+- Update `validate_kel_chain()` to:
+  - Use canonical bytes for signature validation
+  - Require SAID validation for CESR inputs
+
+### Tasks
+1. Verify inception signatures against its own keys.
+2. Verify rotation signatures against prior establishment keys.
+3. Ensure `prior_digest` chain continuity still enforced.
+
+### Tests
+- Extend `tests/test_kel_chain.py` with CESR fixtures:
+  - Valid chain passes
+  - Wrong signature fails
+  - SAID mismatch fails
+
+---
+
+## Workstream 5: OOBI Content Handling
+
+### Deliverables
+- Update `oobi.py` + `kel_parser.py` integration
+
+### Tasks
+1. If `content-type` is `application/json+cesr`, parse via CESR path.
+2. If `application/json`, allow only when `_allow_test_mode=True`.
+3. Keep JSON path explicitly non‑compliant for production.
+
+### Tests
+- `tests/test_kel_integration.py`:
+  - CESR content-type uses CESR parser
+  - JSON content-type requires test mode
+
+---
+
+## Workstream 6: Feature Flag Transition
+
+### Deliverables
+- Update `TIER2_KEL_RESOLUTION_ENABLED` documentation
+- Remove “test‑only” warnings once CESR path passes
+
+### Tasks
+1. Add readiness checklist in docs:
+   - CESR parser complete
+   - Canonicalization complete
+   - SAID validation enabled
+   - CESR integration tests passing
+2. Flip flag to `True` only when checklist passes.
+
+---
+
+## Workstream 7: Fixtures and Validation Strategy
+
+### Deliverables
+- CESR fixtures generated with keripy (or trusted KERI tools)
+
+### Tasks
+1. Generate fixture sets:
+   - Inception only
+   - Rotation with timestamps
+   - Witness receipts + toad threshold
+2. Store fixtures under `tests/fixtures/keri/`.
+3. Use fixtures in parser, canonicalization, chain validation, and integration tests.
+
+---
+
+## Suggested Implementation Order
+1. CESR tokenizer + event extraction
+2. Canonicalization + signing input
+3. SAID computation + validation
+4. Chain validation on CESR fixtures
+5. Update OOBI handling
+6. Run integration tests and enable feature flag
+
+---
+
+## Risks and Mitigations
+- CESR complexity: Use keripy outputs as authoritative fixtures.
+- Canonicalization mismatch: Validate against known vectors before enabling Tier 2.
+- False invalids: Keep JSON test path for unit tests but never for production.
+
+---
+
+## Exit Criteria
+- CESR KEL parsing passes fixtures
+- Canonicalization produces correct signing bytes
+- SAID validation enabled and passing
+- `verify_passport_signature_tier2()` works with real CESR inputs
+- Feature flag can be safely enabled for production
+
+---
+
+# ROADMAP.md (Root-level - Archived 2026-02-02)
+
+**Note:** This roadmap is historical. Current sprint status is tracked in SPRINTS.md.
+
+# VVP Verifier Roadmap
+
+**Last Updated:** 2026-01-25
+**Current Status:** Tier 2 In Progress (54% overall)
+
+This document provides a strategic view of VVP Verifier development. For detailed task tracking, see [Implementation Checklist](app/Documentation/VVP_Implementation_Checklist.md).
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         VVP Verifier                            │
+├─────────────────────────────────────────────────────────────────┤
+│  Tier 1: Direct Verification                         [COMPLETE] │
+│  ├── VVP-Identity parsing                                       │
+│  ├── PASSporT JWT validation                                    │
+│  ├── Ed25519 signature (key from AID)                          │
+│  └── Dossier fetch + DAG validation                            │
+├─────────────────────────────────────────────────────────────────┤
+│  Tier 2: Full KERI Verification                   [IN PROGRESS] │
+│  ├── OOBI resolution (kid → KEL)                    [DONE]      │
+│  ├── CESR parsing                                   [DONE]      │
+│  ├── Historical key state at T                      [DONE]      │
+│  ├── Delegation validation                          [TODO]      │
+│  ├── ACDC signature verification                    [TODO]      │
+│  └── TEL revocation checking                        [TODO]      │
+├─────────────────────────────────────────────────────────────────┤
+│  Tier 3: Authorization                          [NOT STARTED]   │
+│  ├── TNAlloc credential verification                            │
+│  ├── Delegation chain validation                                │
+│  ├── Brand credential verification                              │
+│  └── Business logic constraints                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Tier 2: KERI Verification (Current Focus)
+
+### Completed ✓
+
+| Component | Description | Files |
+|-----------|-------------|-------|
+| OOBI Dereferencing | Fetch KEL from witness OOBI URL | `oobi.py` |
+| CESR Parsing | Parse `application/json+cesr` streams | `cesr.py`, `kel_parser.py` |
+| KEL Validation | Chain continuity, signature verification | `kel_parser.py` |
+| Key State at T | Historical key lookup per `iat` | `kel_resolver.py` |
+| Caching | LRU cache with TTL for key state | `cache.py` |
+| Canonical Serialization | KERI field ordering | `keri_canonical.py` |
+| Live Witness | Tested with Provenant staging | `tel_client.py` |
+
+### In Progress
+
+| Component | Description | Blocking Issue |
+|-----------|-------------|----------------|
+| Delegation | `dip`/`drt` event validation | Raises `DelegationNotSupportedError` |
+| Witness Sig Validation | Verify receipt signatures | Currently presence-only check |
+
+### Not Started
+
+| Component | Description | Spec Reference |
+|-----------|-------------|----------------|
+| ACDC Verification | Signature + SAID validation | §5.1.1-2.8 |
+| TEL Resolution | Credential revocation status | §5.1.1-2.9 |
+| SAID Validation | Blake3-256 most compact form | KERI spec |
+
+---
+
+## Tier 3: Authorization (Future)
+
+| Component | Description | Spec Reference |
+|-----------|-------------|----------------|
+| TNAlloc | Phone number rights verification | §5.1.1-2.11 |
+| Delegation Chain | Multi-hop authorization | §5.1.1-2.10, §7.2 |
+| Brand Credentials | Rich call data verification | §5.1.1-2.12 |
+| Business Logic | Goal matching, constraints | §5.1.1-2.13 |
+| Callee Verification | Separate verification flow | §5.2 |
+
+---
+
+## Normative Requirements
+
+### `kid` Field Semantics (Critical)
+
+Per VVP draft and KERI specifications:
+
+> **`kid` is an OOBI reference to a KERI autonomous identifier whose historical key state, witness receipts, and delegations MUST be resolved and validated to determine which signing key was authorised at the PASSporT reference time.**
+
+This means:
+- `kid` is NOT a generic key ID or X.509 URL
+- Resolution requires OOBI dereferencing, not simple HTTP fetch
+- Key state must be validated at reference time T (from `iat`)
+- Witness receipts provide decentralized trust
+
+### Reference Time T
+
+All verification is relative to PASSporT `iat`, not wall clock:
+- Key must be valid at T
+- Credential must not be revoked at T
+- Delegation must be active at T
+
+---
+
+## Known Limitations
+
+| Limitation | Impact | Mitigation |
+|------------|--------|------------|
+| Delegation not supported | Cannot verify delegated AIDs | Raises clear error |
+| SAID validation optional | Test mode only | Production requires Blake3 |
+| Witness sigs not validated | Reduced trust assurance | Threshold check only |
+| TEL not queried | Cannot detect revocation | Deferred to Phase 9 |
+
+---
+
+## Integration Points
+
+### Provenant OVC Witnesses
+
+```
+http://witness4.stage.provenant.net:5631/oobi/{AID}/witness
+http://witness5.stage.provenant.net:5631/oobi/{AID}/witness
+http://witness6.stage.provenant.net:5631/oobi/{AID}/witness
+```
+
+### OOBI URL Format
+
+```
+http://<witness-host>:<port>/oobi/<AID>[/witness][/<witness-eid>]
+```
+
+### Response Format
+
+- Content-Type: `application/json+cesr`
+- Body: CESR stream with KEL events + attachments
+
+---
+
+## Next Steps (Priority Order)
+
+1. **Complete Phase 7** - Delegation validation, witness signature verification
+2. **Phase 8** - ACDC signature verification with SAID validation
+3. **Phase 9** - TEL revocation checking
+4. **Enable production** - Set `TIER2_KEL_RESOLUTION_ENABLED=True`
+
+---
+
+## Contributing
+
+See [CLAUDE.md](CLAUDE.md) for the pair programming workflow used in this project.
+
+---
+
+## References
+
+- [VVP Draft Specification](https://dhh1128.github.io/vvp/draft-hardman-verifiable-voice-protocol.html)
+- [KERI Specification](https://keri.one)
+- [Implementation Checklist](app/Documentation/VVP_Implementation_Checklist.md)
+- [VVP Verifier Spec v1.5](app/Documentation/VVP_Verifier_Specification_v1.5.md)
+
+---
+
+# Sprint 40: Vetter Certification Constraints
+
+**Completed:** 2026-02-02
+
+## Summary
+
+Implement verification of Vetter Certification credentials to enforce geographic and jurisdictional constraints on credential issuers. When verifying a dossier, check that:
+- TN credential's country code is in the issuing vetter's `ecc_targets`
+- Identity credential's incorporation country is in the issuing vetter's `jurisdiction_targets`
+- Brand credential's assertion country is in the issuing vetter's `jurisdiction_targets`
+
+Results are status bits that clients can interpret as errors or warnings (configurable via `VVP_ENFORCE_VETTER_CONSTRAINTS`).
+
+## Schema Requirements
+
+### New Schema: Vetter Certification
+
+Created `vetter-certification-credential.json` with:
+- `ecc_targets`: E.164 country codes for TN right-to-use attestation
+- `jurisdiction_targets`: ISO 3166-1 alpha-3 codes for incorporation and brand licensure
+- SAID: `EJN4UJ_LIW5lrzmEAPv-fMhE2U64aJqp2aY38p1X-i8A`
+
+### Schema Extensions (Spec-Mandated)
+
+Per the spec: "Each of these credentials contains an edge, which is a backlink to CertificationB."
+
+1. **Extended TN Allocation Schema** (`EGUh_fVLbjfkYFb5zAsY2Rqq0NqwnD3r5jsdKWLTpU8_`)
+   - Added required "certification" edge linking to vetter certification
+
+2. **Extended Legal Entity Schema** (`EPknTwPpSZi379molapnuN4V5AyhCxz_6TLYdiVNWvbV`)
+   - Added `country` attribute (ISO 3166-1 alpha-3)
+   - Added required "certification" edge
+
+3. **Extended Brand Schema** (`EK7kPhs5YkPsq9mZgUfPYfU-zq5iSlU8XVYJWqrVPk6g`)
+   - Added `assertionCountry` attribute
+   - Added required "certification" edge
+
+## Files Created
+
+### Verifier Vetter Module: `services/verifier/app/vvp/vetter/`
+
+| File | Purpose |
+|------|---------|
+| `__init__.py` | Module exports |
+| `country_codes.py` | E.164 and ISO 3166-1 country code utilities |
+| `certification.py` | VetterCertification dataclass and parsing |
+| `traversal.py` | Edge traversal to find vetter certifications |
+| `constraints.py` | Constraint validation logic and main `verify_vetter_constraints()` function |
+
+### Issuer Schemas: `services/issuer/app/schema/schemas/`
+
+| File | Purpose |
+|------|---------|
+| `vetter-certification-credential.json` | Vetter Certification schema |
+| `extended-tn-allocation-credential.json` | Extended TN with certification edge |
+| `extended-legal-entity-credential.json` | Extended Legal Entity with country + certification edge |
+| `extended-brand-credential.json` | Extended Brand with certification edge |
+
+### Issuer UI: `services/issuer/web/`
+
+| File | Purpose |
+|------|---------|
+| `vetter.html` | Vetter Certification creation UI with ECC/jurisdiction target selection |
+| `credentials.html` | Updated with edge picker for credential forms |
+| `help.html` | Updated help recipes for edge configuration |
+
+### Tests
+
+| File | Purpose |
+|------|---------|
+| `services/verifier/tests/test_vetter_constraints.py` | 61 unit tests for vetter constraint validation |
+
+## Files Modified
+
+| File | Changes |
+|------|---------|
+| `services/verifier/app/vvp/api_models.py` | Added `ErrorCode.VETTER_*` codes, `VetterConstraintInfo` model |
+| `services/verifier/app/core/config.py` | Added `ENFORCE_VETTER_CONSTRAINTS` |
+| `services/verifier/app/vvp/verify.py` | Integrated vetter validation phase, improved credential type detection |
+
+## Key Design Decisions
+
+1. **Results are status bits** (per spec): "The client of the verification API gets to decide whether it considers these bits to be errors (don't route the call), warnings (route but suppress brand), etc."
+
+2. **Non-blocking by default**: `VVP_ENFORCE_VETTER_CONSTRAINTS=false` is the default. Violations are reported but do not affect overall verification status unless explicitly enabled.
+
+3. **Credential backlink edges are required**: Per spec, "Each of these credentials contains an edge, which is a backlink to CertificationB."
+
+4. **No issuer-AID fallback**: Removed spec-violating fallback that matched credentials to certifications by issuer AID. Credentials must have explicit certification edges.
+
+5. **Spec-compliant edge naming**: Primary edge name is "certification" per spec. Legacy names ("vetter", "vetter_cert", "cert") supported with warnings.
+
+6. **ISO 3166-1 alpha-3 codes**: All jurisdiction codes use 3-letter format (GBR, FRA, USA) per spec examples.
+
+## New Error Codes
+
+| Code | Description | Recoverable |
+|------|-------------|-------------|
+| `VETTER_ECC_UNAUTHORIZED` | TN country code not in vetter's ECC Targets | No |
+| `VETTER_JURISDICTION_UNAUTHORIZED` | Country not in vetter's Jurisdiction Targets | No |
+| `VETTER_CERTIFICATION_MISSING` | Credential lacks backlink to vetter certification | Yes |
+| `VETTER_CERTIFICATION_INVALID` | Vetter certification is invalid/revoked | No |
+
+## Test Results
+
+All 1617 tests pass:
+- Verifier: 251 tests
+- Issuer: 276 tests (2 skipped)
+- Vetter constraints: 61 tests
+
+## Review Status
+
+- Plan Review: APPROVED
+- Code Review: APPROVED (after re-review addressing 5 issues)
+
+## Implementation Notes
+
+### Code Review Issues Addressed
+
+1. **Removed issuer-AID fallback**: `traversal.py` no longer falls back to matching credentials by issuer AID when certification edge is missing
+2. **Created Extended Brand schema**: New schema with required certification edge
+3. **Removed unused config flag**: `VVP_VETTER_CERT_EXTERNAL_RESOLUTION` removed from config.py
+4. **Improved credential type detection**: `verify.py` uses case-insensitive attribute matching
+5. **Fixed UI jurisdiction selector**: Removed "+" prefix from jurisdiction codes in vetter.html
