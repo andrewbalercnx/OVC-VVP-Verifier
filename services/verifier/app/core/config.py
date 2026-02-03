@@ -482,6 +482,33 @@ ENFORCE_VETTER_CONSTRAINTS: bool = os.getenv(
 
 
 # =============================================================================
+# VLEI CHAIN RESOLUTION (Deep chain traversal to GLEIF root)
+# =============================================================================
+# When enabled, the verifier follows e.qvi edges from LE credentials to fetch
+# QVI credentials from witnesses, verifying the chain reaches GLEIF root.
+
+# Enable deep vLEI chain resolution
+# When True (default): Attempt to resolve e.qvi edges to GLEIF root
+# When False: Stop at terminal issuer (Brand assure, Rich Connexions, etc.)
+VLEI_CHAIN_RESOLUTION_ENABLED: bool = os.getenv(
+    "VVP_VLEI_CHAIN_RESOLUTION", "true"
+).lower() == "true"
+
+# Maximum depth for vLEI chain resolution
+# 3 is sufficient for: LE → QVI → (GLEIF check)
+VLEI_CHAIN_MAX_DEPTH: int = int(os.getenv("VVP_VLEI_CHAIN_MAX_DEPTH", "3"))
+
+# Maximum concurrent fetch operations during chain resolution
+VLEI_CHAIN_MAX_CONCURRENT: int = int(os.getenv("VVP_VLEI_CHAIN_MAX_CONCURRENT", "5"))
+
+# Maximum total external fetches during chain resolution (budget limit)
+VLEI_CHAIN_MAX_TOTAL_FETCHES: int = int(os.getenv("VVP_VLEI_CHAIN_MAX_TOTAL_FETCHES", "10"))
+
+# Timeout for entire chain resolution phase (seconds)
+VLEI_CHAIN_TIMEOUT_SECONDS: float = float(os.getenv("VVP_VLEI_CHAIN_TIMEOUT", "10.0"))
+
+
+# =============================================================================
 # DOSSIER SAID RESOLUTION (UI convenience feature)
 # =============================================================================
 # Default EVD URL pattern for resolving dossiers by SAID.

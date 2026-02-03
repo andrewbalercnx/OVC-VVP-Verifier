@@ -4,17 +4,19 @@ Builds a directed graph of credentials from dossier to trusted root,
 suitable for UI visualization. Supports multiple roots of trust per dossier.
 """
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
-
-from typing import TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
 from .models import ACDC
 from ..identity import WELLKNOWN_AIDS
 
 if TYPE_CHECKING:
     from ..identity import IssuerIdentity
+    from ..keri.credential_resolver import CredentialResolver
+
+log = logging.getLogger(__name__)
 
 
 class CredentialStatus(str, Enum):
@@ -94,6 +96,11 @@ class CredentialGraph:
 
     # Errors during graph building
     errors: List[str] = field(default_factory=list)
+
+    # Deep chain resolution tracking
+    resolved_saids: List[str] = field(default_factory=list)  # Externally resolved SAIDs
+    chain_complete: bool = False  # All required vLEI edges resolved
+    root_reached: bool = False  # Chain reaches GLEIF root
 
     @property
     def root_aid(self) -> Optional[str]:
@@ -468,4 +475,97 @@ def credential_graph_to_dict(graph: CredentialGraph) -> Dict[str, Any]:
         "terminalIssuers": graph.terminal_issuers,
         "layers": graph.layers,
         "errors": graph.errors,
+        # Deep chain resolution info
+        "resolvedSaids": graph.resolved_saids,  # Externally resolved credential SAIDs
+        "chainComplete": graph.chain_complete,  # All vLEI edges resolved
+        "rootReached": graph.root_reached,  # Chain reaches GLEIF root
     }
+
+
+async def build_credential_graph_with_resolution(
+    dossier_acdcs: Dict[str, ACDC],
+    trusted_roots: Set[str],
+    revocation_status: Optional[Dict[str, CredentialStatus]] = None,
+    issuer_identities: Optional[Dict[str, "IssuerIdentity"]] = None,
+    credential_resolver: Optional["CredentialResolver"] = None,
+    resolve_chain: bool = True,
+) -> CredentialGraph:
+    """Build a credential graph with optional deep vLEI chain resolution.
+
+    If credential_resolver is provided and resolve_chain is True, attempts to
+    resolve vLEI chain edges (e.qvi, e.le, e.auth) to complete the chain to GLEIF.
+
+    Args:
+        dossier_acdcs: ACDCs from the dossier (SAID -> ACDC).
+        trusted_roots: Set of trusted root AIDs.
+        revocation_status: Optional revocation status for each SAID.
+        issuer_identities: Optional map of AID -> IssuerIdentity for display names.
+        credential_resolver: Optional resolver for fetching external credentials.
+        resolve_chain: Whether to attempt chain resolution (default True).
+
+    Returns:
+        CredentialGraph with chain resolution metadata populated.
+    """
+    from app.core.config import (
+        VLEI_CHAIN_RESOLUTION_ENABLED,
+        VLEI_CHAIN_MAX_DEPTH,
+        VLEI_CHAIN_MAX_CONCURRENT,
+        VLEI_CHAIN_MAX_TOTAL_FETCHES,
+        VLEI_CHAIN_TIMEOUT_SECONDS,
+    )
+    from .vlei_chain import resolve_vlei_chain_edges
+
+    working_acdcs = dossier_acdcs
+    resolution_result = None
+
+    # Attempt chain resolution if enabled and resolver available
+    if (
+        resolve_chain
+        and credential_resolver
+        and VLEI_CHAIN_RESOLUTION_ENABLED
+    ):
+        log.info("Starting vLEI chain resolution for %d dossier credentials", len(dossier_acdcs))
+        try:
+            resolution_result = await resolve_vlei_chain_edges(
+                dossier_acdcs=dossier_acdcs,
+                credential_resolver=credential_resolver,
+                trusted_roots=trusted_roots,
+                max_depth=VLEI_CHAIN_MAX_DEPTH,
+                max_concurrent=VLEI_CHAIN_MAX_CONCURRENT,
+                max_total_fetches=VLEI_CHAIN_MAX_TOTAL_FETCHES,
+                timeout=VLEI_CHAIN_TIMEOUT_SECONDS,
+            )
+            working_acdcs = resolution_result.augmented_acdcs
+            log.info(
+                "Chain resolution complete: resolved=%d, chain_complete=%s, root_reached=%s",
+                len(resolution_result.resolved_saids),
+                resolution_result.chain_complete,
+                resolution_result.root_reached,
+            )
+        except Exception as e:
+            log.exception("Chain resolution failed: %s", e)
+            # Continue with original dossier ACDCs
+
+    # Build the graph from (potentially augmented) ACDCs
+    graph = build_credential_graph(
+        dossier_acdcs=working_acdcs,
+        trusted_roots=trusted_roots,
+        revocation_status=revocation_status,
+        issuer_identities=issuer_identities,
+    )
+
+    # Populate resolution metadata
+    if resolution_result:
+        graph.resolved_saids = resolution_result.resolved_saids
+        graph.chain_complete = resolution_result.chain_complete
+        graph.root_reached = resolution_result.root_reached
+        # Merge resolution errors with graph errors
+        graph.errors.extend(resolution_result.errors)
+
+        # Update in_dossier flag for resolved credentials
+        for said in resolution_result.resolved_saids:
+            if said in graph.nodes:
+                graph.nodes[said].in_dossier = False
+                graph.nodes[said].resolution_source = ResolutionSource.OOBI
+
+    return graph

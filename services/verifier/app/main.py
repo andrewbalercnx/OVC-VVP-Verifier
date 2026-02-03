@@ -1833,9 +1833,9 @@ async def ui_browse_said(
     from app.vvp.dossier.parser import parse_dossier
     from app.vvp.acdc import (
         parse_acdc,
-        build_credential_graph,
         credential_graph_to_dict,
     )
+    from app.vvp.acdc.graph import build_credential_graph_with_resolution
     from app.vvp.ui.credential_viewmodel import (
         build_credential_card_vm,
         build_issuer_identity_map_async,
@@ -1843,6 +1843,7 @@ async def ui_browse_said(
         ValidationCheckResult,
     )
     from app.vvp.keri.tel_client import TELClient, CredentialStatus
+    from app.vvp.keri import get_credential_resolver
     from app.core.config import TRUSTED_ROOT_AIDS
 
     try:
@@ -1900,12 +1901,15 @@ async def ui_browse_said(
             [acdc for acdc, _, _ in parsed_acdcs if acdc is not None]
         )
 
-        # Build credential graph with identity map for display names
-        graph = build_credential_graph(
+        # Build credential graph with deep vLEI chain resolution
+        credential_resolver = get_credential_resolver()
+        graph = await build_credential_graph_with_resolution(
             dossier_acdcs=dossier_acdcs,
             trusted_roots=set(TRUSTED_ROOT_AIDS),
             revocation_status=None,
             issuer_identities=sync_identities,
+            credential_resolver=credential_resolver,
+            resolve_chain=True,
         )
         graph_dict = credential_graph_to_dict(graph)
 
@@ -2055,9 +2059,9 @@ async def ui_simple_verify(
     from app.vvp.dossier.parser import parse_dossier
     from app.vvp.acdc import (
         parse_acdc,
-        build_credential_graph,
         credential_graph_to_dict,
     )
+    from app.vvp.acdc.graph import build_credential_graph_with_resolution
     from app.vvp.ui.credential_viewmodel import (
         build_credential_card_vm,
         build_issuer_identity_map_async,
@@ -2066,6 +2070,7 @@ async def ui_simple_verify(
         ValidationCheckResult,
     )
     from app.vvp.keri.tel_client import TELClient, CredentialStatus
+    from app.vvp.keri import get_credential_resolver
     from app.core.config import TRUSTED_ROOT_AIDS
 
     try:
@@ -2184,12 +2189,16 @@ async def ui_simple_verify(
             [acdc for acdc, _, _ in parsed_acdcs if acdc is not None]
         )
 
-        # Build credential graph with identity map for display names
-        graph = build_credential_graph(
+        # Build credential graph with deep vLEI chain resolution
+        # This fetches QVI credentials via e.qvi edges to reach GLEIF root
+        credential_resolver = get_credential_resolver()
+        graph = await build_credential_graph_with_resolution(
             dossier_acdcs=dossier_acdcs,
             trusted_roots=set(TRUSTED_ROOT_AIDS),
             revocation_status=None,
             issuer_identities=sync_identities,
+            credential_resolver=credential_resolver,
+            resolve_chain=True,
         )
         graph_dict = credential_graph_to_dict(graph)
 
