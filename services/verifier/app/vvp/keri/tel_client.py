@@ -9,12 +9,14 @@ Per KERI spec, TEL events track credential lifecycle:
 - brv: backer-backed revocation
 """
 
+import asyncio
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -54,6 +56,58 @@ class RevocationResult:
     revocation_event: Optional[TELEvent]
     error: Optional[str]
     source: str  # 'witness', 'watcher', 'cache', 'dossier'
+
+
+@dataclass
+class ChainExtractionResult:
+    """Result of chain SAID extraction from a credential graph.
+
+    Used to pass chain information to check_chain_revocation().
+
+    Attributes:
+        chain_saids: Ordered list of credential SAIDs from leaf to root.
+        registry_saids: Mapping of credential SAID to registry SAID (ri field).
+        missing_links: SAIDs referenced by edges but not found in graph.
+        complete: True if all edge targets are in graph (no missing links).
+    """
+    chain_saids: List[str] = field(default_factory=list)
+    registry_saids: Dict[str, str] = field(default_factory=dict)
+    missing_links: List[str] = field(default_factory=list)
+    complete: bool = False
+
+
+@dataclass
+class ChainRevocationResult:
+    """Result of chain-wide revocation check.
+
+    Chain Status Semantics:
+    - REVOKED: At least one credential in chain is revoked → chain invalid
+    - ACTIVE: ALL credentials checked AND all are active → chain valid
+    - UNKNOWN: Missing chain links OR some checks failed → indeterminate
+
+    A chain is only ACTIVE if:
+    1. All required chain credentials were resolved (chain_complete=True)
+    2. All credentials were successfully checked (no errors)
+    3. All credentials returned ACTIVE status
+
+    Attributes:
+        chain_status: Overall chain status (ACTIVE/REVOKED/UNKNOWN).
+        credential_results: Individual revocation results keyed by SAID.
+        revoked_credentials: List of SAIDs that are revoked.
+        chain_saids: Ordered chain SAIDs (leaf → root) that were checked.
+        missing_chain_links: SAIDs that couldn't be resolved.
+        check_complete: True only if ALL chain links resolved AND checked.
+        errors: Error messages encountered during checking.
+        checked_at: ISO8601 timestamp of when check completed.
+    """
+    chain_status: CredentialStatus
+    credential_results: Dict[str, RevocationResult] = field(default_factory=dict)
+    revoked_credentials: List[str] = field(default_factory=list)
+    chain_saids: List[str] = field(default_factory=list)
+    missing_chain_links: List[str] = field(default_factory=list)
+    check_complete: bool = False
+    errors: List[str] = field(default_factory=list)
+    checked_at: str = ""
 
 
 class TELClient:
@@ -567,6 +621,112 @@ class TELClient:
         )
         log.info(f"  live_query_result: status={result.status.value}")
         return result
+
+    async def check_chain_revocation(
+        self,
+        chain_info: ChainExtractionResult,
+        dossier_data: Optional[str] = None,
+        oobi_url: Optional[str] = None,
+        timeout: float = 30.0,
+    ) -> ChainRevocationResult:
+        """Check revocation status for entire credential chain.
+
+        Checks ALL credentials in parallel. If ANY is REVOKED, chain is invalid.
+        Per vLEI spec: "Anyone in the chain-of-authority can revoke the credential
+        issued-by them. This breaks the chain."
+
+        Chain Status Rules:
+        - If chain_info.complete is False → chain_status = UNKNOWN
+        - If ANY credential REVOKED → chain_status = REVOKED
+        - If ALL credentials ACTIVE and chain complete → chain_status = ACTIVE
+        - Otherwise → chain_status = UNKNOWN
+
+        Args:
+            chain_info: ChainExtractionResult with chain SAIDs and completeness info.
+            dossier_data: Raw dossier CESR content (for inline TEL parsing).
+            oobi_url: OOBI URL for witness discovery.
+            timeout: Overall timeout for all checks.
+
+        Returns:
+            ChainRevocationResult with aggregate chain status.
+        """
+        log.info(
+            f"check_chain_revocation: chain_len={len(chain_info.chain_saids)} "
+            f"complete={chain_info.complete}"
+        )
+
+        results: Dict[str, RevocationResult] = {}
+        errors: List[str] = []
+
+        # Pre-check: incomplete chain → status will be UNKNOWN
+        if not chain_info.complete:
+            errors.append(f"Chain incomplete: missing {chain_info.missing_links}")
+
+        # Check all credentials in parallel
+        async def check_one(said: str) -> Tuple[str, RevocationResult]:
+            registry_said = chain_info.registry_saids.get(said)
+            result = await self.check_revocation_with_fallback(
+                credential_said=said,
+                registry_said=registry_said,
+                dossier_data=dossier_data,
+                oobi_url=oobi_url,
+            )
+            return (said, result)
+
+        try:
+            async with asyncio.timeout(timeout):
+                tasks = [check_one(said) for said in chain_info.chain_saids]
+                check_results = await asyncio.gather(*tasks, return_exceptions=True)
+        except TimeoutError:
+            errors.append(f"Chain revocation check timed out after {timeout}s")
+            check_results = []
+
+        # Process results
+        revoked: List[str] = []
+        for item in check_results:
+            if isinstance(item, Exception):
+                errors.append(str(item))
+                continue
+            said, result = item
+            results[said] = result
+            if result.status == CredentialStatus.REVOKED:
+                revoked.append(said)
+                log.info(f"  chain_credential_revoked: {said[:20]}...")
+
+        # Determine chain status
+        # Guard: empty chain_saids means nothing was checked - status is UNKNOWN
+        if not chain_info.chain_saids:
+            chain_status = CredentialStatus.UNKNOWN
+            errors.append("No credentials in chain to check")
+        elif revoked:
+            chain_status = CredentialStatus.REVOKED
+        elif not chain_info.complete:
+            chain_status = CredentialStatus.UNKNOWN
+        elif errors:
+            chain_status = CredentialStatus.UNKNOWN
+        elif not results:
+            # No results despite having chain SAIDs - something went wrong
+            chain_status = CredentialStatus.UNKNOWN
+        elif all(r.status == CredentialStatus.ACTIVE for r in results.values()):
+            chain_status = CredentialStatus.ACTIVE
+        else:
+            chain_status = CredentialStatus.UNKNOWN
+
+        log.info(
+            f"  chain_revocation_result: status={chain_status.value} "
+            f"checked={len(results)} revoked={len(revoked)} errors={len(errors)}"
+        )
+
+        return ChainRevocationResult(
+            chain_status=chain_status,
+            credential_results=results,
+            revoked_credentials=revoked,
+            chain_saids=chain_info.chain_saids,
+            missing_chain_links=chain_info.missing_links,
+            check_complete=chain_info.complete and len(errors) == 0,
+            errors=errors,
+            checked_at=datetime.now(timezone.utc).isoformat(),
+        )
 
     def clear_cache(self):
         """Clear the revocation status cache."""

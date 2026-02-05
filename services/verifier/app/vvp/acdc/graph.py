@@ -261,6 +261,11 @@ def _build_node_from_acdc(
                 else:
                     display_attrs[key] = value
 
+    # Extract registry SAID from top-level ACDC field (not in attributes)
+    # ri is a top-level field per vLEI schema, needed for TEL revocation checks
+    if acdc.raw and acdc.raw.get("ri"):
+        display_attrs["ri"] = acdc.raw["ri"]
+
     # Generate display name
     cred_type = acdc.credential_type
     display_name = _generate_display_name(cred_type, display_attrs)
@@ -540,6 +545,136 @@ def credential_graph_to_dict(graph: CredentialGraph) -> Dict[str, Any]:
         "chainComplete": graph.chain_complete,  # All vLEI edges resolved
         "rootReached": graph.root_reached,  # Chain reaches GLEIF root
     }
+
+
+def build_credential_chain_saids(
+    leaf_said: str,
+    graph: CredentialGraph,
+    max_depth: int = 10,
+) -> "ChainExtractionResult":
+    """Extract ordered list of SAIDs from leaf to root.
+
+    Walks the credential graph from a leaf credential following edges_to
+    links to build a chain of SAIDs for revocation checking.
+
+    Includes ALL credentials in chain:
+    - Dossier credentials (in_dossier=True)
+    - Externally resolved credentials (resolution_source=OOBI)
+    - Synthetic issuer nodes are excluded (they have no TEL)
+
+    Chain Completeness:
+    - complete=True: All edge targets are in graph
+    - complete=False: Some edges point to unresolved SAIDs (missing_links)
+
+    Args:
+        leaf_said: Starting credential SAID (the leaf/terminal credential).
+        graph: CredentialGraph to walk.
+        max_depth: Maximum chain depth to prevent infinite loops.
+
+    Returns:
+        ChainExtractionResult with chain SAIDs and completeness info.
+    """
+    from ..keri.tel_client import ChainExtractionResult
+
+    chain: List[str] = []
+    registry_saids: Dict[str, str] = {}
+    missing: List[str] = []
+    visited: Set[str] = set()
+
+    def walk(said: str, depth: int) -> None:
+        if depth > max_depth or said in visited:
+            return
+        visited.add(said)
+
+        node = graph.nodes.get(said)
+        if not node:
+            # Edge target not in graph - missing link
+            missing.append(said)
+            return
+
+        # Skip synthetic nodes (root:*, issuer:*, qvi:*) - they have no TEL
+        if said.startswith(("root:", "issuer:", "qvi:")):
+            return
+
+        chain.append(said)
+
+        # Extract registry SAID from node attributes if available
+        if node.attributes:
+            ri = node.attributes.get("ri")
+            if ri:
+                registry_saids[said] = ri
+
+        # Follow edges to parents
+        for parent_said in node.edges_to:
+            walk(parent_said, depth + 1)
+
+    walk(leaf_said, 0)
+
+    return ChainExtractionResult(
+        chain_saids=chain,
+        registry_saids=registry_saids,
+        missing_links=missing,
+        complete=len(missing) == 0,
+    )
+
+
+def build_all_credential_chains(
+    graph: CredentialGraph,
+    max_depth: int = 10,
+) -> "ChainExtractionResult":
+    """Extract all credential SAIDs from graph for chain-wide revocation checking.
+
+    Unlike build_credential_chain_saids() which walks from a single leaf,
+    this function collects ALL credentials in the graph that need revocation
+    checking (excluding synthetic nodes).
+
+    Chain Completeness:
+    - complete=True: All edge targets exist in graph (no missing links)
+    - complete=False: Some edges point to unresolved SAIDs (external vLEI chain)
+
+    Args:
+        graph: CredentialGraph to extract credentials from.
+        max_depth: Maximum depth (unused here, kept for API consistency).
+
+    Returns:
+        ChainExtractionResult with all credential SAIDs and completeness info.
+    """
+    from ..keri.tel_client import ChainExtractionResult
+
+    chain_saids: List[str] = []
+    registry_saids: Dict[str, str] = {}
+    missing_links: List[str] = []
+    seen_missing: Set[str] = set()
+
+    for said, node in graph.nodes.items():
+        # Skip synthetic nodes (no TEL to check)
+        if said.startswith(("root:", "issuer:", "qvi:")):
+            continue
+
+        chain_saids.append(said)
+
+        # Extract registry SAID if available (stored in attributes by _build_node_from_acdc)
+        if node.attributes:
+            ri = node.attributes.get("ri")
+            if ri:
+                registry_saids[said] = ri
+
+        # Check edges for missing links (credentials not in graph)
+        for edge_target in node.edges_to:
+            # Skip synthetic node references (these are expected)
+            if edge_target.startswith(("root:", "issuer:", "qvi:")):
+                continue
+            # If edge target is not in graph, it's a missing link
+            if edge_target not in graph.nodes and edge_target not in seen_missing:
+                missing_links.append(edge_target)
+                seen_missing.add(edge_target)
+
+    return ChainExtractionResult(
+        chain_saids=chain_saids,
+        registry_saids=registry_saids,
+        missing_links=missing_links,
+        complete=len(missing_links) == 0,
+    )
 
 
 async def build_credential_graph_with_resolution(
