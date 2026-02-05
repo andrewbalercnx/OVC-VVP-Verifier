@@ -206,12 +206,16 @@ async def get_dossier(
         content = await builder.build(root_said=said, include_tel=include_tel)
         data, content_type = serialize_dossier(content, dossier_format)
 
+        # Return with caching headers per VVP spec
+        # Dossiers are immutable and content-addressed by SAID
         return Response(
             content=data,
             media_type=content_type,
             headers={
                 "X-Dossier-Root-Said": content.root_said,
                 "X-Dossier-Credential-Count": str(len(content.credential_saids)),
+                "ETag": f'"{said}"',
+                "Cache-Control": "public, max-age=31536000, immutable",
             },
         )
 

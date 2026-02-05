@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.authentication import AuthenticationMiddleware
 
 from common.vvp.core.logging import configure_logging
-from app.api import admin, auth, credential, dossier, health, identity, registry, schema
+from app.api import admin, auth, credential, dossier, health, identity, registry, schema, vvp
 from app.auth.api_key import APIKeyBackend, get_api_key_store
 from app.auth.session import get_session_store
 from app.config import AUTH_ENABLED, SESSION_CLEANUP_INTERVAL, get_auth_exempt_paths
@@ -183,6 +183,18 @@ def ui_dossier():
     return FileResponse(WEB_DIR / "dossier.html", media_type="text/html")
 
 
+@app.get("/ui/vvp", response_class=FileResponse)
+def ui_vvp():
+    """Serve the VVP header creation web UI."""
+    return FileResponse(WEB_DIR / "vvp.html", media_type="text/html")
+
+
+@app.get("/vvp/ui")
+def redirect_vvp_ui():
+    """Redirect legacy /vvp/ui to /ui/vvp."""
+    return RedirectResponse(url="/ui/vvp", status_code=302)
+
+
 @app.get("/ui/admin", response_class=FileResponse)
 def ui_admin():
     """Serve the admin management web UI."""
@@ -258,6 +270,7 @@ app.include_router(registry.router)
 app.include_router(schema.router)
 app.include_router(credential.router)
 app.include_router(dossier.router)
+app.include_router(vvp.router)
 app.include_router(admin.router)
 
 

@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VVP Issuer - VVP Headers</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+      /* Page-specific styles */
+      .hint { font-size: 0.875rem; color: #666; margin-top: 0.25rem; }
+
+      /* Phone number input styling */
+      .phone-input { font-family: monospace; }
+
+      /* Result display */
+      .result-section {
+        margin-top: 1.5rem;
+        padding-top: 1.5rem;
+        border-top: 1px solid #eee;
+      }
+      .result-field {
+        margin-bottom: 1rem;
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 4px;
+        border: 1px solid #e9ecef;
+      }
+      .result-field label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: var(--vvp-dark);
+      }
+      .result-value {
+        font-family: monospace;
+        font-size: 0.85rem;
+        word-break: break-all;
+        background: white;
+        padding: 0.75rem;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+        max-height: 150px;
+        overflow-y: auto;
+      }
+      .result-value.short {
+        max-height: none;
+        overflow: visible;
+      }
+      .copy-row {
+        display: flex;
+        gap: 0.5rem;
+        align-items: flex-start;
+      }
+      .copy-row .result-value {
+        flex: 1;
+      }
+      .copy-btn {
+        background: var(--vvp-primary);
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        white-space: nowrap;
+      }
+      .copy-btn:hover { background: var(--vvp-primary-hover); }
+      .copy-btn.copied { background: var(--vvp-success); }
+
+      /* Timestamps */
+      .timestamp-row {
+        display: flex;
+        gap: 2rem;
+        flex-wrap: wrap;
+      }
+      .timestamp-item {
+        flex: 1;
+        min-width: 200px;
+      }
+      .timestamp-item label {
+        font-weight: 600;
+        color: var(--vvp-dark);
+      }
+      .timestamp-value {
+        font-family: monospace;
+        font-size: 0.9rem;
+      }
+      .timestamp-human {
+        font-size: 0.8rem;
+        color: #666;
+      }
+
+      /* Validity slider */
+      .validity-row {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+      .validity-row input[type="range"] {
+        flex: 1;
+      }
+      .validity-value {
+        font-weight: 600;
+        min-width: 80px;
+        text-align: right;
+      }
+
+      /* JWT decoder toggle */
+      .decode-toggle {
+        margin-top: 0.5rem;
+      }
+      .decode-toggle button {
+        background: #6c757d;
+        font-size: 0.8rem;
+        padding: 0.3rem 0.6rem;
+      }
+      .decode-toggle button:hover { background: #5a6268; }
+      .decoded-jwt {
+        margin-top: 0.5rem;
+        background: #fff3cd;
+        padding: 0.75rem;
+        border-radius: 4px;
+        border: 1px solid #ffc107;
+        font-family: monospace;
+        font-size: 0.8rem;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      /* Link styling */
+      .result-link {
+        color: var(--vvp-primary);
+        text-decoration: none;
+      }
+      .result-link:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-brand">
+        <img src="/static/ovc-logo.png" alt="OVC" class="ovc-logo">
+        <a href="/ui/" class="logo">
+          <span class="service-label">VVP</span>
+          Issuer
+        </a>
+      </div>
+      <nav class="nav-links">
+        <a href="/ui/identity">Identities</a>
+        <a href="/ui/registry">Registries</a>
+        <a href="/ui/schemas">Schemas</a>
+        <a href="/ui/credentials">Credentials</a>
+        <a href="/ui/dossier">Dossiers</a>
+        <a href="/ui/vvp" class="active">VVP Headers</a>
+        <a href="/ui/help">Help</a>
+        <a href="/ui/admin">Admin</a>
+        <a href="https://vvp-verifier.rcnx.io" class="verifier-link" target="_blank">Verifier ↗</a>
+      </nav>
+    </header>
+
+    <h1>VVP Header Creation</h1>
+    <p class="subtitle">Create VVP-Identity headers and PASSporT JWTs for telephone attestation</p>
+
+    <!-- Create VVP Header Form -->
+    <div class="card">
+      <h2>Create VVP Header & PASSporT</h2>
+      <form id="createVVPForm">
+        <div class="form-group">
+          <label for="identity">Issuer Identity</label>
+          <select id="identity" required>
+            <option value="">Loading identities...</option>
+          </select>
+          <p class="hint">The identity that will sign the PASSporT JWT</p>
+        </div>
+
+        <div class="form-group">
+          <label for="dossier">Dossier (Root Credential SAID)</label>
+          <select id="dossier" required>
+            <option value="">Select an identity first...</option>
+          </select>
+          <p class="hint">The credential chain to reference in the VVP header</p>
+        </div>
+
+        <div class="form-group">
+          <label for="origTn">Originating Phone Number</label>
+          <input type="tel" id="origTn" class="phone-input" placeholder="+14155551234" required>
+          <p class="hint">E.164 format (e.g., +14155551234)</p>
+        </div>
+
+        <div class="form-group">
+          <label for="destTn">Destination Phone Number(s)</label>
+          <input type="text" id="destTn" class="phone-input" placeholder="+14155555678" required>
+          <p class="hint">E.164 format. For multiple numbers, separate with commas.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="expSeconds">Validity Period</label>
+          <div class="validity-row">
+            <input type="range" id="expSeconds" min="30" max="300" value="300" step="30">
+            <span class="validity-value" id="expValue">300 seconds</span>
+          </div>
+          <p class="hint">Maximum validity is 300 seconds per VVP spec</p>
+        </div>
+
+        <button type="submit" id="createBtn">Create VVP Header & PASSporT</button>
+      </form>
+
+      <div id="createResult"></div>
+    </div>
+
+    <!-- About VVP Headers -->
+    <div class="card">
+      <h2>About VVP Headers</h2>
+      <p>VVP (Verifiable Voice Protocol) headers provide cryptographic attestation for telephone calls:</p>
+      <ul>
+        <li><strong>VVP-Identity Header:</strong> Base64url-encoded JSON containing issuer OOBI, dossier URL, and timestamps</li>
+        <li><strong>PASSporT JWT:</strong> Signed JWT with phone numbers and evidence reference, using Ed25519 signatures in PSS CESR format</li>
+      </ul>
+      <p>Both artifacts share the same <code>iat</code>/<code>exp</code> timestamps and <code>kid</code>/<code>evd</code> references to ensure cryptographic binding.</p>
+    </div>
+
+    <!-- Shared JavaScript -->
+    <script src="/static/shared.js"></script>
+    <script>
+      // State
+      let identities = [];
+      let credentials = [];
+
+      // Initialize page
+      document.addEventListener('DOMContentLoaded', async () => {
+        await loadIdentities();
+        setupEventListeners();
+      });
+
+      function setupEventListeners() {
+        // Identity change loads credentials
+        document.getElementById('identity').addEventListener('change', loadCredentials);
+
+        // Validity slider
+        document.getElementById('expSeconds').addEventListener('input', (e) => {
+          document.getElementById('expValue').textContent = `${e.target.value} seconds`;
+        });
+
+        // Form submission
+        document.getElementById('createVVPForm').addEventListener('submit', createVVP);
+      }
+
+      async function loadIdentities() {
+        const select = document.getElementById('identity');
+        try {
+          const data = await authRequest('/identity', { method: 'GET' });
+          identities = data.identities || [];
+
+          select.innerHTML = '<option value="">Select an identity...</option>';
+          identities.forEach(id => {
+            const opt = document.createElement('option');
+            opt.value = id.name;
+            opt.textContent = `${id.name} (${id.aid.substring(0, 16)}...)`;
+            select.appendChild(opt);
+          });
+        } catch (err) {
+          select.innerHTML = '<option value="">Error loading identities</option>';
+          console.error('Failed to load identities:', err);
+        }
+      }
+
+      async function loadCredentials() {
+        const identityName = document.getElementById('identity').value;
+        const select = document.getElementById('dossier');
+
+        if (!identityName) {
+          select.innerHTML = '<option value="">Select an identity first...</option>';
+          return;
+        }
+
+        select.innerHTML = '<option value="">Loading credentials...</option>';
+
+        try {
+          // Get identity AID
+          const identity = identities.find(i => i.name === identityName);
+          if (!identity) {
+            select.innerHTML = '<option value="">Identity not found</option>';
+            return;
+          }
+
+          // Load credentials for this identity
+          const data = await authRequest('/credential', { method: 'GET' });
+          credentials = (data.credentials || []).filter(c => c.issuer_aid === identity.aid && c.status === 'issued');
+
+          if (credentials.length === 0) {
+            select.innerHTML = '<option value="">No credentials found for this identity</option>';
+            return;
+          }
+
+          select.innerHTML = '<option value="">Select a credential...</option>';
+          credentials.forEach(cred => {
+            const opt = document.createElement('option');
+            opt.value = cred.said;
+            // Show SAID and schema info
+            const schemaShort = cred.schema_said ? cred.schema_said.substring(0, 8) : 'unknown';
+            opt.textContent = `${cred.said.substring(0, 20)}... (schema: ${schemaShort}...)`;
+            select.appendChild(opt);
+          });
+        } catch (err) {
+          select.innerHTML = '<option value="">Error loading credentials</option>';
+          console.error('Failed to load credentials:', err);
+        }
+      }
+
+      async function createVVP(e) {
+        e.preventDefault();
+
+        const btn = document.getElementById('createBtn');
+        const resultDiv = document.getElementById('createResult');
+
+        setButtonLoading(btn, 'Creating...');
+        resultDiv.innerHTML = '';
+
+        try {
+          const identityName = document.getElementById('identity').value;
+          const dossierSaid = document.getElementById('dossier').value;
+          const origTn = document.getElementById('origTn').value.trim();
+          const destTnRaw = document.getElementById('destTn').value;
+          const expSeconds = parseInt(document.getElementById('expSeconds').value);
+
+          // Parse destination numbers
+          const destTn = destTnRaw.split(',').map(t => t.trim()).filter(t => t);
+
+          if (destTn.length === 0) {
+            throw new Error('At least one destination phone number is required');
+          }
+
+          const result = await authPost('/vvp/create', {
+            identity_name: identityName,
+            dossier_said: dossierSaid,
+            orig_tn: origTn,
+            dest_tn: destTn,
+            exp_seconds: expSeconds
+          });
+
+          displayResult(result);
+          showToast('VVP header created successfully', 'success');
+
+        } catch (err) {
+          resultDiv.innerHTML = `<div class="error">Error: ${escapeHtml(err.message || err)}</div>`;
+        } finally {
+          resetButton(btn);
+        }
+      }
+
+      function displayResult(result) {
+        const resultDiv = document.getElementById('createResult');
+
+        // Format timestamps
+        const iatDate = new Date(result.iat * 1000);
+        const expDate = new Date(result.exp * 1000);
+        const validity = result.exp - result.iat;
+
+        resultDiv.innerHTML = `
+          <div class="result-section">
+            <h3>VVP Attestation Created</h3>
+
+            <div class="result-field">
+              <label>VVP-Identity Header</label>
+              <div class="copy-row">
+                <div class="result-value">${escapeHtml(result.vvp_identity_header)}</div>
+                <button type="button" class="copy-btn" onclick="copyField(this, '${escapeHtml(result.vvp_identity_header)}')">Copy</button>
+              </div>
+              <div class="decode-toggle">
+                <button type="button" onclick="toggleHeaderDecode(this, '${escapeHtml(result.vvp_identity_header)}')">Show Decoded</button>
+              </div>
+            </div>
+
+            <div class="result-field">
+              <label>PASSporT JWT</label>
+              <div class="copy-row">
+                <div class="result-value">${escapeHtml(result.passport_jwt)}</div>
+                <button type="button" class="copy-btn" onclick="copyField(this, '${escapeHtml(result.passport_jwt)}')">Copy</button>
+              </div>
+              <div class="decode-toggle">
+                <button type="button" onclick="toggleJwtDecode(this, '${escapeHtml(result.passport_jwt)}')">Show Decoded</button>
+              </div>
+            </div>
+
+            <div class="result-field">
+              <label>Dossier URL (evd)</label>
+              <div class="copy-row">
+                <div class="result-value short">
+                  <a href="${escapeHtml(result.dossier_url)}" target="_blank" class="result-link">${escapeHtml(result.dossier_url)}</a>
+                </div>
+                <button type="button" class="copy-btn" onclick="copyField(this, '${escapeHtml(result.dossier_url)}')">Copy</button>
+              </div>
+            </div>
+
+            <div class="result-field">
+              <label>Issuer OOBI (kid)</label>
+              <div class="copy-row">
+                <div class="result-value short">${escapeHtml(result.kid_oobi)}</div>
+                <button type="button" class="copy-btn" onclick="copyField(this, '${escapeHtml(result.kid_oobi)}')">Copy</button>
+              </div>
+            </div>
+
+            <div class="result-field">
+              <label>Timestamps</label>
+              <div class="timestamp-row">
+                <div class="timestamp-item">
+                  <label>Issued At (iat)</label>
+                  <div class="timestamp-value">${result.iat}</div>
+                  <div class="timestamp-human">${iatDate.toISOString()}</div>
+                </div>
+                <div class="timestamp-item">
+                  <label>Expires (exp)</label>
+                  <div class="timestamp-value">${result.exp}</div>
+                  <div class="timestamp-human">${expDate.toISOString()}</div>
+                </div>
+                <div class="timestamp-item">
+                  <label>Validity</label>
+                  <div class="timestamp-value">${validity} seconds</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      function copyField(btn, text) {
+        navigator.clipboard.writeText(text).then(() => {
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(() => {
+            btn.textContent = 'Copy';
+            btn.classList.remove('copied');
+          }, 2000);
+        }).catch(err => {
+          console.error('Failed to copy:', err);
+          showToast('Failed to copy to clipboard', 'error');
+        });
+      }
+
+      function toggleHeaderDecode(btn, encoded) {
+        const container = btn.parentElement;
+        const existing = container.querySelector('.decoded-jwt');
+
+        if (existing) {
+          existing.remove();
+          btn.textContent = 'Show Decoded';
+          return;
+        }
+
+        try {
+          // Add padding if needed
+          let padded = encoded;
+          while (padded.length % 4 !== 0) {
+            padded += '=';
+          }
+          const decoded = JSON.parse(atob(padded.replace(/-/g, '+').replace(/_/g, '/')));
+          const decodedDiv = document.createElement('div');
+          decodedDiv.className = 'decoded-jwt';
+          decodedDiv.textContent = JSON.stringify(decoded, null, 2);
+          container.appendChild(decodedDiv);
+          btn.textContent = 'Hide Decoded';
+        } catch (err) {
+          showToast('Failed to decode header', 'error');
+        }
+      }
+
+      function toggleJwtDecode(btn, jwt) {
+        const container = btn.parentElement;
+        const existing = container.querySelector('.decoded-jwt');
+
+        if (existing) {
+          existing.remove();
+          btn.textContent = 'Show Decoded';
+          return;
+        }
+
+        try {
+          const parts = jwt.split('.');
+          if (parts.length !== 3) {
+            throw new Error('Invalid JWT format');
+          }
+
+          // Decode header and payload (not signature - it's CESR)
+          const decodeB64 = (s) => {
+            let padded = s;
+            while (padded.length % 4 !== 0) {
+              padded += '=';
+            }
+            return JSON.parse(atob(padded.replace(/-/g, '+').replace(/_/g, '/')));
+          };
+
+          const header = decodeB64(parts[0]);
+          const payload = decodeB64(parts[1]);
+          const signature = parts[2]; // Keep as-is (PSS CESR)
+
+          const decoded = {
+            header: header,
+            payload: payload,
+            signature: `${signature.substring(0, 20)}... (PSS CESR, 88 chars)`
+          };
+
+          const decodedDiv = document.createElement('div');
+          decodedDiv.className = 'decoded-jwt';
+          decodedDiv.textContent = JSON.stringify(decoded, null, 2);
+          container.appendChild(decodedDiv);
+          btn.textContent = 'Hide Decoded';
+        } catch (err) {
+          showToast('Failed to decode JWT: ' + err.message, 'error');
+        }
+      }
+    </script>
+  </body>
+</html>

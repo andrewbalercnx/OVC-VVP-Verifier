@@ -92,6 +92,10 @@ DEFAULT_NEXT_THRESHOLD: str = os.getenv("VVP_DEFAULT_NEXT_THRESHOLD", "1")
 ADMIN_ENDPOINT_ENABLED: bool = os.getenv("ADMIN_ENDPOINT_ENABLED", "true").lower() == "true"
 SERVICE_PORT: int = int(os.getenv("VVP_ISSUER_PORT", "8001"))
 
+# VVP Header creation settings
+# Base URL for this issuer service (used to construct dossier URLs)
+VVP_ISSUER_BASE_URL: str = os.getenv("VVP_ISSUER_BASE_URL", "http://localhost:8001")
+
 
 # =============================================================================
 # AZURE CONFIGURATION

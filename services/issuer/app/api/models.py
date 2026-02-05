@@ -370,3 +370,29 @@ class BuildDossierResponse(BaseModel):
     """Response from dossier build (metadata only, content in body)."""
 
     dossier: DossierInfoResponse
+
+
+# =============================================================================
+# VVP Header/PASSporT Models
+# =============================================================================
+
+
+class CreateVVPRequest(BaseModel):
+    """Request to create VVP-Identity header and PASSporT."""
+
+    identity_name: str = Field(..., description="Issuer identity name for signing")
+    dossier_said: str = Field(..., description="Root credential SAID for dossier")
+    orig_tn: str = Field(..., description="Originating phone number (E.164 format)")
+    dest_tn: list[str] = Field(..., description="Destination phone numbers (E.164 format)")
+    exp_seconds: int = Field(300, ge=1, le=300, description="Validity window in seconds (max 300)")
+
+
+class CreateVVPResponse(BaseModel):
+    """Response containing VVP-Identity header and PASSporT."""
+
+    vvp_identity_header: str = Field(..., description="Base64url-encoded VVP-Identity header")
+    passport_jwt: str = Field(..., description="Signed PASSporT JWT with PSS CESR signature")
+    dossier_url: str = Field(..., description="Full evd URL for dossier")
+    kid_oobi: str = Field(..., description="Full kid OOBI URL for issuer")
+    iat: int = Field(..., description="Issued-at timestamp (seconds since epoch)")
+    exp: int = Field(..., description="Expiry timestamp (seconds since epoch)")
