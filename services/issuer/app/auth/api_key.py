@@ -43,11 +43,18 @@ class Principal(BaseUser):
     """Authenticated principal with roles.
 
     Implements Starlette's BaseUser interface for middleware integration.
+
+    Attributes:
+        key_id: Unique identifier (e.g., "user:email", "api_key:id", "org_key:id")
+        name: Display name for the principal
+        roles: Set of role strings (system and/or org roles)
+        organization_id: Organization UUID for org-scoped principals (None for system-only)
     """
 
     key_id: str
     name: str
     roles: set[str] = field(default_factory=set)
+    organization_id: str | None = None
 
     @property
     def is_authenticated(self) -> bool:
@@ -60,6 +67,11 @@ class Principal(BaseUser):
     @property
     def identity(self) -> str:
         return self.key_id
+
+    @property
+    def is_system_admin(self) -> bool:
+        """Check if principal has system admin role."""
+        return "issuer:admin" in self.roles
 
 
 @dataclass
@@ -246,6 +258,64 @@ class APIKeyStore:
 _api_key_store: APIKeyStore | None = None
 
 
+def verify_org_api_key(raw_key: str) -> tuple[Principal | None, str | None]:
+    """Verify an organization API key from the database.
+
+    Sprint 41: Org API keys are stored in the database with bcrypt hashes.
+    This function checks the key against all org API keys.
+
+    Args:
+        raw_key: The raw API key from the request header
+
+    Returns:
+        Tuple of (Principal if valid, error_reason if invalid)
+        - (Principal, None) for valid key
+        - (None, "revoked") for revoked key
+        - (None, "org_disabled") for disabled org
+        - (None, "invalid") for invalid/unknown key
+    """
+    # Import here to avoid circular dependency
+    from app.db.session import get_db_session
+    from app.db.models import OrgAPIKey, OrgAPIKeyRole, Organization
+
+    try:
+        with get_db_session() as db:
+            # Get all non-revoked org API keys
+            keys = db.query(OrgAPIKey).all()
+
+            for key in keys:
+                try:
+                    if bcrypt_lib.checkpw(raw_key.encode(), key.key_hash.encode()):
+                        if key.revoked:
+                            log.warning(f"Revoked org API key attempted: {key.id}")
+                            return None, "revoked"
+
+                        # Check if org is enabled
+                        org = db.query(Organization).filter(Organization.id == key.organization_id).first()
+                        if org and not org.enabled:
+                            log.warning(f"Org API key for disabled org: {key.id}")
+                            return None, "org_disabled"
+
+                        # Build roles from join table
+                        roles = {r.role for r in key.roles}
+
+                        return Principal(
+                            key_id=f"org_key:{key.id}",
+                            name=key.name,
+                            roles=roles,
+                            organization_id=key.organization_id,
+                        ), None
+                except Exception:
+                    # bcrypt.checkpw can raise on malformed hash
+                    continue
+
+            return None, "invalid"
+
+    except Exception as e:
+        log.error(f"Error verifying org API key: {e}")
+        return None, "invalid"
+
+
 def get_api_key_store() -> APIKeyStore:
     """Get the global API key store instance.
 
@@ -349,8 +419,12 @@ class APIKeyBackend(AuthenticationBackend):
         store = get_api_key_store()
         store.reload_if_stale()
 
-        # Verify the key
+        # Verify the key against file-based store first
         principal, error = store.verify(api_key)
+
+        # Sprint 41: If not found in file-based store, try org API keys
+        if principal is None and error == "invalid":
+            principal, error = verify_org_api_key(api_key)
 
         if principal is None:
             # Key is invalid or revoked - raise error

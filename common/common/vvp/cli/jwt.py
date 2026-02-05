@@ -96,6 +96,87 @@ def parse_cmd(
     output(result, format)
 
 
+def _extract_dossier_time(
+    dossier_path: str,
+    errors: list[str],
+    warnings: list[str],
+) -> Optional[int]:
+    """Extract issuance time from a dossier's leaf credential.
+
+    Returns Unix timestamp or None if extraction fails.
+    """
+    from datetime import datetime
+
+    from common.vvp.cli.adapters import parse_dossier
+
+    try:
+        # Read and parse the dossier
+        dossier_data = read_input(dossier_path, binary=True)
+        if isinstance(dossier_data, str):
+            dossier_data = dossier_data.encode("utf-8")
+
+        nodes, _ = parse_dossier(dossier_data)
+
+        if not nodes:
+            warnings.append("Dossier is empty, cannot extract time")
+            return None
+
+        # Find the leaf credential (one that isn't referenced by others)
+        # by looking for the node with no incoming edges
+        referenced_saids: set[str] = set()
+        for node in nodes:
+            # Check edges in the ACDC
+            if hasattr(node, "raw") and node.raw:
+                import json
+
+                try:
+                    acdc = json.loads(node.raw) if isinstance(node.raw, (str, bytes)) else node.raw
+                    edges = acdc.get("e", {}) or acdc.get("edges", {})
+                    if isinstance(edges, dict):
+                        for edge_val in edges.values():
+                            if isinstance(edge_val, dict) and "n" in edge_val:
+                                referenced_saids.add(edge_val["n"])
+                            elif isinstance(edge_val, str) and edge_val.startswith("E"):
+                                referenced_saids.add(edge_val)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        # Find leaf nodes (not referenced by any other)
+        leaf_nodes = [n for n in nodes if n.said not in referenced_saids]
+        target_node = leaf_nodes[0] if leaf_nodes else nodes[0]
+
+        # Extract datetime from the target node
+        if hasattr(target_node, "raw") and target_node.raw:
+            import json
+
+            try:
+                acdc = json.loads(target_node.raw) if isinstance(target_node.raw, (str, bytes)) else target_node.raw
+                dt_str = acdc.get("a", {}).get("dt") or acdc.get("dt")
+
+                if dt_str:
+                    # Parse ISO 8601 datetime
+                    # Handle formats like: 2024-01-01T12:00:00.000000+00:00
+                    dt_str = dt_str.replace("Z", "+00:00")
+                    if "." in dt_str:
+                        # Has microseconds
+                        dt = datetime.fromisoformat(dt_str)
+                    else:
+                        dt = datetime.fromisoformat(dt_str)
+
+                    unix_ts = int(dt.timestamp())
+                    warnings.append(f"Using dossier time: {dt_str} (Unix: {unix_ts})")
+                    return unix_ts
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                warnings.append(f"Could not parse dossier datetime: {e}")
+
+        warnings.append("No datetime found in dossier credentials")
+        return None
+
+    except Exception as e:
+        errors.append(f"Failed to extract time from dossier: {e}")
+        return None
+
+
 @app.command("validate")
 def validate_cmd(
     source: str = typer.Argument(
@@ -112,6 +193,12 @@ def validate_cmd(
         None,
         "--now",
         help="Override current time (Unix timestamp) for testing",
+    ),
+    dossier: Optional[str] = typer.Option(
+        None,
+        "--dossier",
+        "-d",
+        help="Dossier file to extract validation time from (uses leaf credential issuance time)",
     ),
     format: OutputFormat = typer.Option(
         OutputFormat.json,
@@ -130,9 +217,14 @@ def validate_cmd(
     Performs structural validation and optionally validates binding
     against a VVP-Identity header.
 
+    The --dossier option extracts the issuance time from the dossier's
+    leaf credential and uses it for time-based validation. This is useful
+    for validating historical JWTs against the time they were issued.
+
     Examples:
         vvp jwt validate token.jwt
         vvp jwt validate token.jwt --identity "eyJwcHQi..."
+        vvp jwt validate token.jwt --dossier dossier.json
         cat token.jwt | vvp jwt validate - --strict
     """
     from common.vvp.cli.adapters import parse_passport, parse_vvp_identity
@@ -143,6 +235,11 @@ def validate_cmd(
 
     errors: list[str] = []
     warnings: list[str] = []
+
+    # Extract time from dossier if provided
+    validation_time = now
+    if dossier and not now:
+        validation_time = _extract_dossier_time(dossier, errors, warnings)
 
     # Parse the JWT
     try:
@@ -169,7 +266,7 @@ def validate_cmd(
         try:
             from common.vvp.cli.adapters import validate_passport_binding
 
-            validate_passport_binding(passport, vvp_identity, now=now)
+            validate_passport_binding(passport, vvp_identity, now=validation_time)
         except Exception as e:
             errors.append(f"Binding validation failed: {e}")
 
@@ -181,6 +278,9 @@ def validate_cmd(
         "errors": errors,
         "warnings": warnings,
     }
+
+    if validation_time is not None:
+        result["validation_time"] = validation_time
 
     output(result, format)
 

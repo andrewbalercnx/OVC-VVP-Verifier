@@ -27,7 +27,8 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 40 | Vetter Certification Constraints | COMPLETE | Sprint 31 |
 | - | VVP CLI Toolkit | COMPLETE | Sprint 26 |
 | - | Chain Revocation Fixes | COMPLETE | Sprint 35 |
-| 41 | User Management & Mock vLEI | PLANNED | Sprint 37 |
+| 41 | User Management & Mock vLEI | COMPLETE | Sprint 37 |
+| 42 | SIP Redirect Signing Service | PLANNED | Sprint 41 |
 
 ---
 
@@ -1010,26 +1011,27 @@ services/verifier/tests/test_chain_revocation.py  # New tests
 
 ---
 
-## Sprint 41: User Management & Mock vLEI Infrastructure
+## Sprint 41: User Management & Mock vLEI Infrastructure (COMPLETE)
 
 **Goal:** Add multi-tenant user and organization management with mock vLEI credential chain and complete UI.
 
 **Prerequisites:** Sprint 37 (Session-Based Authentication) complete.
 
 **Deliverables:**
-- [ ] Database schema (SQLite + SQLAlchemy) for orgs, users, roles
-- [ ] Mock GLEIF + QVI infrastructure (pseudo root-of-trust)
-- [ ] Organization CRUD API (`POST/GET/PATCH /organizations`)
-- [ ] User management API (`POST/GET/PATCH/DELETE /users`)
-- [ ] Org roles: `org:administrator`, `org:dossier_manager`
-- [ ] Dossier scoping by credential ownership
-- [ ] Organization API key management
-- [ ] Enhanced login page (`/login`) with email/password + API key + OAuth
-- [ ] User management UI (`/users/ui`) for org administrators
-- [ ] Organization management UI (`/organizations/ui`) for system admins
-- [ ] User profile page (`/profile`) for self-service password change
-- [ ] Navigation updates with role-based links and user/company context
-- [ ] Tests for multi-tenant access control
+- [x] Database schema (SQLite + SQLAlchemy) for orgs, users, roles
+- [x] Mock GLEIF + QVI infrastructure (pseudo root-of-trust)
+- [x] Organization CRUD API (`POST/GET/PATCH /organizations`)
+- [x] User management API (`POST/GET/PATCH/DELETE /users`)
+- [x] Org roles: `org:administrator`, `org:dossier_manager`
+- [x] Dossier scoping by credential ownership (full chain validation)
+- [x] Organization API key management
+- [x] Enhanced login page (`/login`) with email/password + API key + OAuth
+- [x] User management UI (`/users/ui`) for org administrators
+- [x] Organization management UI (`/organizations/ui`) for system admins
+- [x] User profile page (`/profile`) for self-service password change
+- [x] Navigation updates with role-based links and user/company context
+- [x] Tests for multi-tenant access control (33 tests)
+- [x] Combined system/org role access for credential/dossier endpoints
 
 **Key Files:**
 ```
@@ -1077,6 +1079,154 @@ services/issuer/web/
 
 ---
 
+## Sprint 42: SIP Redirect Signing Service
+
+**Goal:** Implement a native SIP redirect signing service that receives SIP INVITEs, authenticates enterprises, looks up dossiers by originating TN, and returns SIP 302 responses with VVP-Identity headers and PASSporTs.
+
+**Prerequisites:** Sprint 41 (User Management & Mock vLEI) MUST be COMPLETE.
+
+**Background:**
+
+SIP redirect is a standard B2BUA pattern where a redirect server receives a SIP INVITE, processes it, and returns a SIP 302 Moved Temporarily response with additional headers. This allows enterprises to sign outbound calls with VVP attestation without modifying their SBC infrastructure significantly.
+
+**Architecture:**
+
+```
+Enterprise SBC ──SIP INVITE──> Azure VM (SIP Redirect) ──HTTPS──> Issuer API
+     ↑                              │
+     └───SIP 302 + VVP headers──────┘
+```
+
+- **SIP Redirect Service:** Runs on Azure VM (Container Apps don't support UDP)
+- **Listens:** UDP/TCP port 5060
+- **Auth:** `X-VVP-API-Key` custom SIP header
+- **Response Headers:** `P-VVP-Identity`, `P-VVP-Passport`
+
+**Deliverables:**
+
+- [ ] **SIP Service** (`services/sip-redirect/`)
+  - [ ] Minimal SIP parser (INVITE only, RFC 3261 subset)
+  - [ ] SIP 302/4xx response builder
+  - [ ] AsyncIO UDP/TCP transport server
+  - [ ] INVITE handler (parse → auth → lookup → VVP create → respond)
+  - [ ] Issuer API client for `/vvp/create` and `/tn/lookup`
+  - [ ] Unit tests for parser, builder, handler
+
+- [ ] **TN Mapping Module** (Issuer service)
+  - [ ] `TNMapping` model (org_id, tn, dossier_said, identity_name)
+  - [ ] `TNMappingStore` using Sprint 41 database
+  - [ ] TN lookup API (`POST /tn/lookup`)
+  - [ ] TN mapping CRUD API (`/tn/mappings`)
+  - [ ] TN mapping management UI (`/tn-mappings/ui`)
+
+- [ ] **Azure VM Deployment**
+  - [ ] VM provisioning (Standard_B2s)
+  - [ ] Public IP with NSG rules (UDP/TCP 5060)
+  - [ ] Systemd service configuration
+  - [ ] Monitoring and logging
+
+- [ ] **Documentation**
+  - [ ] Enterprise SBC integration guide
+  - [ ] API documentation updates
+
+**Key Files:**
+
+```
+services/sip-redirect/                 # NEW SERVICE
+├── app/
+│   ├── main.py                        # AsyncIO entrypoint
+│   ├── config.py                      # Configuration
+│   ├── sip/
+│   │   ├── parser.py                  # SIP message parser
+│   │   ├── builder.py                 # SIP response builder
+│   │   ├── models.py                  # SIPRequest, SIPResponse
+│   │   └── transport.py               # UDP/TCP server
+│   ├── redirect/
+│   │   ├── handler.py                 # INVITE handler
+│   │   └── client.py                  # Issuer API client
+│   └── auth/
+│       └── api_key.py                 # X-VVP-API-Key validation
+├── tests/
+├── pyproject.toml
+└── Dockerfile
+
+services/issuer/app/
+├── tn/                                # NEW MODULE
+│   ├── models.py                      # TNMapping dataclass
+│   ├── store.py                       # TNMappingStore
+│   └── lookup.py                      # TN lookup logic
+└── api/
+    └── tn.py                          # TN mapping API
+```
+
+**API Endpoints:**
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/tn/mappings` | POST | operator | Create TN mapping |
+| `/tn/mappings` | GET | readonly | List org's TN mappings |
+| `/tn/mappings/{id}` | GET | readonly | Get specific mapping |
+| `/tn/mappings/{id}` | PATCH | operator | Update mapping |
+| `/tn/mappings/{id}` | DELETE | admin | Delete mapping |
+| `/tn/lookup` | POST | internal | Lookup TN → dossier |
+
+**SIP Protocol:**
+
+Request (INVITE):
+```
+INVITE sip:+14445678@carrier.com SIP/2.0
+From: <sip:+15551234567@enterprise.com>;tag=abc123
+To: <sip:+14445678901@carrier.com>
+Call-ID: xyz789@enterprise.com
+X-VVP-API-Key: vvp_prod_abc123
+...
+```
+
+Response (302):
+```
+SIP/2.0 302 Moved Temporarily
+Contact: <sip:+14445678901@carrier.com>
+P-VVP-Identity: eyJwcHQiOiJ2dnAi...
+P-VVP-Passport: eyJhbGciOiJFZERTQSI...
+...
+```
+
+**Configuration:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VVP_SIP_LISTEN_HOST` | `0.0.0.0` | Listen address |
+| `VVP_SIP_LISTEN_PORT` | `5060` | SIP port |
+| `VVP_SIP_TRANSPORT` | `udp` | Transport (udp, tcp, both) |
+| `VVP_ISSUER_URL` | `https://vvp-issuer.rcnx.io` | Issuer API URL |
+| `VVP_TN_MAPPING_ENABLED` | `true` | Enable TN mapping API |
+
+**Security:**
+
+1. `X-VVP-API-Key` header authentication
+2. Organization-scoped TN mappings (uses Sprint 41 org model)
+3. TN ownership validation against org's TN Allocation credentials
+4. SIPS (TLS) support on port 5061
+5. Audit logging for all INVITE requests
+6. Per-API-key rate limiting
+
+**Exit Criteria:**
+
+- [ ] SIP service listens on UDP/TCP port 5060
+- [ ] Parses INVITE, extracts From TN and X-VVP-API-Key
+- [ ] Authenticates API key via Issuer API
+- [ ] Looks up TN → dossier (org-scoped)
+- [ ] Returns SIP 302 with P-VVP-Identity and P-VVP-Passport
+- [ ] TN mapping CRUD API working
+- [ ] TN mapping management UI
+- [ ] Azure VM deployed with public IP
+- [ ] All tests passing
+- [ ] Enterprise integration documentation
+
+**Future:** Sprint 43 will implement verification redirect (validate incoming VVP headers, return status).
+
+---
+
 ## Quick Reference
 
 To start a sprint, say:
@@ -1095,6 +1245,7 @@ To start a sprint, say:
 - "Sprint 39" - Code review remediation (blocking + high priority fixes)
 - "Sprint 40" - Vetter certification constraints (geographic/jurisdictional validation)
 - "Sprint 41" - User management & mock vLEI (multi-tenant orgs, users, login UI)
+- "Sprint 42" - SIP redirect signing service (native SIP/UDP on Azure VM)
 
 Each sprint follows the pair programming workflow:
 1. Plan phase (design, review, approval)

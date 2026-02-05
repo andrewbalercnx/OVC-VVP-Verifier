@@ -1,30 +1,21 @@
-## Code Review: Chain-Aware Revocation Checking
+## Code Review: Sprint 41 - Org Role Access Resolution
 
 **Verdict:** APPROVED
 
+### Previous Finding Resolution
+Yes. Credential/dossier endpoints now use `require_auth` plus explicit combined role checks, so org-only principals can access these APIs while still being constrained by org scoping. This resolves the prior [High] finding.
+
 ### Implementation Assessment
-All three issues from the original code review have been addressed:
+The combined system/org role helpers in `roles.py` are clear and consistent with existing patterns. Endpoints call `check_credential_access_role` / `check_credential_write_role` / `check_credential_admin_role` appropriately, and existing scoping (`can_access_credential`, `validate_dossier_chain_access`) continues to enforce tenant isolation. Changes are targeted and easy to follow.
 
-1. **[High] Chain completeness enforcement** - Fixed `build_all_credential_chains()` to detect missing links when edges point to credentials not in the graph. Previously it always returned `complete=True`.
-
-2. **[Medium] Registry SAID extraction** - Fixed to extract `ri` from top-level ACDC field (`acdc.raw`), not from `node.attributes` (which is the `a` field).
-
-3. **[Low] Empty chain guard** - Added guard in `check_chain_revocation()` to return UNKNOWN status for empty chains instead of ACTIVE.
-
-### Code Quality
-Changes are minimal and focused. New tests added for all three fixes.
+### Security Review
+No new isolation gaps observed. Access is granted by role, while resource-level checks still enforce org ownership. Full-chain dossier validation remains in place. The only policy consideration is whether org:dossier_manager should be allowed to issue credentials (now possible via `check_credential_write_role`). If issuance should be system-only, tighten that check.
 
 ### Test Coverage
-4 new tests added:
-- `test_detects_missing_links`
-- `test_synthetic_edges_not_missing`
-- `test_extracts_registry_said`
-- `test_empty_chain_returns_unknown`
-
-All 1661 tests pass.
+New tests cover combined role checks and org role hierarchy, and existing multi-tenant tests already validate scoping. Coverage is adequate for the new authorization functions; endpoint-level role behavior is indirectly covered by these checks.
 
 ### Findings
-- None remaining
+- [Low]: Confirm whether `org:dossier_manager` should be allowed to issue credentials. If not, restrict `check_credential_write_role` for `/credential/issue` to system operator+ or org:administrator.
 
-### Required Changes
-- None - all issues resolved
+### Required Changes (if not APPROVED)
+1. N/A

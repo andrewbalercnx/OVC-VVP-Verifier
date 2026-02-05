@@ -14,9 +14,13 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Set
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Dict, Optional, Set
 
 from .models import DossierDAG
+
+if TYPE_CHECKING:
+    from ..keri.tel_client import ChainRevocationResult, ChainExtractionResult
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +80,9 @@ class CachedDossier:
         fetch_timestamp: Unix timestamp when dossier was fetched.
         content_type: Content-Type from HTTP response.
         contained_saids: Set of all credential SAIDs in this dossier.
+        chain_revocation: Result of chain-wide revocation check (if completed).
+        chain_revocation_checked_at: Unix timestamp of last revocation check.
+        chain_revocation_in_progress: True if background check is running.
     """
 
     dag: DossierDAG
@@ -83,6 +90,11 @@ class CachedDossier:
     fetch_timestamp: float
     content_type: str
     contained_saids: Set[str] = field(default_factory=set)
+
+    # Chain revocation state (populated by background task)
+    chain_revocation: Optional["ChainRevocationResult"] = None
+    chain_revocation_checked_at: Optional[float] = None
+    chain_revocation_in_progress: bool = False
 
 
 @dataclass
@@ -134,6 +146,8 @@ class DossierCache:
         self._lock = asyncio.Lock()
         # Metrics
         self._metrics = CacheMetrics()
+        # Background revocation task tracking (protected by _lock)
+        self._revocation_tasks: Dict[str, asyncio.Task] = {}
 
     async def get(self, url: str) -> Optional[CachedDossier]:
         """Lookup cached dossier by URL.
@@ -261,7 +275,162 @@ class DossierCache:
             self._cache.clear()
             self._said_to_urls.clear()
             self._access_order.clear()
+            # Cancel any in-flight revocation tasks
+            for task in self._revocation_tasks.values():
+                task.cancel()
+            self._revocation_tasks.clear()
             log.info("Dossier cache cleared")
+
+    async def start_background_revocation_check(
+        self,
+        url: str,
+        chain_info: "ChainExtractionResult",
+        dossier_data: Optional[str] = None,
+        oobi_url: Optional[str] = None,
+    ) -> None:
+        """Start fire-and-forget background revocation check.
+
+        Thread-safe: All checks and updates under single lock.
+        Safe to call multiple times - duplicate requests are ignored.
+
+        Args:
+            url: Dossier URL (cache key).
+            chain_info: Chain extraction result with SAIDs to check.
+            dossier_data: Raw dossier CESR content for inline TEL parsing.
+            oobi_url: OOBI URL for witness discovery.
+        """
+        from ..keri.tel_client import ChainExtractionResult
+
+        async with self._lock:
+            # Check for duplicate task (under lock)
+            if url in self._revocation_tasks:
+                task = self._revocation_tasks[url]
+                if not task.done():
+                    log.debug(f"Revocation check already in progress for: {url[:50]}...")
+                    return  # Task already running
+
+            # Check if already checked recently
+            if url in self._cache:
+                entry = self._cache[url]
+                if entry.dossier.chain_revocation is not None:
+                    log.debug(f"Revocation already checked for: {url[:50]}...")
+                    return  # Already have results
+                if entry.dossier.chain_revocation_in_progress:
+                    log.debug(f"Revocation check marked in progress for: {url[:50]}...")
+                    return  # Already in progress
+
+                # Mark in-progress (under same lock)
+                entry.dossier.chain_revocation_in_progress = True
+
+            # Start task (under lock to prevent race)
+            task = asyncio.create_task(
+                self._do_revocation_check(url, chain_info, dossier_data, oobi_url)
+            )
+            self._revocation_tasks[url] = task
+            log.info(f"Started background revocation check for: {url[:50]}...")
+
+        # Callback outside lock (cleanup is also locked)
+        task.add_done_callback(
+            lambda t: asyncio.create_task(self._cleanup_task(url))
+        )
+
+    async def _do_revocation_check(
+        self,
+        url: str,
+        chain_info: "ChainExtractionResult",
+        dossier_data: Optional[str],
+        oobi_url: Optional[str],
+    ) -> None:
+        """Background task that checks chain revocation.
+
+        Updates cache with results when complete. On error, stores error result
+        so UI sees failure rather than perpetual "pending" state.
+        """
+        from ..keri.tel_client import (
+            get_tel_client,
+            ChainRevocationResult,
+            CredentialStatus,
+        )
+
+        try:
+            tel_client = get_tel_client()
+            result = await tel_client.check_chain_revocation(
+                chain_info=chain_info,
+                dossier_data=dossier_data,
+                oobi_url=oobi_url,
+            )
+
+            async with self._lock:
+                if url in self._cache:
+                    entry = self._cache[url]
+                    entry.dossier.chain_revocation = result
+                    entry.dossier.chain_revocation_checked_at = time.time()
+                    entry.dossier.chain_revocation_in_progress = False
+                    log.info(
+                        f"Revocation check complete for {url[:50]}...: "
+                        f"status={result.chain_status.value}"
+                    )
+
+            # If revocation found, invalidate OTHER dossiers containing revoked creds
+            # (NOT the current dossier - preserve result for UI polling)
+            if result.chain_status == CredentialStatus.REVOKED:
+                for said in result.revoked_credentials:
+                    await self._invalidate_others_by_said(url, said)
+
+        except Exception as e:
+            log.error(f"Background revocation check failed for {url[:50]}...: {e}")
+            async with self._lock:
+                if url in self._cache:
+                    entry = self._cache[url]
+                    entry.dossier.chain_revocation_in_progress = False
+                    # Store error result so UI sees failure, not perpetual "pending"
+                    entry.dossier.chain_revocation = ChainRevocationResult(
+                        chain_status=CredentialStatus.UNKNOWN,
+                        credential_results={},
+                        revoked_credentials=[],
+                        chain_saids=chain_info.chain_saids,
+                        missing_chain_links=chain_info.missing_links,
+                        check_complete=False,
+                        errors=[str(e)],
+                        checked_at=datetime.now(timezone.utc).isoformat(),
+                    )
+
+    async def _invalidate_others_by_said(self, exclude_url: str, said: str) -> int:
+        """Invalidate dossiers containing SAID, except the one we're checking.
+
+        This preserves the revocation result for the current dossier (for UI polling)
+        while evicting other affected dossiers from cache.
+
+        Args:
+            exclude_url: URL to exclude from invalidation (the one being checked).
+            said: Credential SAID that was revoked.
+
+        Returns:
+            Number of entries invalidated.
+        """
+        async with self._lock:
+            urls_to_invalidate = []
+            if said in self._said_to_urls:
+                for url in self._said_to_urls[said]:
+                    if url != exclude_url:
+                        urls_to_invalidate.append(url)
+
+            for url in urls_to_invalidate:
+                self._remove_entry(url)
+
+            if urls_to_invalidate:
+                self._metrics.invalidations += len(urls_to_invalidate)
+                log.info(
+                    f"Invalidated {len(urls_to_invalidate)} other dossiers "
+                    f"containing revoked SAID: {said[:20]}..."
+                )
+
+            return len(urls_to_invalidate)
+
+    async def _cleanup_task(self, url: str) -> None:
+        """Remove completed task from tracking dict (under lock)."""
+        async with self._lock:
+            self._revocation_tasks.pop(url, None)
 
     def _remove_entry(self, url: str) -> None:
         """Remove entry from all indexes (caller must hold lock)."""

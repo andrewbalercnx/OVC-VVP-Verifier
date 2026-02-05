@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - VVP Issuer</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .login-container {
+      max-width: 400px;
+      margin: 4rem auto;
+      padding: 2rem;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .login-header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .login-header h1 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .login-header p {
+      color: var(--vvp-text-muted);
+      margin: 0;
+    }
+    .login-form .form-group {
+      margin-bottom: 1rem;
+    }
+    .login-form label {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-weight: 500;
+    }
+    .login-form input {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid var(--vvp-border);
+      border-radius: 4px;
+      font-size: 1rem;
+    }
+    .login-form input:focus {
+      outline: none;
+      border-color: var(--vvp-primary);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+    }
+    .login-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--vvp-border);
+      margin-bottom: 1.5rem;
+    }
+    .login-tab {
+      flex: 1;
+      padding: 0.75rem;
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--vvp-text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    .login-tab:hover {
+      color: var(--vvp-text);
+    }
+    .login-tab.active {
+      color: var(--vvp-primary);
+      border-bottom-color: var(--vvp-primary);
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .oauth-section {
+      margin-bottom: 1.5rem;
+    }
+    .oauth-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.75rem;
+      border: 1px solid var(--vvp-border);
+      border-radius: 4px;
+      background: white;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background 0.2s;
+    }
+    .oauth-btn:hover {
+      background: var(--vvp-bg);
+    }
+    .oauth-icon {
+      width: 20px;
+      height: 20px;
+    }
+    .oauth-divider {
+      display: flex;
+      align-items: center;
+      margin: 1.5rem 0;
+    }
+    .oauth-divider::before,
+    .oauth-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--vvp-border);
+    }
+    .oauth-divider span {
+      padding: 0 1rem;
+      color: var(--vvp-text-muted);
+      font-size: 0.875rem;
+    }
+    .login-error {
+      background: var(--vvp-danger-bg, #fee2e2);
+      color: var(--vvp-danger);
+      padding: 0.75rem;
+      border-radius: 4px;
+      margin-bottom: 1rem;
+      display: none;
+    }
+    .login-error.visible {
+      display: block;
+    }
+    .login-submit {
+      width: 100%;
+      padding: 0.75rem;
+      background: var(--vvp-primary);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .login-submit:hover {
+      background: var(--vvp-primary-dark, #2563eb);
+    }
+    .login-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-brand">
+      <img src="/static/ovc-logo.png" alt="OVC" class="ovc-logo">
+      <a href="/ui/" class="logo">
+        <span class="service-label">VVP</span>
+        Issuer
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <div class="login-container">
+      <div class="login-header">
+        <h1>Sign In</h1>
+        <p>Sign in to access the VVP Issuer service</p>
+      </div>
+
+      <!-- OAuth Section (hidden by default) -->
+      <div class="oauth-section" id="oauth-section" style="display: none;">
+        <button class="oauth-btn" id="microsoft-btn" type="button">
+          <svg class="oauth-icon" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
+            <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+            <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+            <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+            <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+          </svg>
+          Sign in with Microsoft
+        </button>
+        <div class="oauth-divider"><span>or use credentials</span></div>
+      </div>
+
+      <!-- Login Tabs -->
+      <div class="login-tabs">
+        <button class="login-tab active" data-tab="password">Email/Password</button>
+        <button class="login-tab" data-tab="apikey">API Key</button>
+      </div>
+
+      <div class="login-error" id="login-error"></div>
+
+      <!-- Password Tab -->
+      <div class="tab-content active" id="tab-password">
+        <form id="password-form" class="login-form">
+          <div class="form-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" required autocomplete="email">
+          </div>
+          <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required autocomplete="current-password">
+          </div>
+          <button type="submit" class="login-submit" id="password-submit">Sign In</button>
+        </form>
+      </div>
+
+      <!-- API Key Tab -->
+      <div class="tab-content" id="tab-apikey">
+        <form id="apikey-form" class="login-form">
+          <div class="form-group">
+            <label for="apikey">API Key</label>
+            <input type="password" id="apikey" name="apikey" required autocomplete="off" placeholder="Enter your API key">
+          </div>
+          <button type="submit" class="login-submit" id="apikey-submit">Authenticate</button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/shared.js"></script>
+  <script>
+    // Get redirect URL from query params
+    const params = new URLSearchParams(window.location.search);
+    const redirectUrl = params.get('redirect') || '/ui/';
+
+    // Tab switching
+    document.querySelectorAll('.login-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        const tabId = 'tab-' + tab.dataset.tab;
+        document.getElementById(tabId).classList.add('active');
+      });
+    });
+
+    // Show error
+    function showError(message) {
+      const errorEl = document.getElementById('login-error');
+      errorEl.textContent = message;
+      errorEl.classList.add('visible');
+    }
+
+    // Hide error
+    function hideError() {
+      document.getElementById('login-error').classList.remove('visible');
+    }
+
+    // Check OAuth status
+    async function initOAuth() {
+      try {
+        const response = await fetch('/auth/oauth/status');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.m365?.enabled) {
+            document.getElementById('oauth-section').style.display = 'block';
+            document.getElementById('microsoft-btn').addEventListener('click', () => {
+              window.location.href = `/auth/oauth/m365/start?redirect_after=${encodeURIComponent(redirectUrl)}`;
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to check OAuth status:', err);
+      }
+    }
+
+    // Password login
+    document.getElementById('password-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError();
+
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const submitBtn = document.getElementById('password-submit');
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Signing in...';
+
+      try {
+        const response = await fetch('/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: JSON.stringify({ email, password }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          window.location.href = redirectUrl;
+        } else {
+          showError(data.detail || 'Login failed');
+        }
+      } catch (err) {
+        showError('Network error. Please try again.');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Sign In';
+      }
+    });
+
+    // API key login
+    document.getElementById('apikey-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError();
+
+      const apiKey = document.getElementById('apikey').value;
+      const submitBtn = document.getElementById('apikey-submit');
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Authenticating...';
+
+      try {
+        const response = await fetch('/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: JSON.stringify({ api_key: apiKey }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          window.location.href = redirectUrl;
+        } else {
+          showError(data.detail || 'Authentication failed');
+        }
+      } catch (err) {
+        showError('Network error. Please try again.');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Authenticate';
+      }
+    });
+
+    // Handle OAuth error in URL
+    const error = params.get('error');
+    const message = params.get('message');
+    if (error) {
+      showError(message || 'Authentication failed');
+      // Clean URL
+      const url = new URL(window.location);
+      url.searchParams.delete('error');
+      url.searchParams.delete('message');
+      window.history.replaceState({}, '', url);
+    }
+
+    // Check if already logged in
+    checkAuthStatus().then(session => {
+      if (session.authenticated) {
+        window.location.href = redirectUrl;
+      }
+    });
+
+    // Initialize OAuth buttons
+    initOAuth();
+  </script>
+</body>
+</html>

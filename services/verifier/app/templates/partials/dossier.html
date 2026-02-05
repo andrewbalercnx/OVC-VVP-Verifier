@@ -107,6 +107,112 @@
 </details>
 {% endif %}
 
+{# Chain revocation status banner (hidden until revocation detected) #}
+<div id="chain-revocation-warning" style="display:none;" class="alert alert-danger" role="alert">
+    <strong>Chain Revoked</strong>: One or more credentials in the trust chain have been revoked.
+    <span id="revoked-saids"></span>
+</div>
+
+{# Chain revocation polling script #}
+{% if evd_url %}
+<script>
+(function() {
+    const evdUrl = {{ evd_url | tojson }};
+    const maxAttempts = 15;
+    const pollInterval = 2000;  // 2 seconds
+    let attempts = 0;
+
+    async function pollRevocationStatus() {
+        if (attempts >= maxAttempts) {
+            console.log('Chain revocation poll: max attempts reached');
+            return;
+        }
+        attempts++;
+
+        try {
+            const resp = await fetch('/ui/revocation-status?evd_url=' + encodeURIComponent(evdUrl));
+            const data = await resp.json();
+
+            if (data.status === 'complete') {
+                console.log('Chain revocation complete:', data);
+                updateRevocationBadges(data);
+                if (data.chain_status === 'REVOKED') {
+                    showChainRevocationWarning(data.revoked_credentials);
+                }
+                return;  // Stop polling
+            }
+
+            if (data.status === 'not_cached' || data.status === 'not_started') {
+                console.log('Chain revocation status:', data.status);
+                return;  // Stop polling
+            }
+
+            // status === 'pending' - continue polling
+            setTimeout(pollRevocationStatus, pollInterval);
+        } catch (e) {
+            console.error('Chain revocation poll error:', e);
+        }
+    }
+
+    function updateRevocationBadges(data) {
+        // Update each credential's revocation badge if we have results
+        if (!data.credential_results) return;
+
+        for (const [said, result] of Object.entries(data.credential_results)) {
+            // Find card by credential SAID (data-said attribute)
+            let card = document.querySelector('[data-said="' + said + '"]');
+            if (!card) {
+                // Try partial match for first 16 chars
+                const shortSaid = said.substring(0, 16);
+                const cards = document.querySelectorAll('[data-said]');
+                for (const c of cards) {
+                    if (c.getAttribute('data-said').startsWith(shortSaid)) {
+                        card = c;
+                        break;
+                    }
+                }
+            }
+            if (card) {
+                updateBadge(card, result);
+            }
+        }
+    }
+
+    function updateBadge(card, result) {
+        const badge = card.querySelector('.revocation-badge, .badge');
+        if (!badge) return;
+
+        // Update badge class and text
+        badge.className = 'badge badge-' + (
+            result.status === 'ACTIVE' ? 'success' :
+            result.status === 'REVOKED' ? 'danger' : 'warning'
+        );
+        badge.textContent = result.status;
+        badge.title = 'Chain checked | Source: ' + (result.source || 'chain');
+    }
+
+    function showChainRevocationWarning(revokedSaids) {
+        const warning = document.getElementById('chain-revocation-warning');
+        const saidsSpan = document.getElementById('revoked-saids');
+        if (warning && revokedSaids && revokedSaids.length > 0) {
+            warning.style.display = 'block';
+            const shortSaids = revokedSaids.map(s => s.substring(0, 16) + '...');
+            saidsSpan.textContent = 'Revoked: ' + shortSaids.join(', ');
+        }
+    }
+
+    // Start polling after page loads
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(pollRevocationStatus, 1000);  // Start after 1s
+        });
+    } else {
+        setTimeout(pollRevocationStatus, 1000);
+    }
+})();
+</script>
+{% endif %}
+
 {% else %}
 {# No credentials found - only shown when not error (error already displayed above) #}
 {% if not error %}

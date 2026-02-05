@@ -12,10 +12,15 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.authentication import AuthenticationMiddleware
 
 from common.vvp.core.logging import configure_logging
-from app.api import admin, auth, credential, dossier, health, identity, registry, schema, vvp
+from app.api import admin, auth, credential, dossier, health, identity, organization, org_api_key, registry, schema, user, vvp
 from app.auth.api_key import APIKeyBackend, get_api_key_store
 from app.auth.session import get_session_store
-from app.config import AUTH_ENABLED, SESSION_CLEANUP_INTERVAL, get_auth_exempt_paths
+from app.config import (
+    AUTH_ENABLED,
+    SESSION_CLEANUP_INTERVAL,
+    MOCK_VLEI_ENABLED,
+    get_auth_exempt_paths,
+)
 from app.keri.identity import get_identity_manager, close_identity_manager
 from app.keri.issuer import get_credential_issuer, close_credential_issuer
 from app.keri.registry import get_registry_manager, close_registry_manager
@@ -48,6 +53,10 @@ async def lifespan(app: FastAPI):
     cleanup_task = None
 
     try:
+        # Initialize database (Sprint 41: Multi-tenancy)
+        from app.db.session import init_database
+        init_database()
+
         # Initialize API key store if auth is enabled
         if AUTH_ENABLED:
             store = get_api_key_store()
@@ -62,6 +71,16 @@ async def lifespan(app: FastAPI):
         await get_identity_manager()
         await get_registry_manager()
         await get_credential_issuer()
+
+        # Initialize mock vLEI infrastructure if enabled (Sprint 41)
+        if MOCK_VLEI_ENABLED:
+            from app.org.mock_vlei import get_mock_vlei_manager
+            mock_vlei = get_mock_vlei_manager()
+            await mock_vlei.initialize()
+            log.info("Mock vLEI infrastructure initialized")
+        else:
+            log.info("Mock vLEI disabled (VVP_MOCK_VLEI_ENABLED=false)")
+
         log.info("VVP Issuer service started")
     except Exception as e:
         log.error(f"Failed to initialize managers: {e}")
@@ -220,6 +239,34 @@ def ui_benchmarks():
 
 
 # -----------------------------------------------------------------------------
+# Sprint 41: User Management & Multi-tenancy UI Routes
+# -----------------------------------------------------------------------------
+
+@app.get("/login", response_class=FileResponse)
+def ui_login():
+    """Serve the dedicated login page."""
+    return FileResponse(WEB_DIR / "login.html", media_type="text/html")
+
+
+@app.get("/users/ui", response_class=FileResponse)
+def ui_users():
+    """Serve the user management web UI."""
+    return FileResponse(WEB_DIR / "users.html", media_type="text/html")
+
+
+@app.get("/organizations/ui", response_class=FileResponse)
+def ui_organizations():
+    """Serve the organization management web UI."""
+    return FileResponse(WEB_DIR / "organizations.html", media_type="text/html")
+
+
+@app.get("/profile", response_class=FileResponse)
+def ui_profile():
+    """Serve the user profile page."""
+    return FileResponse(WEB_DIR / "profile.html", media_type="text/html")
+
+
+# -----------------------------------------------------------------------------
 # Backwards-compatible Redirects (302 during rollout, switch to 301 later)
 # -----------------------------------------------------------------------------
 
@@ -266,6 +313,9 @@ def redirect_benchmarks():
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(identity.router)
+app.include_router(organization.router)  # Sprint 41: Organization management
+app.include_router(org_api_key.router)  # Sprint 41: Organization API key management
+app.include_router(user.router)  # Sprint 41: User management
 app.include_router(registry.router)
 app.include_router(schema.router)
 app.include_router(credential.router)

@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Profile - VVP Issuer</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .profile-container {
+      max-width: 600px;
+      margin: 2rem auto;
+    }
+    .profile-card {
+      background: white;
+      border-radius: 8px;
+      padding: 2rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 1.5rem;
+    }
+    .profile-card h2 {
+      margin-top: 0;
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--vvp-border);
+    }
+    .profile-field {
+      display: flex;
+      margin-bottom: 1rem;
+    }
+    .profile-field .label {
+      width: 140px;
+      font-weight: 500;
+      color: var(--vvp-text-muted);
+    }
+    .profile-field .value {
+      flex: 1;
+    }
+    .role-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .role-badge {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      background: var(--vvp-primary-light, #e0e7ff);
+      color: var(--vvp-primary);
+      border-radius: 4px;
+      font-size: 0.875rem;
+    }
+    .role-badge.org {
+      background: var(--vvp-success-light, #d1fae5);
+      color: var(--vvp-success);
+    }
+    .password-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .password-form label {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-weight: 500;
+    }
+    .password-form input {
+      width: 100%;
+      padding: 0.5rem;
+      border: 1px solid var(--vvp-border);
+      border-radius: 4px;
+    }
+    .password-form input:focus {
+      outline: none;
+      border-color: var(--vvp-primary);
+    }
+    .password-form .form-group {
+      margin-bottom: 0.5rem;
+    }
+    .password-message {
+      padding: 0.75rem;
+      border-radius: 4px;
+      margin-bottom: 1rem;
+      display: none;
+    }
+    .password-message.success {
+      display: block;
+      background: var(--vvp-success-light, #d1fae5);
+      color: var(--vvp-success);
+    }
+    .password-message.error {
+      display: block;
+      background: var(--vvp-danger-bg, #fee2e2);
+      color: var(--vvp-danger);
+    }
+    .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+    .oauth-notice {
+      padding: 0.75rem;
+      background: var(--vvp-bg);
+      border-radius: 4px;
+      color: var(--vvp-text-muted);
+      font-size: 0.875rem;
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-brand">
+      <img src="/static/ovc-logo.png" alt="OVC" class="ovc-logo">
+      <a href="/ui/" class="logo">
+        <span class="service-label">VVP</span>
+        Issuer
+      </a>
+    </div>
+    <nav class="nav-links">
+      <a href="/ui/identity">Identities</a>
+      <a href="/ui/registry">Registries</a>
+      <a href="/ui/schemas">Schemas</a>
+      <a href="/ui/credentials">Credentials</a>
+      <a href="/ui/dossier">Dossiers</a>
+      <a href="/ui/vvp">VVP</a>
+      <a href="/profile" class="active">Profile</a>
+    </nav>
+    <div class="header-user" id="header-user"></div>
+  </header>
+
+  <main class="profile-container">
+    <div class="profile-card">
+      <h2>Profile</h2>
+      <div id="profile-info">
+        <p>Loading...</p>
+      </div>
+    </div>
+
+    <div class="profile-card" id="password-section">
+      <h2>Change Password</h2>
+      <div id="password-content">
+        <p>Loading...</p>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/shared.js"></script>
+  <script>
+    async function loadProfile() {
+      try {
+        const response = await fetch('/users/me', {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+
+        if (response.status === 401) {
+          window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname);
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error('Failed to load profile');
+        }
+
+        const user = await response.json();
+        renderProfile(user);
+        renderPasswordSection(user);
+      } catch (err) {
+        document.getElementById('profile-info').innerHTML = `
+          <p class="error">Failed to load profile: ${escapeHtml(err.message)}</p>
+        `;
+      }
+    }
+
+    function renderProfile(user) {
+      const systemRoles = user.system_roles || [];
+      const orgRoles = user.org_roles || [];
+
+      let rolesHtml = '<div class="role-badges">';
+      systemRoles.forEach(role => {
+        rolesHtml += `<span class="role-badge">${escapeHtml(role)}</span>`;
+      });
+      orgRoles.forEach(role => {
+        rolesHtml += `<span class="role-badge org">${escapeHtml(role)}</span>`;
+      });
+      if (systemRoles.length === 0 && orgRoles.length === 0) {
+        rolesHtml += '<span class="role-badge">No roles</span>';
+      }
+      rolesHtml += '</div>';
+
+      document.getElementById('profile-info').innerHTML = `
+        <div class="profile-field">
+          <span class="label">Name</span>
+          <span class="value">${escapeHtml(user.name)}</span>
+        </div>
+        <div class="profile-field">
+          <span class="label">Email</span>
+          <span class="value">${escapeHtml(user.email)}</span>
+        </div>
+        <div class="profile-field">
+          <span class="label">Organization</span>
+          <span class="value">${user.organization_name ? escapeHtml(user.organization_name) : '<em>None</em>'}</span>
+        </div>
+        <div class="profile-field">
+          <span class="label">Roles</span>
+          <div class="value">${rolesHtml}</div>
+        </div>
+        <div class="profile-field">
+          <span class="label">Account Type</span>
+          <span class="value">${user.is_oauth_user ? 'Microsoft OAuth' : 'Password'}</span>
+        </div>
+      `;
+    }
+
+    function renderPasswordSection(user) {
+      if (user.is_oauth_user) {
+        document.getElementById('password-content').innerHTML = `
+          <div class="oauth-notice">
+            Password management is not available for Microsoft OAuth accounts.
+            Your password is managed through Microsoft.
+          </div>
+        `;
+        return;
+      }
+
+      document.getElementById('password-content').innerHTML = `
+        <div class="password-message" id="password-message"></div>
+        <form id="password-form" class="password-form">
+          <div class="form-group">
+            <label for="current-password">Current Password</label>
+            <input type="password" id="current-password" required autocomplete="current-password">
+          </div>
+          <div class="form-group">
+            <label for="new-password">New Password</label>
+            <input type="password" id="new-password" required minlength="8" autocomplete="new-password">
+          </div>
+          <div class="form-group">
+            <label for="confirm-password">Confirm New Password</label>
+            <input type="password" id="confirm-password" required minlength="8" autocomplete="new-password">
+          </div>
+          <div class="btn-row">
+            <button type="submit" class="primary" id="password-submit">Change Password</button>
+          </div>
+        </form>
+      `;
+
+      document.getElementById('password-form').addEventListener('submit', handlePasswordChange);
+    }
+
+    async function handlePasswordChange(e) {
+      e.preventDefault();
+
+      const currentPassword = document.getElementById('current-password').value;
+      const newPassword = document.getElementById('new-password').value;
+      const confirmPassword = document.getElementById('confirm-password').value;
+      const messageEl = document.getElementById('password-message');
+      const submitBtn = document.getElementById('password-submit');
+
+      // Reset message
+      messageEl.className = 'password-message';
+      messageEl.textContent = '';
+
+      // Validate passwords match
+      if (newPassword !== confirmPassword) {
+        messageEl.className = 'password-message error';
+        messageEl.textContent = 'New passwords do not match';
+        return;
+      }
+
+      // Validate password length
+      if (newPassword.length < 8) {
+        messageEl.className = 'password-message error';
+        messageEl.textContent = 'Password must be at least 8 characters';
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Changing...';
+
+      try {
+        const response = await fetch('/users/me/password', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: JSON.stringify({
+            current_password: currentPassword,
+            new_password: newPassword,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          messageEl.className = 'password-message success';
+          messageEl.textContent = 'Password changed successfully';
+          document.getElementById('password-form').reset();
+        } else {
+          messageEl.className = 'password-message error';
+          messageEl.textContent = data.detail || 'Failed to change password';
+        }
+      } catch (err) {
+        messageEl.className = 'password-message error';
+        messageEl.textContent = 'Network error. Please try again.';
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Change Password';
+      }
+    }
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      initNavigation();
+      loadProfile();
+    });
+  </script>
+</body>
+</html>

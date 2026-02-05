@@ -50,9 +50,6 @@ All commands support:
 Parse a JWT/PASSporT token and display its structure.
 
 ```bash
-# Parse from literal string
-vvp jwt parse "eyJhbGciOiJFZERTQSIsInBwdCI6InNoYWtlbiIsInR5cCI6InBhc3Nwb3J0In0.eyJkZXN0Ijp7InRuIjpbIisxNTU1MTIzNDU2NyJdfSwiaWF0IjoxNzA0MDY3MjAwLCJvcmlnIjp7InRuIjoiKzE1NTUxMjM0NTY3In19.SIGNATURE"
-
 # Parse from file
 vvp jwt parse token.jwt
 
@@ -72,7 +69,8 @@ vvp jwt parse token.jwt -f pretty
   "header": {
     "alg": "EdDSA",
     "ppt": "shaken",
-    "typ": "passport"
+    "typ": "passport",
+    "kid": "ENPXp1vQklP5gKsVaV9_7vHdqfMU-VbLmn8sSzjCE0_c"
   },
   "payload": {
     "dest": {"tn": ["+15551234567"]},
@@ -80,7 +78,7 @@ vvp jwt parse token.jwt -f pretty
     "orig": {"tn": "+15551234567"}
   },
   "signature": {
-    "bytes": "...",
+    "bytes": "a1b2c3...",
     "length": 64
   },
   "warnings": []
@@ -103,6 +101,19 @@ vvp jwt validate token.jwt --strict
 
 # Override current time for testing
 vvp jwt validate token.jwt --now 1704067200
+
+# Validate using dossier issuance time (for historical JWTs)
+vvp jwt validate token.jwt --dossier dossier.json
+```
+
+**Output:**
+```json
+{
+  "valid": true,
+  "errors": [],
+  "warnings": ["Using dossier time: 2024-01-01T12:00:00+00:00 (Unix: 1704110400)"],
+  "validation_time": 1704110400
+}
 ```
 
 ### Identity Commands
@@ -112,11 +123,11 @@ vvp jwt validate token.jwt --now 1704067200
 Parse a VVP-Identity header (base64url-encoded JSON).
 
 ```bash
-# Parse from string
-vvp identity parse "eyJwcHQiOiJzaGFrZW4iLCJraWQiOiJFTlBYcDF2US4uLiIsImV2ZCI6Imh0dHBzOi8vLi4uIn0="
+# Parse from file
+vvp identity parse identity.txt
 
 # Parse from stdin
-echo "eyJwcHQiOi..." | vvp identity parse -
+cat identity.txt | vvp identity parse -
 ```
 
 **Output:**

@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Users - VVP Issuer</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+    }
+    .page-header h1 {
+      margin: 0;
+    }
+    .users-table {
+      width: 100%;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    .users-table table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .users-table th,
+    .users-table td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--vvp-border);
+    }
+    .users-table th {
+      background: var(--vvp-bg);
+      font-weight: 600;
+    }
+    .users-table tr:last-child td {
+      border-bottom: none;
+    }
+    .users-table tr:hover {
+      background: var(--vvp-bg);
+    }
+    .role-badge {
+      display: inline-block;
+      padding: 0.125rem 0.375rem;
+      margin: 0.125rem;
+      background: var(--vvp-primary-light, #e0e7ff);
+      color: var(--vvp-primary);
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+    .role-badge.org {
+      background: var(--vvp-success-light, #d1fae5);
+      color: var(--vvp-success);
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 0.125rem 0.375rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+    .status-badge.enabled {
+      background: var(--vvp-success-light, #d1fae5);
+      color: var(--vvp-success);
+    }
+    .status-badge.disabled {
+      background: var(--vvp-danger-bg, #fee2e2);
+      color: var(--vvp-danger);
+    }
+    .action-btn {
+      padding: 0.25rem 0.5rem;
+      font-size: 0.875rem;
+      margin-right: 0.25rem;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 3rem;
+      color: var(--vvp-text-muted);
+    }
+    .modal-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .modal-form label {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-weight: 500;
+    }
+    .modal-form input,
+    .modal-form select {
+      width: 100%;
+      padding: 0.5rem;
+      border: 1px solid var(--vvp-border);
+      border-radius: 4px;
+    }
+    .modal-form .checkbox-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .modal-form .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+    .modal-form .checkbox-label input {
+      width: auto;
+    }
+    .modal-buttons {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+      margin-top: 1rem;
+    }
+    .filter-bar {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .filter-bar select {
+      padding: 0.5rem;
+      border: 1px solid var(--vvp-border);
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-brand">
+      <img src="/static/ovc-logo.png" alt="OVC" class="ovc-logo">
+      <a href="/ui/" class="logo">
+        <span class="service-label">VVP</span>
+        Issuer
+      </a>
+    </div>
+    <nav class="nav-links">
+      <a href="/ui/identity">Identities</a>
+      <a href="/ui/registry">Registries</a>
+      <a href="/ui/schemas">Schemas</a>
+      <a href="/ui/credentials">Credentials</a>
+      <a href="/ui/dossier">Dossiers</a>
+      <a href="/ui/vvp">VVP</a>
+      <a href="/users/ui" class="active">Users</a>
+    </nav>
+    <div class="header-user" id="header-user"></div>
+  </header>
+
+  <main>
+    <div class="page-header">
+      <h1>User Management</h1>
+      <button class="primary" id="create-user-btn">Create User</button>
+    </div>
+
+    <div class="filter-bar" id="filter-bar" style="display: none;">
+      <select id="org-filter">
+        <option value="">All Organizations</option>
+      </select>
+      <label>
+        <input type="checkbox" id="show-disabled"> Show disabled users
+      </label>
+    </div>
+
+    <div class="users-table" id="users-container">
+      <div class="empty-state">Loading users...</div>
+    </div>
+  </main>
+
+  <script src="/static/shared.js"></script>
+  <script>
+    let currentUser = null;
+    let organizations = [];
+    let isSystemAdmin = false;
+
+    async function init() {
+      // Check auth and get current user
+      const session = await checkAuthStatus();
+      if (!session.authenticated) {
+        window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname);
+        return;
+      }
+
+      currentUser = session;
+      isSystemAdmin = session.roles.includes('issuer:admin');
+
+      // Load organizations if system admin
+      if (isSystemAdmin) {
+        await loadOrganizations();
+        document.getElementById('filter-bar').style.display = 'flex';
+      }
+
+      // Load users
+      await loadUsers();
+
+      // Set up event listeners
+      document.getElementById('create-user-btn').addEventListener('click', showCreateUserModal);
+      document.getElementById('org-filter').addEventListener('change', loadUsers);
+      document.getElementById('show-disabled').addEventListener('change', loadUsers);
+    }
+
+    async function loadOrganizations() {
+      try {
+        const response = await fetch('/organizations', {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          organizations = data.organizations || [];
+          renderOrgFilter();
+        }
+      } catch (err) {
+        console.error('Failed to load organizations:', err);
+      }
+    }
+
+    function renderOrgFilter() {
+      const select = document.getElementById('org-filter');
+      select.innerHTML = '<option value="">All Organizations</option>';
+      organizations.forEach(org => {
+        select.innerHTML += `<option value="${escapeHtml(org.id)}">${escapeHtml(org.name)}</option>`;
+      });
+    }
+
+    async function loadUsers() {
+      const container = document.getElementById('users-container');
+      const orgId = document.getElementById('org-filter')?.value || '';
+      const showDisabled = document.getElementById('show-disabled')?.checked || false;
+
+      let url = '/users?include_disabled=' + showDisabled;
+      if (orgId) {
+        url += '&organization_id=' + encodeURIComponent(orgId);
+      }
+
+      try {
+        const response = await fetch(url, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+
+        if (response.status === 403) {
+          container.innerHTML = '<div class="empty-state">You do not have permission to view users.</div>';
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error('Failed to load users');
+        }
+
+        const data = await response.json();
+        renderUsers(data.users || []);
+      } catch (err) {
+        container.innerHTML = `<div class="empty-state error">Error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function renderUsers(users) {
+      const container = document.getElementById('users-container');
+
+      if (users.length === 0) {
+        container.innerHTML = '<div class="empty-state">No users found.</div>';
+        return;
+      }
+
+      let html = `
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Organization</th>
+              <th>Roles</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      users.forEach(user => {
+        const systemRoles = user.system_roles || [];
+        const orgRoles = user.org_roles || [];
+
+        let rolesHtml = '';
+        systemRoles.forEach(role => {
+          rolesHtml += `<span class="role-badge">${escapeHtml(role)}</span>`;
+        });
+        orgRoles.forEach(role => {
+          rolesHtml += `<span class="role-badge org">${escapeHtml(role)}</span>`;
+        });
+
+        const statusClass = user.enabled ? 'enabled' : 'disabled';
+        const statusText = user.enabled ? 'Active' : 'Disabled';
+
+        html += `
+          <tr data-user-id="${escapeHtml(user.id)}">
+            <td>${escapeHtml(user.name)}${user.is_oauth_user ? ' <small>(OAuth)</small>' : ''}</td>
+            <td>${escapeHtml(user.email)}</td>
+            <td>${user.organization_name ? escapeHtml(user.organization_name) : '<em>None</em>'}</td>
+            <td>${rolesHtml || '<em>None</em>'}</td>
+            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+            <td>
+              <button class="action-btn secondary" onclick="editUser('${escapeHtml(user.id)}')">Edit</button>
+              ${isSystemAdmin && !user.is_oauth_user ? `<button class="action-btn" onclick="resetPassword('${escapeHtml(user.id)}')">Reset PW</button>` : ''}
+              ${isSystemAdmin ? `<button class="action-btn danger" onclick="deleteUser('${escapeHtml(user.id)}', '${escapeHtml(user.email)}')">Delete</button>` : ''}
+            </td>
+          </tr>
+        `;
+      });
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    }
+
+    function showCreateUserModal() {
+      let orgOptions = '<option value="">No Organization</option>';
+      organizations.forEach(org => {
+        orgOptions += `<option value="${escapeHtml(org.id)}">${escapeHtml(org.name)}</option>`;
+      });
+
+      const html = `
+        <form id="create-user-form" class="modal-form">
+          <div>
+            <label for="user-email">Email</label>
+            <input type="email" id="user-email" required>
+          </div>
+          <div>
+            <label for="user-name">Name</label>
+            <input type="text" id="user-name" required>
+          </div>
+          <div>
+            <label for="user-password">Password</label>
+            <input type="password" id="user-password" minlength="8" required>
+          </div>
+          ${isSystemAdmin ? `
+          <div>
+            <label for="user-org">Organization</label>
+            <select id="user-org">${orgOptions}</select>
+          </div>
+          <div>
+            <label>System Roles</label>
+            <div class="checkbox-group">
+              <label class="checkbox-label"><input type="checkbox" name="system_role" value="issuer:admin"> Admin</label>
+              <label class="checkbox-label"><input type="checkbox" name="system_role" value="issuer:operator"> Operator</label>
+              <label class="checkbox-label"><input type="checkbox" name="system_role" value="issuer:readonly" checked> Readonly</label>
+            </div>
+          </div>
+          ` : ''}
+          <div>
+            <label>Organization Roles</label>
+            <div class="checkbox-group">
+              <label class="checkbox-label"><input type="checkbox" name="org_role" value="org:administrator"> Administrator</label>
+              <label class="checkbox-label"><input type="checkbox" name="org_role" value="org:dossier_manager"> Dossier Manager</label>
+            </div>
+          </div>
+          <div class="modal-buttons">
+            <button type="button" class="secondary" onclick="closeModal(this)">Cancel</button>
+            <button type="submit" class="primary">Create User</button>
+          </div>
+        </form>
+      `;
+
+      showModal(html, { title: 'Create User' });
+
+      document.getElementById('create-user-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await createUser();
+      });
+    }
+
+    async function createUser() {
+      const email = document.getElementById('user-email').value;
+      const name = document.getElementById('user-name').value;
+      const password = document.getElementById('user-password').value;
+      const orgId = document.getElementById('user-org')?.value || null;
+
+      const systemRoles = Array.from(document.querySelectorAll('input[name="system_role"]:checked'))
+        .map(cb => cb.value);
+      const orgRoles = Array.from(document.querySelectorAll('input[name="org_role"]:checked'))
+        .map(cb => cb.value);
+
+      try {
+        const response = await fetch('/users', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: JSON.stringify({
+            email,
+            name,
+            password,
+            organization_id: orgId || undefined,
+            system_roles: systemRoles,
+            org_roles: orgRoles,
+          }),
+        });
+
+        if (response.ok) {
+          closeModal(document.querySelector('.modal-overlay'));
+          showToast('User created successfully', 'success');
+          loadUsers();
+        } else {
+          const data = await response.json();
+          showToast(data.detail || 'Failed to create user', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+      }
+    }
+
+    async function editUser(userId) {
+      try {
+        const response = await fetch(`/users/${userId}`, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        if (!response.ok) throw new Error('Failed to load user');
+        const user = await response.json();
+        showEditUserModal(user);
+      } catch (err) {
+        showToast('Error loading user: ' + err.message, 'error');
+      }
+    }
+
+    function showEditUserModal(user) {
+      let orgOptions = '<option value="">No Organization</option>';
+      organizations.forEach(org => {
+        const selected = org.id === user.organization_id ? 'selected' : '';
+        orgOptions += `<option value="${escapeHtml(org.id)}" ${selected}>${escapeHtml(org.name)}</option>`;
+      });
+
+      const systemRoles = user.system_roles || [];
+      const orgRoles = user.org_roles || [];
+
+      const html = `
+        <form id="edit-user-form" class="modal-form">
+          <div>
+            <label>Email</label>
+            <input type="email" value="${escapeHtml(user.email)}" disabled>
+          </div>
+          <div>
+            <label for="edit-user-name">Name</label>
+            <input type="text" id="edit-user-name" value="${escapeHtml(user.name)}" required>
+          </div>
+          ${isSystemAdmin ? `
+          <div>
+            <label for="edit-user-org">Organization</label>
+            <select id="edit-user-org">${orgOptions}</select>
+          </div>
+          <div>
+            <label>System Roles</label>
+            <div class="checkbox-group">
+              <label class="checkbox-label"><input type="checkbox" name="edit_system_role" value="issuer:admin" ${systemRoles.includes('issuer:admin') ? 'checked' : ''}> Admin</label>
+              <label class="checkbox-label"><input type="checkbox" name="edit_system_role" value="issuer:operator" ${systemRoles.includes('issuer:operator') ? 'checked' : ''}> Operator</label>
+              <label class="checkbox-label"><input type="checkbox" name="edit_system_role" value="issuer:readonly" ${systemRoles.includes('issuer:readonly') ? 'checked' : ''}> Readonly</label>
+            </div>
+          </div>
+          ` : ''}
+          <div>
+            <label>Organization Roles</label>
+            <div class="checkbox-group">
+              <label class="checkbox-label"><input type="checkbox" name="edit_org_role" value="org:administrator" ${orgRoles.includes('org:administrator') ? 'checked' : ''}> Administrator</label>
+              <label class="checkbox-label"><input type="checkbox" name="edit_org_role" value="org:dossier_manager" ${orgRoles.includes('org:dossier_manager') ? 'checked' : ''}> Dossier Manager</label>
+            </div>
+          </div>
+          <div>
+            <label class="checkbox-label">
+              <input type="checkbox" id="edit-user-enabled" ${user.enabled ? 'checked' : ''}> Enabled
+            </label>
+          </div>
+          <div class="modal-buttons">
+            <button type="button" class="secondary" onclick="closeModal(this)">Cancel</button>
+            <button type="submit" class="primary">Save Changes</button>
+          </div>
+        </form>
+      `;
+
+      showModal(html, { title: 'Edit User' });
+
+      document.getElementById('edit-user-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await updateUser(user.id);
+      });
+    }
+
+    async function updateUser(userId) {
+      const name = document.getElementById('edit-user-name').value;
+      const enabled = document.getElementById('edit-user-enabled').checked;
+      const orgId = document.getElementById('edit-user-org')?.value || null;
+
+      const systemRoles = Array.from(document.querySelectorAll('input[name="edit_system_role"]:checked'))
+        .map(cb => cb.value);
+      const orgRoles = Array.from(document.querySelectorAll('input[name="edit_org_role"]:checked'))
+        .map(cb => cb.value);
+
+      const body = { name, enabled };
+      if (isSystemAdmin) {
+        body.organization_id = orgId || null;
+        body.system_roles = systemRoles;
+      }
+      body.org_roles = orgRoles;
+
+      try {
+        const response = await fetch(`/users/${userId}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (response.ok) {
+          closeModal(document.querySelector('.modal-overlay'));
+          showToast('User updated successfully', 'success');
+          loadUsers();
+        } else {
+          const data = await response.json();
+          showToast(data.detail || 'Failed to update user', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+      }
+    }
+
+    async function resetPassword(userId) {
+      const newPassword = prompt('Enter new password (min 8 characters):');
+      if (!newPassword) return;
+      if (newPassword.length < 8) {
+        showToast('Password must be at least 8 characters', 'error');
+        return;
+      }
+
+      try {
+        const response = await fetch(`/users/${userId}/password`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: JSON.stringify({ new_password: newPassword }),
+        });
+
+        if (response.ok) {
+          showToast('Password reset successfully', 'success');
+        } else {
+          const data = await response.json();
+          showToast(data.detail || 'Failed to reset password', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+      }
+    }
+
+    async function deleteUser(userId, email) {
+      if (!confirm(`Are you sure you want to delete user "${email}"? This cannot be undone.`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/users/${userId}`, {
+          method: 'DELETE',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+
+        if (response.ok) {
+          showToast('User deleted successfully', 'success');
+          loadUsers();
+        } else {
+          const data = await response.json();
+          showToast(data.detail || 'Failed to delete user', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+      }
+    }
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      initNavigation();
+      init();
+    });
+  </script>
+</body>
+</html>

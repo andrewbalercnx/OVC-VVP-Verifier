@@ -40,6 +40,25 @@ DATABASE_DIR: Path = DATA_DIR / "databases"
 
 
 # =============================================================================
+# DATABASE CONFIGURATION (Sprint 41: Multi-tenancy)
+# =============================================================================
+
+DATABASE_URL: str = os.getenv(
+    "VVP_DATABASE_URL",
+    f"sqlite:///{DATA_DIR}/vvp_issuer.db"
+)
+
+
+# =============================================================================
+# MOCK vLEI CONFIGURATION (Sprint 41: Mock GLEIF/QVI Infrastructure)
+# =============================================================================
+
+MOCK_VLEI_ENABLED: bool = os.getenv("VVP_MOCK_VLEI_ENABLED", "true").lower() == "true"
+MOCK_GLEIF_NAME: str = os.getenv("VVP_MOCK_GLEIF_NAME", "mock-gleif")
+MOCK_QVI_NAME: str = os.getenv("VVP_MOCK_QVI_NAME", "mock-qvi")
+
+
+# =============================================================================
 # WITNESS CONFIGURATION
 # =============================================================================
 
@@ -265,5 +284,10 @@ def get_auth_exempt_paths() -> set[str]:
         exempt.add("/ui/credentials")
         exempt.add("/ui/dossier")
         exempt.add("/ui/admin")
+        # Sprint 41: User management routes (always accessible, auth checked in page)
+        exempt.add("/login")
+        exempt.add("/profile")
+        exempt.add("/users/ui")
+        exempt.add("/organizations/ui")
 
     return exempt

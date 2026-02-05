@@ -1,12 +1,14 @@
 """Dossier API endpoints for VVP Issuer.
 
+Sprint 41: Updated with organization scoping for multi-tenant isolation.
 Provides endpoints to build dossiers from credential chains.
 """
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 
 from app.api.models import (
     BuildDossierRequest,
@@ -15,7 +17,13 @@ from app.api.models import (
     ErrorResponse,
 )
 from app.auth.api_key import Principal
-from app.auth.roles import require_operator, require_readonly
+from app.auth.roles import (
+    require_auth,
+    check_credential_access_role,
+    check_credential_write_role,
+)
+from app.auth.scoping import can_access_credential, filter_credentials_by_org, validate_dossier_chain_access
+from app.db.session import get_db
 from app.dossier import DossierBuildError, DossierFormat, get_dossier_builder, serialize_dossier
 
 log = logging.getLogger(__name__)
@@ -28,19 +36,24 @@ router = APIRouter(prefix="/dossier", tags=["dossier"])
     responses={
         200: {"description": "Dossier built successfully"},
         400: {"model": ErrorResponse, "description": "Invalid request"},
+        403: {"model": ErrorResponse, "description": "Access denied to credential"},
         404: {"model": ErrorResponse, "description": "Credential not found"},
     },
 )
 async def build_dossier(
     body: BuildDossierRequest,
-    principal: Principal = require_operator,
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
 ) -> Response:
     """Build a dossier from a credential chain.
 
     Walks edge references to collect all credentials in the chain,
     then serializes in the requested format.
 
-    **Authentication:** Requires `issuer:operator` role or higher.
+    **Sprint 41:** Non-admin users can only build dossiers from credentials
+    owned by their organization.
+
+    **Authentication:** Requires `issuer:operator+` OR `org:dossier_manager+` role.
 
     **Formats:**
     - `cesr`: CESR stream with signature attachments (application/cesr)
@@ -49,6 +62,9 @@ async def build_dossier(
     **Note:** TEL events are only included in CESR format. JSON format
     contains credentials only; the verifier resolves TEL separately.
     """
+    # Sprint 41: Check role access (system operator+ OR org dossier_manager+)
+    check_credential_write_role(principal)
+
     # Validate format
     try:
         dossier_format = DossierFormat(body.format.lower())
@@ -57,6 +73,15 @@ async def build_dossier(
             status_code=400,
             detail=f"Invalid format: {body.format}. Use 'cesr' or 'json'.",
         )
+
+    # Sprint 41: Check access to root credential(s)
+    root_saids = body.root_saids if body.root_saids else ([body.root_said] if body.root_said else [])
+    for root_said in root_saids:
+        if not can_access_credential(db, principal, root_said):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied to credential {root_said[:16]}...",
+            )
 
     try:
         builder = await get_dossier_builder()
@@ -75,6 +100,21 @@ async def build_dossier(
             content = await builder.build(
                 root_said=root_said,
                 include_tel=body.include_tel,
+            )
+
+        # Sprint 41: Validate access to FULL chain, not just root credentials
+        # This prevents cross-tenant leakage via edge references
+        inaccessible = validate_dossier_chain_access(db, principal, content.credential_saids)
+        if inaccessible:
+            log.warning(
+                f"Dossier build blocked: {len(inaccessible)} inaccessible credentials in chain "
+                f"for principal {principal.key_id}"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied to {len(inaccessible)} credential(s) in chain: "
+                f"{', '.join(said[:16] + '...' for said in inaccessible[:3])}"
+                + (f" and {len(inaccessible) - 3} more" if len(inaccessible) > 3 else ""),
             )
 
         # Serialize to requested format
@@ -109,12 +149,14 @@ async def build_dossier(
     response_model=BuildDossierResponse,
     responses={
         400: {"model": ErrorResponse, "description": "Invalid request"},
+        403: {"model": ErrorResponse, "description": "Access denied to credential"},
         404: {"model": ErrorResponse, "description": "Credential not found"},
     },
 )
 async def build_dossier_info(
     body: BuildDossierRequest,
-    principal: Principal = require_operator,
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
 ) -> BuildDossierResponse:
     """Build a dossier and return metadata (no content).
 
@@ -122,8 +164,14 @@ async def build_dossier_info(
     instead of the raw content. Useful for previewing what a dossier
     would contain without downloading the full content.
 
-    **Authentication:** Requires `issuer:operator` role or higher.
+    **Sprint 41:** Non-admin users can only preview dossiers from credentials
+    owned by their organization.
+
+    **Authentication:** Requires `issuer:operator+` OR `org:dossier_manager+` role.
     """
+    # Sprint 41: Check role access (system operator+ OR org dossier_manager+)
+    check_credential_write_role(principal)
+
     try:
         dossier_format = DossierFormat(body.format.lower())
     except ValueError:
@@ -131,6 +179,15 @@ async def build_dossier_info(
             status_code=400,
             detail=f"Invalid format: {body.format}. Use 'cesr' or 'json'.",
         )
+
+    # Sprint 41: Check access to root credential(s)
+    root_saids = body.root_saids if body.root_saids else ([body.root_said] if body.root_said else [])
+    for root_said in root_saids:
+        if not can_access_credential(db, principal, root_said):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied to credential {root_said[:16]}...",
+            )
 
     try:
         builder = await get_dossier_builder()
@@ -148,6 +205,20 @@ async def build_dossier_info(
             content = await builder.build(
                 root_said=root_said,
                 include_tel=body.include_tel,
+            )
+
+        # Sprint 41: Validate access to FULL chain, not just root credentials
+        inaccessible = validate_dossier_chain_access(db, principal, content.credential_saids)
+        if inaccessible:
+            log.warning(
+                f"Dossier info blocked: {len(inaccessible)} inaccessible credentials in chain "
+                f"for principal {principal.key_id}"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied to {len(inaccessible)} credential(s) in chain: "
+                f"{', '.join(said[:16] + '...' for said in inaccessible[:3])}"
+                + (f" and {len(inaccessible) - 3} more" if len(inaccessible) > 3 else ""),
             )
 
         # Serialize to get size
@@ -179,6 +250,7 @@ async def build_dossier_info(
     "/{said}",
     responses={
         200: {"description": "Dossier content"},
+        403: {"model": ErrorResponse, "description": "Access denied to credential"},
         404: {"model": ErrorResponse, "description": "Credential not found"},
     },
 )
@@ -186,13 +258,21 @@ async def get_dossier(
     said: str,
     format: str = Query("cesr", description="Output format: cesr or json"),
     include_tel: bool = Query(True, description="Include TEL events (CESR only)"),
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
 ) -> Response:
     """Get a dossier by root credential SAID.
 
     Builds the dossier on-demand from the credential chain.
 
-    This endpoint is public (no auth required) for UI access.
+    **Sprint 41:** Non-admin users can only access dossiers from credentials
+    owned by their organization.
+
+    **Authentication:** Requires `issuer:readonly+` OR `org:dossier_manager+` role.
     """
+    # Sprint 41: Check role access (system readonly+ OR org dossier_manager+)
+    check_credential_access_role(principal)
+
     try:
         dossier_format = DossierFormat(format.lower())
     except ValueError:
@@ -201,9 +281,31 @@ async def get_dossier(
             detail=f"Invalid format: {format}. Use 'cesr' or 'json'.",
         )
 
+    # Sprint 41: Check access to root credential
+    if not can_access_credential(db, principal, said):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied to credential {said[:16]}...",
+        )
+
     try:
         builder = await get_dossier_builder()
         content = await builder.build(root_said=said, include_tel=include_tel)
+
+        # Sprint 41: Validate access to FULL chain, not just root credential
+        inaccessible = validate_dossier_chain_access(db, principal, content.credential_saids)
+        if inaccessible:
+            log.warning(
+                f"Dossier get blocked: {len(inaccessible)} inaccessible credentials in chain "
+                f"for principal {principal.key_id}"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied to {len(inaccessible)} credential(s) in chain: "
+                f"{', '.join(said[:16] + '...' for said in inaccessible[:3])}"
+                + (f" and {len(inaccessible) - 3} more" if len(inaccessible) > 3 else ""),
+            )
+
         data, content_type = serialize_dossier(content, dossier_format)
 
         # Return with caching headers per VVP spec

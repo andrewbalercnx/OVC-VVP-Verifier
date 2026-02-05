@@ -187,6 +187,7 @@ async function apiDelete(url) {
 
 /**
  * Current session state, populated by checkAuthStatus().
+ * Sprint 41: Added organization_id and organization_name for multi-tenancy.
  */
 let currentSession = {
   authenticated: false,
@@ -195,6 +196,8 @@ let currentSession = {
   name: null,
   roles: [],
   expiresAt: null,
+  organizationId: null,
+  organizationName: null,
 };
 
 /**
@@ -205,7 +208,7 @@ let loginModalPromise = null;
 
 /**
  * Check current authentication status from the server.
- * Updates currentSession state.
+ * Updates currentSession state including organization context.
  * @returns {Promise<Object>} Auth status
  */
 async function checkAuthStatus() {
@@ -220,6 +223,8 @@ async function checkAuthStatus() {
         name: data.name,
         roles: data.roles || [],
         expiresAt: data.expires_at,
+        organizationId: data.organization_id || null,
+        organizationName: data.organization_name || null,
       };
     }
   } catch (err) {
@@ -510,6 +515,8 @@ async function submitLoginFromModal(overlay) {
         name: result.name,
         roles: result.roles || [],
         expiresAt: result.expires_at,
+        organizationId: result.organization_id || null,
+        organizationName: result.organization_name || null,
       };
 
       // Clean up and resolve
@@ -546,6 +553,8 @@ async function logout() {
       name: null,
       roles: [],
       expiresAt: null,
+      organizationId: null,
+      organizationName: null,
     };
     showToast('Logged out', 'info');
     updateAuthUI();
@@ -556,13 +565,19 @@ async function logout() {
 
 /**
  * Update UI elements to reflect auth state.
+ * Sprint 41: Shows organization context in the header.
  */
 function updateAuthUI() {
   const authStatus = document.getElementById('auth-status');
   if (authStatus) {
     if (currentSession.authenticated) {
+      let userInfo = escapeHtml(currentSession.name || currentSession.keyId);
+      if (currentSession.organizationName) {
+        userInfo += ` <span class="auth-org">| ${escapeHtml(currentSession.organizationName)}</span>`;
+      }
       authStatus.innerHTML = `
-        <span class="auth-user">${escapeHtml(currentSession.name || currentSession.keyId)}</span>
+        <span class="auth-user">${userInfo}</span>
+        <a href="/profile" class="small secondary" style="margin-right:0.5rem">Profile</a>
         <button onclick="logout()" class="small secondary">Logout</button>
       `;
     } else {
@@ -571,6 +586,55 @@ function updateAuthUI() {
       `;
     }
   }
+
+  // Update role-based navigation visibility
+  updateNavVisibility();
+}
+
+/**
+ * Update navigation link visibility based on user roles.
+ * Sprint 41: Shows/hides Users and Organizations links based on permissions.
+ */
+function updateNavVisibility() {
+  const isSystemAdmin = currentSession.roles.includes('issuer:admin');
+  const isOrgAdmin = currentSession.roles.includes('org:administrator');
+
+  // Users link - visible to system admins and org admins
+  const usersLink = document.querySelector('a[href="/users/ui"]');
+  if (usersLink) {
+    usersLink.style.display = (isSystemAdmin || isOrgAdmin) ? '' : 'none';
+  }
+
+  // Organizations link - visible to system admins only
+  const orgsLink = document.querySelector('a[href="/organizations/ui"]');
+  if (orgsLink) {
+    orgsLink.style.display = isSystemAdmin ? '' : 'none';
+  }
+}
+
+/**
+ * Check if current user has a specific role.
+ * @param {string} role - Role to check
+ * @returns {boolean} True if user has the role
+ */
+function hasRole(role) {
+  return currentSession.roles.includes(role);
+}
+
+/**
+ * Check if current user is a system admin.
+ * @returns {boolean} True if user has issuer:admin role
+ */
+function isSystemAdmin() {
+  return hasRole('issuer:admin');
+}
+
+/**
+ * Check if current user is an organization admin.
+ * @returns {boolean} True if user has org:administrator role
+ */
+function isOrgAdmin() {
+  return hasRole('org:administrator');
 }
 
 /**

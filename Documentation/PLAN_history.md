@@ -7820,3 +7820,92 @@ vvp --help
 - 1: Validation failure
 - 2: Parse error
 - 3: I/O error
+
+---
+
+# Sprint 41: User Management & Mock vLEI Infrastructure
+
+**Completed:** 2026-02-05
+
+## Summary
+
+Add multi-tenant organization and user management with mock vLEI credential chain infrastructure. This enables organizations to be onboarded with pseudo-LEIs and Legal Entity credentials, while users belong to specific organizations with scoped access.
+
+## Key Design Decisions
+
+1. **Database**: SQLite + SQLAlchemy (simple deployment, can migrate to PostgreSQL later)
+2. **Hybrid Persistence**: Keep LMDB for KERI event logs, add SQLAlchemy for app metadata
+3. **Role Architecture**:
+   - System roles unchanged: `issuer:admin`, `issuer:operator`, `issuer:readonly`
+   - New org roles: `org:administrator`, `org:dossier_manager`
+   - **Canonical storage**: `user_org_roles` join table (no comma-separated strings)
+4. **Mock vLEI Chain**: GLEIF → QVI → Organization LE credentials
+5. **File-based Auth Fallback**: File-based users have NO organization membership and are treated as system-level principals only
+
+## Files Created
+
+```
+services/issuer/app/db/
+├── __init__.py
+├── models.py              # SQLAlchemy ORM models
+└── session.py             # Database session management
+
+services/issuer/app/org/
+├── __init__.py
+├── lei_generator.py       # Pseudo-LEI generation
+└── mock_vlei.py           # Mock GLEIF/QVI manager
+
+services/issuer/app/auth/
+├── db_users.py            # Database-backed user store
+├── org_roles.py           # Organization role authorization
+└── scoping.py             # Credential access scoping
+
+services/issuer/app/api/
+├── organization.py        # Organization CRUD
+├── org_api_key.py         # Org API key management
+└── user.py                # User management
+
+services/issuer/web/
+├── login.html             # Enhanced login page
+├── users.html             # User management UI
+├── organizations.html     # Organization management UI
+└── profile.html           # User profile page
+
+services/issuer/tests/
+└── test_sprint41_multitenancy.py  # 33 multi-tenant tests
+```
+
+## Files Modified
+
+- `services/issuer/app/auth/roles.py` - Added combined system/org role checks
+- `services/issuer/app/auth/api_key.py` - Added org API key verification
+- `services/issuer/app/api/auth.py` - Combined auth strategy (file + DB + org keys)
+- `services/issuer/app/api/credential.py` - Updated auth to allow org roles
+- `services/issuer/app/api/dossier.py` - Updated auth to allow org roles
+- `services/issuer/app/config.py` - Added database and mock vLEI config
+- `services/issuer/app/main.py` - Added DB init, mock vLEI init, new routes
+- `services/issuer/web/shared.js` - Updated with org context in navigation
+
+## Code Review Issues Addressed
+
+### First Review (5 issues)
+1. DB users wired into `/auth/login` with fallback
+2. Org API keys verified in middleware
+3. Dossier chain scoping validates full chain
+4. Org-role principals can access org-scoped endpoints
+5. Organization membership check implemented
+
+### Second Review (1 issue)
+- Org-only principals couldn't access credential/dossier APIs because endpoints required system roles
+- **Fix:** Added combined role checks (`check_credential_access_role`, `check_credential_write_role`, `check_credential_admin_role`) that accept EITHER system roles OR org roles
+
+## Test Results
+
+367 tests passed, 5 skipped (33 new multi-tenant tests)
+
+## Review Status
+
+- Plan Review: APPROVED
+- Code Review #1: CHANGES_REQUESTED (5 issues)
+- Code Review #2: CHANGES_REQUESTED (1 issue)
+- Code Review #3: APPROVED

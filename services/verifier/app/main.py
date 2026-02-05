@@ -894,8 +894,51 @@ async def ui_fetch_dossier(
                 latency_ms=fetch_latency,
                 cache_hit=False,
             ))
+            # Assign cached variable for chain revocation check below
+            cached = cached_dossier
 
         fetch_elapsed = time.time() - start_time
+
+        # Start background chain revocation check if not already done
+        # This runs asynchronously and updates the cache when complete
+        if cached and not cached.chain_revocation and not cached.chain_revocation_in_progress:
+            try:
+                from app.vvp.acdc.graph import build_credential_graph, build_all_credential_chains
+                from app.vvp.acdc import parse_acdc, ACDC
+
+                # Build simple credential graph for chain extraction
+                dossier_acdcs: Dict[str, ACDC] = {}
+                for node in nodes:
+                    try:
+                        acdc_dict = node.raw.copy() if node.raw else {}
+                        acdc_dict["d"] = node.said
+                        acdc_dict["i"] = node.issuer
+                        acdc_dict["s"] = node.schema
+                        if node.attributes:
+                            acdc_dict["a"] = node.attributes
+                        if node.edges:
+                            acdc_dict["e"] = node.edges
+                        acdc = parse_acdc(acdc_dict)
+                        dossier_acdcs[acdc.said] = acdc
+                    except Exception as e:
+                        log.debug(f"Skipping credential {node.said[:16]} for chain check: {e}")
+
+                if dossier_acdcs:
+                    graph = build_credential_graph(
+                        dossier_acdcs=dossier_acdcs,
+                        trusted_roots=set(TRUSTED_ROOT_AIDS),
+                    )
+                    chain_info = build_all_credential_chains(graph)
+
+                    # Start background task (fire-and-forget)
+                    await dossier_cache.start_background_revocation_check(
+                        url=evd_url,
+                        chain_info=chain_info,
+                        dossier_data=raw_text,
+                        oobi_url=kid_url if kid_url else None,
+                    )
+            except Exception as e:
+                log.warning(f"Failed to start background chain revocation check: {e}")
 
         # Note: nodes and signatures already populated from cache or fresh parse above
 
@@ -1114,6 +1157,7 @@ async def ui_fetch_dossier(
                 "credential_vms": credential_vms,
                 "dossier_vm": dossier_vm,  # Sprint 24: top-level view model
                 "acdcs": acdcs_for_graph,  # Keep for graph building
+                "evd_url": evd_url,  # For chain revocation polling
                 "kid_url": kid_url,
                 "dossier_stream": raw_text,
                 "raw_data": raw_text[:5000] if len(raw_text) > 5000 else raw_text,
@@ -1425,6 +1469,55 @@ async def ui_revocation_badge(
             "partials/revocation_badge.html",
             {"request": request, "revocation": revocation},
         )
+
+
+@app.get("/ui/revocation-status")
+async def ui_revocation_status(evd_url: str):
+    """Poll for chain revocation status of a cached dossier.
+
+    Returns JSON with the current state of the background chain revocation check.
+    UI can poll this endpoint to update revocation badges when the check completes.
+
+    Response states:
+    - pending: Background check is running
+    - complete: Check finished, results available
+    - not_cached: Dossier not in cache
+    - not_started: Dossier cached but no check started yet
+
+    Returns:
+        JSON with status and optional chain revocation results.
+    """
+    from app.vvp.keri.tel_client import CredentialStatus
+
+    cache = get_dossier_cache()
+    cached = await cache.get(evd_url)
+
+    if cached is None:
+        return {"status": "not_cached"}
+
+    if cached.chain_revocation_in_progress:
+        return {"status": "pending"}
+
+    if cached.chain_revocation:
+        result = cached.chain_revocation
+        return {
+            "status": "complete",
+            "chain_status": result.chain_status.value,
+            "revoked_credentials": result.revoked_credentials,
+            "credential_results": {
+                said: {
+                    "status": r.status.value,
+                    "source": r.source,
+                    "error": r.error,
+                }
+                for said, r in result.credential_results.items()
+            },
+            "check_complete": result.check_complete,
+            "errors": result.errors,
+            "checked_at": result.checked_at,
+        }
+
+    return {"status": "not_started"}
 
 
 @app.post("/ui/verify-result")

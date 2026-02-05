@@ -1,9 +1,13 @@
-"""Credential management endpoints."""
+"""Credential management endpoints.
+
+Sprint 41: Updated with organization scoping for multi-tenant isolation.
+"""
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from keri.kering import LikelyDuplicitousError, ValidationError
+from sqlalchemy.orm import Session
 
 from app.api.models import (
     DeleteResponse,
@@ -17,9 +21,20 @@ from app.api.models import (
     WitnessPublishResult,
 )
 from app.auth.api_key import Principal
-from app.auth.roles import require_admin, require_operator, require_readonly
+from app.auth.roles import (
+    require_auth,
+    check_credential_access_role,
+    check_credential_write_role,
+    check_credential_admin_role,
+)
+from app.auth.scoping import (
+    can_access_credential,
+    get_org_credentials,
+    register_credential,
+)
 from app.audit import get_audit_logger
 from app.config import WITNESS_IURLS
+from app.db.session import get_db
 from app.keri.issuer import get_credential_issuer
 from app.keri.witness import get_witness_publisher
 
@@ -31,15 +46,23 @@ router = APIRouter(prefix="/credential", tags=["credential"])
 async def issue_credential(
     request: IssueCredentialRequest,
     http_request: Request,
-    principal: Principal = require_operator,
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
 ) -> IssueCredentialResponse:
     """Issue a new ACDC credential.
 
     Creates a credential, generates TEL issuance event, and optionally
     publishes to witnesses.
 
-    Requires: issuer:operator role
+    **Sprint 41:** If the principal has an organization, the credential is
+    registered as managed by that organization. System admins issuing without
+    an organization create unmanaged credentials.
+
+    Requires: issuer:operator+ OR org:dossier_manager+ role
     """
+    # Sprint 41: Check role access (system operator+ OR org dossier_manager+)
+    check_credential_write_role(principal)
+
     issuer = await get_credential_issuer()
     audit = get_audit_logger()
 
@@ -54,6 +77,21 @@ async def issue_credential(
             rules=request.rules,
             private=request.private,
         )
+
+        # Sprint 41: Register credential with organization if principal has one
+        managed = False
+        if principal.organization_id:
+            register_credential(
+                db=db,
+                credential_said=cred_info.said,
+                organization_id=principal.organization_id,
+                schema_said=request.schema_said,
+                issuer_aid=cred_info.issuer_aid,
+            )
+            managed = True
+            log.info(
+                f"Credential {cred_info.said[:16]}... registered to org {principal.organization_id[:8]}..."
+            )
 
         # Publish anchoring IXN event to witnesses
         publish_results: list[WitnessPublishResult] | None = None
@@ -90,6 +128,8 @@ async def issue_credential(
                 "registry_name": request.registry_name,
                 "schema_said": request.schema_said,
                 "recipient_aid": request.recipient_aid,
+                "organization_id": principal.organization_id,
+                "managed": managed,
             },
             request=http_request,
         )
@@ -119,18 +159,36 @@ async def issue_credential(
 async def list_credentials(
     registry_key: Optional[str] = None,
     status: Optional[str] = None,
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
 ) -> CredentialListResponse:
     """List issued credentials with optional filtering.
 
-    This endpoint is public (no auth required) for UI access.
+    **Sprint 41:** Non-admin users only see credentials owned by their organization.
+    System admins can see all credentials.
+
+    Requires: issuer:readonly+ OR org:dossier_manager+ role
     """
+    # Sprint 41: Check role access (system readonly+ OR org dossier_manager+)
+    check_credential_access_role(principal)
+
     issuer = await get_credential_issuer()
 
     try:
-        credentials = await issuer.list_credentials(
+        # Get all credentials from KERI
+        all_credentials = await issuer.list_credentials(
             registry_key=registry_key,
             status=status,
         )
+
+        # Sprint 41: Filter by organization unless admin
+        if principal.is_system_admin:
+            credentials = all_credentials
+        else:
+            # Get SAIDs of credentials the principal can access
+            org_managed = get_org_credentials(db, principal)
+            accessible_saids = {m.said for m in org_managed}
+            credentials = [c for c in all_credentials if c.said in accessible_saids]
 
         return CredentialListResponse(
             credentials=[
@@ -154,11 +212,20 @@ async def list_credentials(
 
 
 @router.get("/{said}", response_model=CredentialDetailResponse)
-async def get_credential(said: str) -> CredentialDetailResponse:
+async def get_credential(
+    said: str,
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
+) -> CredentialDetailResponse:
     """Get credential details by SAID.
 
-    This endpoint is public (no auth required) for UI access.
+    **Sprint 41:** Non-admin users can only access credentials owned by their organization.
+
+    Requires: issuer:readonly+ OR org:dossier_manager+ role
     """
+    # Sprint 41: Check role access (system readonly+ OR org dossier_manager+)
+    check_credential_access_role(principal)
+
     issuer = await get_credential_issuer()
 
     try:
@@ -166,6 +233,13 @@ async def get_credential(said: str) -> CredentialDetailResponse:
 
         if cred_info is None:
             raise HTTPException(status_code=404, detail=f"Credential not found: {said}")
+
+        # Sprint 41: Check organization access
+        if not can_access_credential(db, principal, said):
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied to this credential",
+            )
 
         return CredentialDetailResponse(
             said=cred_info.said,
@@ -192,16 +266,29 @@ async def revoke_credential(
     said: str,
     request: RevokeCredentialRequest,
     http_request: Request,
-    principal: Principal = require_admin,
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
 ) -> RevokeCredentialResponse:
     """Revoke an issued credential.
 
     Creates TEL revocation event and updates credential status.
 
-    Requires: issuer:admin role
+    **Sprint 41:** Non-admin users can only revoke credentials owned by their organization.
+
+    Requires: issuer:admin OR org:administrator role
     """
+    # Sprint 41: Check role access (system admin OR org administrator)
+    check_credential_admin_role(principal)
+
     issuer = await get_credential_issuer()
     audit = get_audit_logger()
+
+    # Sprint 41: Check organization access
+    if not can_access_credential(db, principal, said):
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied to this credential",
+        )
 
     try:
         cred_info = await issuer.revoke_credential(said)
@@ -273,7 +360,8 @@ async def revoke_credential(
 async def delete_credential(
     said: str,
     http_request: Request,
-    principal: Principal = require_admin,
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
 ) -> DeleteResponse:
     """Delete a credential from local storage.
 
@@ -281,8 +369,13 @@ async def delete_credential(
     and its TEL events still exist in the KERI ecosystem and cannot be
     truly deleted from the global state.
 
-    Requires: issuer:admin role
+    **Sprint 41:** Non-admin users can only delete credentials owned by their organization.
+
+    Requires: issuer:admin OR org:administrator role
     """
+    # Sprint 41: Check role access (system admin OR org administrator)
+    check_credential_admin_role(principal)
+
     issuer = await get_credential_issuer()
     audit = get_audit_logger()
 
@@ -291,6 +384,13 @@ async def delete_credential(
         cred_info = await issuer.get_credential(said)
         if cred_info is None:
             raise HTTPException(status_code=404, detail=f"Credential not found: {said}")
+
+        # Sprint 41: Check organization access
+        if not can_access_credential(db, principal, said):
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied to this credential",
+            )
 
         # Delete the credential
         await issuer.delete_credential(said)

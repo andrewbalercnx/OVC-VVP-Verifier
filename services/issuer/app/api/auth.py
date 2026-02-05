@@ -18,7 +18,8 @@ from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from app.auth.api_key import Principal, get_api_key_store
+from app.auth.api_key import Principal, get_api_key_store, verify_org_api_key
+from app.auth.db_users import get_db_user_store
 from app.auth.oauth import (
     OAuthError,
     OAuthState,
@@ -50,6 +51,8 @@ from app.config import (
     SESSION_COOKIE_SECURE,
     SESSION_TTL_SECONDS,
 )
+from app.db.session import get_db_session
+from app.db.models import Organization
 
 log = logging.getLogger(__name__)
 
@@ -79,17 +82,25 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    """Successful login response."""
+    """Successful login response.
+
+    Sprint 41: Added organization_id and organization_name for multi-tenancy.
+    """
 
     success: bool = Field(..., description="Whether login succeeded")
     key_id: Optional[str] = Field(None, description="API key identifier")
     name: Optional[str] = Field(None, description="Human-readable name")
     roles: list[str] = Field(default_factory=list, description="Assigned roles")
     expires_at: Optional[str] = Field(None, description="Session expiry (ISO8601)")
+    organization_id: Optional[str] = Field(None, description="Organization UUID")
+    organization_name: Optional[str] = Field(None, description="Organization name")
 
 
 class AuthStatusResponse(BaseModel):
-    """Current authentication status."""
+    """Current authentication status.
+
+    Sprint 41: Added organization_id and organization_name for multi-tenancy.
+    """
 
     authenticated: bool = Field(..., description="Whether currently authenticated")
     method: Optional[str] = Field(
@@ -101,6 +112,8 @@ class AuthStatusResponse(BaseModel):
     expires_at: Optional[str] = Field(
         None, description="Session expiry (ISO8601), null for API key auth"
     )
+    organization_id: Optional[str] = Field(None, description="Organization UUID")
+    organization_name: Optional[str] = Field(None, description="Organization name")
 
 
 class LogoutResponse(BaseModel):
@@ -173,6 +186,29 @@ def _get_client_ip(request: Request) -> str:
     return "unknown"
 
 
+def _get_organization_name(organization_id: str | None) -> str | None:
+    """Get organization name from database.
+
+    Sprint 41: Helper to enrich auth responses with org name.
+
+    Args:
+        organization_id: Organization UUID or None
+
+    Returns:
+        Organization name or None if not found
+    """
+    if not organization_id:
+        return None
+
+    try:
+        with get_db_session() as db:
+            org = db.query(Organization).filter(Organization.id == organization_id).first()
+            return org.name if org else None
+    except Exception as e:
+        log.warning(f"Failed to get organization name: {e}")
+        return None
+
+
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
@@ -222,15 +258,34 @@ async def login(
     auth_method = None
 
     if login_req.api_key:
-        # API key authentication
+        # API key authentication - try file-based first, then org API keys
         auth_method = "api_key"
         store = get_api_key_store()
         principal, error = store.verify(login_req.api_key)
+
+        # Sprint 41: If not found in file-based store, try org API keys
+        if principal is None and error == "invalid":
+            principal, error = verify_org_api_key(login_req.api_key)
+            if principal:
+                auth_method = "org_api_key"
+
     elif login_req.email and login_req.password:
-        # User authentication
+        # User authentication - try file-based first, then database users
         auth_method = "user"
         user_store = get_user_store()
         principal, error = user_store.verify(login_req.email, login_req.password)
+
+        # Sprint 41: If not found in file-based store, try database users
+        if principal is None and error == "invalid":
+            try:
+                with get_db_session() as db:
+                    db_user_store = get_db_user_store()
+                    principal, error = db_user_store.verify(db, login_req.email, login_req.password)
+                    if principal:
+                        auth_method = "db_user"
+            except Exception as e:
+                # DB not available (e.g., during testing), keep original error
+                log.debug(f"DB user fallback failed: {e}")
     else:
         # Neither api_key nor email/password provided
         error = "invalid"
@@ -300,12 +355,17 @@ async def login(
 
     log.info(f"Login successful for {principal.key_id} from {client_ip}")
 
+    # Sprint 41: Get organization name for response
+    org_name = _get_organization_name(principal.organization_id)
+
     return LoginResponse(
         success=True,
         key_id=principal.key_id,
         name=principal.name,
         roles=list(principal.roles),
         expires_at=session.expires_at.isoformat(),
+        organization_id=principal.organization_id,
+        organization_name=org_name,
     )
 
 
@@ -364,6 +424,8 @@ async def auth_status(request: Request) -> AuthStatusResponse:
         session_store = get_session_store()
         session = await session_store.get(session_id)
         if session:
+            # Sprint 41: Get organization name
+            org_name = _get_organization_name(session.principal.organization_id)
             return AuthStatusResponse(
                 authenticated=True,
                 method="session",
@@ -371,6 +433,8 @@ async def auth_status(request: Request) -> AuthStatusResponse:
                 name=session.principal.name,
                 roles=list(session.principal.roles),
                 expires_at=session.expires_at.isoformat(),
+                organization_id=session.principal.organization_id,
+                organization_name=org_name,
             )
 
     # Check API key header
@@ -378,7 +442,14 @@ async def auth_status(request: Request) -> AuthStatusResponse:
     if api_key:
         store = get_api_key_store()
         principal, error = store.verify(api_key)
+
+        # Sprint 41: If not found in file-based store, try org API keys
+        if principal is None and error == "invalid":
+            principal, error = verify_org_api_key(api_key)
+
         if principal:
+            # Sprint 41: Get organization name
+            org_name = _get_organization_name(principal.organization_id)
             return AuthStatusResponse(
                 authenticated=True,
                 method="api_key",
@@ -386,6 +457,8 @@ async def auth_status(request: Request) -> AuthStatusResponse:
                 name=principal.name,
                 roles=list(principal.roles),
                 expires_at=None,  # API keys don't expire per-request
+                organization_id=principal.organization_id,
+                organization_name=org_name,
             )
 
     # Not authenticated
@@ -396,6 +469,8 @@ async def auth_status(request: Request) -> AuthStatusResponse:
         name=None,
         roles=[],
         expires_at=None,
+        organization_id=None,
+        organization_name=None,
     )
 
 
@@ -673,13 +748,23 @@ async def oauth_m365_callback(
             )
             return error_redirect("Email domain not allowed", oauth_state.redirect_after)
 
-        # Map email to VVP user
+        # Map email to VVP user - try file-based first, then database
         user_store = get_user_store()
         user = user_store.get_user(user_info.email)
+        is_db_user = False
+        db_user_record = None
 
+        # Sprint 41: If not found in file-based store, try database
         if user is None:
+            with get_db_session() as db:
+                db_user_store = get_db_user_store()
+                db_user_record = db_user_store.get_user_by_email(db, user_info.email)
+                if db_user_record:
+                    is_db_user = True
+
+        if user is None and db_user_record is None:
             if OAUTH_M365_AUTO_PROVISION:
-                # Auto-provision new user
+                # Auto-provision new user to file-based store
                 user = user_store.create_user(
                     email=user_info.email,
                     name=user_info.name,
@@ -699,7 +784,18 @@ async def oauth_m365_callback(
                 )
                 return error_redirect("User not registered", oauth_state.redirect_after)
 
-        if not user.enabled:
+        # Check enabled status
+        if is_db_user:
+            if not db_user_record.enabled:
+                audit.log_access(
+                    action="oauth.m365.callback",
+                    principal_id=f"user:{user_info.email}",
+                    status="denied",
+                    details={"reason": "user_disabled"},
+                    request=request,
+                )
+                return error_redirect("Account disabled", oauth_state.redirect_after)
+        elif user and not user.enabled:
             audit.log_access(
                 action="oauth.m365.callback",
                 principal_id=f"user:{user_info.email}",
@@ -710,11 +806,16 @@ async def oauth_m365_callback(
             return error_redirect("Account disabled", oauth_state.redirect_after)
 
         # Create principal and session
-        principal = Principal(
-            key_id=f"user:{user.email}",
-            name=user.name,
-            roles=user.roles,
-        )
+        if is_db_user:
+            with get_db_session() as db:
+                db_user_store = get_db_user_store()
+                principal = db_user_store.get_principal_for_user(db, db_user_record)
+        else:
+            principal = Principal(
+                key_id=f"user:{user.email}",
+                name=user.name,
+                roles=user.roles,
+            )
 
         session_store = get_session_store()
         session = await session_store.create(principal, SESSION_TTL_SECONDS)
