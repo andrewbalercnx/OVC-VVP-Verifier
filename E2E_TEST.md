@@ -2,6 +2,23 @@
 
 This document provides a detailed step-by-step guide for validating the complete VVP (Verified Voice Protocol) system from infrastructure setup through to verified calls.
 
+## System Configuration
+
+### Configured Extensions and Phone Numbers
+
+| Extension | Phone Number (E.164) | Description |
+|-----------|---------------------|-------------|
+| 1001 | +441923311000 | Test extension 1 |
+| 1006 | +441923311006 | Test extension 2 |
+
+These phone numbers should be used when:
+- Creating TN Allocation credentials
+- Creating TN mappings
+- Setting caller ID for outbound calls
+- Testing call flows between extensions
+
+---
+
 ## Prerequisites
 
 Before starting, ensure you have:
@@ -167,9 +184,13 @@ API Key Value: _______________________
      - `i`: Organization's AID (should auto-populate)
      - `numbers`: Enter the phone numbers in JSON format:
        ```json
-       {"tn": ["+15551234567"]}
+       {"tn": ["+441923311000", "+441923311006"]}
        ```
        (Use E.164 format with country code)
+
+       **Current system phone numbers:**
+       - Extension 1001: `+441923311000`
+       - Extension 1006: `+441923311006`
    - **Edges**: Add edge to the LE credential (links TN to Legal Entity)
 3. Click **"Issue Credential"**
 
@@ -209,7 +230,7 @@ Credential Count:   _______________________
 1. Navigate to **TN Mappings** (`/ui/tn-mappings`)
 2. Click **"Create TN Mapping"**
 3. Fill in:
-   - **Telephone Number**: E.164 format (e.g., `+15551234567`)
+   - **Telephone Number**: E.164 format (e.g., `+441923311000`)
    - **Dossier**: Select from dropdown (shows by root SAID)
    - **Signing Identity**: Select organization's KERI identity
 4. Click **"Create Mapping"**
@@ -234,7 +255,7 @@ Before configuring the PBX, verify the TN mapping works:
 ```
 TN Lookup Successful
 -------------------
-TN:           +15551234567
+TN:           +441923311000
 Organization: Acme Corporation Test
 Dossier SAID: EHlVXUJ-dYKqtPdvztdCFJEbkyr6zX2dX12hwdE9x8ey
 Identity:     acme-signer
@@ -270,7 +291,7 @@ Add or update the gateway configuration to include the API key header:
     <action application="set" data="sip_h_X-VVP-API-Key=YOUR_API_KEY_HERE"/>
 
     <!-- Set originating caller ID to a mapped TN -->
-    <action application="set" data="effective_caller_id_number=+15551234567"/>
+    <action application="set" data="effective_caller_id_number=+441923311000"/>
 
     <!-- Route through VVP redirect gateway -->
     <action application="bridge" data="sofia/gateway/vvp-redirect/$1"/>
@@ -315,7 +336,7 @@ Ensure the inbound dialplan processes VVP headers:
 
 1. Open `https://pbx.rcnx.io/app/vvp-phone/sip-phone.html`
 2. Enter credentials:
-   - **Extension**: e.g., `1001`
+   - **Extension**: `1001` (phone: +441923311000) or `1006` (phone: +441923311006)
    - **Password**: (configured password)
    - **Server**: `pbx.rcnx.io`
 3. Click **Register**
@@ -324,19 +345,29 @@ Ensure the inbound dialplan processes VVP headers:
 - Status shows "Registered"
 - Phone is ready to receive calls
 
+**Test scenario:** Register as extension 1006 to receive calls from 1001.
+
 ### 5.2 Make Test Call via CLI
 
 From the PBX, originate a test call:
 
 ```bash
-# Basic test call
-fs_cli -x "originate {sip_h_X-VVP-API-Key=YOUR_API_KEY,origination_caller_id_number=+15551234567}sofia/gateway/vvp-redirect/+15559876543 &park()"
+# Call from extension 1001 (+441923311000) to extension 1006 (+441923311006)
+fs_cli -x "originate {sip_h_X-VVP-API-Key=YOUR_API_KEY,origination_caller_id_number=+441923311000}sofia/gateway/vvp-redirect/+441923311006 &park()"
+
+# Or call in the other direction (1006 -> 1001)
+fs_cli -x "originate {sip_h_X-VVP-API-Key=YOUR_API_KEY,origination_caller_id_number=+441923311006}sofia/gateway/vvp-redirect/+441923311000 &park()"
 ```
 
 **Parameters explained:**
 - `sip_h_X-VVP-API-Key`: API key for authentication
-- `origination_caller_id_number`: **MUST match** a TN in your TN mappings
-- `+15559876543`: Destination number
+- `origination_caller_id_number`: **MUST match** a TN in your TN mappings (+441923311000 or +441923311006)
+- Destination: The other extension's phone number
+
+**Test scenario:**
+1. Register WebRTC client as extension 1006
+2. Originate call with caller ID +441923311000 (extension 1001's number)
+3. Call routes through VVP redirect and arrives at extension 1006 with VVP attestation
 
 ### 5.3 Verify SIP Redirect Response
 
@@ -346,8 +377,8 @@ Check the SIP trace for the 302 redirect:
 # Watch SIP messages in real-time
 fs_cli -x "sofia global siptrace on"
 
-# Make the test call
-fs_cli -x "originate {sip_h_X-VVP-API-Key=YOUR_API_KEY,origination_caller_id_number=+15551234567}sofia/gateway/vvp-redirect/1001 &park()"
+# Make the test call (1001 calling 1006)
+fs_cli -x "originate {sip_h_X-VVP-API-Key=YOUR_API_KEY,origination_caller_id_number=+441923311000}sofia/gateway/vvp-redirect/+441923311006 &park()"
 
 # Stop tracing
 fs_cli -x "sofia global siptrace off"
@@ -461,7 +492,7 @@ journalctl -u vvp-sip-redirect | grep "auth.failure"
 
 ### 7.2 SIP Redirect Returns 404 Not Found
 
-**Symptom:** Call fails with "No mapping for +15551234567"
+**Symptom:** Call fails with "No mapping for +441923311000"
 
 **Check:**
 1. Caller ID (`origination_caller_id_number`) matches a TN mapping
