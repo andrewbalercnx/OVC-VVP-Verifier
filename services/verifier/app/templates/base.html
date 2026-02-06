@@ -681,6 +681,74 @@
         .witness-list li:last-child {
             border-bottom: none;
         }
+
+        /* ====================================================================
+           Tabbed Interface (pure CSS tabs)
+           ==================================================================== */
+        .tabs-container {
+            position: relative;
+        }
+        .tabs-container > input[type="radio"] {
+            display: none;
+        }
+        .tab-labels {
+            display: flex;
+            gap: 0.25rem;
+            border-bottom: 2px solid var(--vvp-muted);
+            margin-bottom: 0;
+        }
+        .tab-labels label {
+            padding: 0.75rem 1.25rem;
+            cursor: pointer;
+            border-radius: 0.375rem 0.375rem 0 0;
+            background: var(--vvp-surface, #f8f9fa);
+            border: 1px solid transparent;
+            border-bottom: none;
+            margin-bottom: -2px;
+            font-weight: 500;
+            transition: background 0.15s ease;
+        }
+        .tab-labels label:hover {
+            background: #e9ecef;
+        }
+        .tab-panel {
+            display: none;
+            padding: 1.25rem;
+            border: 1px solid #dee2e6;
+            border-top: none;
+            border-radius: 0 0 0.375rem 0.375rem;
+            background: white;
+        }
+        /* Active tab styling */
+        #tab-jwt:checked ~ .tab-labels label[for="tab-jwt"],
+        #tab-sip:checked ~ .tab-labels label[for="tab-sip"],
+        #tab-said:checked ~ .tab-labels label[for="tab-said"] {
+            background: white;
+            border-color: var(--vvp-muted);
+            border-bottom-color: white;
+            font-weight: 600;
+            color: var(--vvp-info);
+        }
+        /* Show active panel */
+        #tab-jwt:checked ~ #panel-jwt,
+        #tab-sip:checked ~ #panel-sip,
+        #tab-said:checked ~ #panel-said {
+            display: block;
+        }
+        .tab-panel .options-row {
+            margin: 0.75rem 0;
+            padding: 0.5rem 0.75rem;
+            background: var(--vvp-surface, #f8f9fa);
+            border-radius: 0.25rem;
+        }
+        .tab-panel .options-row label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin: 0;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
     </style>
 
     {% block head %}{% endblock %}
@@ -699,8 +767,7 @@
                 <nav class="nav-links">
                     <a href="/">Home</a>
                     <a href="/verify">Verify</a>
-                    <a href="/verify/simple">Quick Verify</a>
-                    <a href="/verify/full">Explorer</a>
+                    <a href="/verify/explore">Explorer</a>
                     <a href="/ui/admin">Admin</a>
                     <a href="https://vvp-issuer.rcnx.io" class="issuer-link" target="_blank">Issuer ↗</a>
                     <button class="help-btn" onclick="showVerifierHelp()">? Help</button>

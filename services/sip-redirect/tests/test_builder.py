@@ -1,0 +1,190 @@
+"""Tests for SIP response builder.
+
+Sprint 42: Tests for SIP response building with RFC 3261 compliance.
+"""
+
+import pytest
+
+from app.sip.models import SIPRequest, SIPResponse
+from app.sip.builder import (
+    build_302_redirect,
+    build_401_unauthorized,
+    build_403_forbidden,
+    build_404_not_found,
+    build_500_error,
+)
+
+
+@pytest.fixture
+def sample_request():
+    """Create a sample SIP INVITE request."""
+    return SIPRequest(
+        method="INVITE",
+        request_uri="sip:+14445678901@carrier.com",
+        sip_version="SIP/2.0",
+        via=["SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bK776asdhds"],
+        from_header="<sip:+15551234567@enterprise.com>;tag=1928301774",
+        to_header="<sip:+14445678901@carrier.com>",
+        call_id="a84b4c76e66710@enterprise.com",
+        cseq="314159 INVITE",
+        from_tn="+15551234567",
+        to_tn="+14445678901",
+        vvp_api_key="test-api-key",
+    )
+
+
+class TestBuild302Redirect:
+    """Test 302 Moved Temporarily response builder."""
+
+    def test_basic_redirect(self, sample_request):
+        """Test basic 302 redirect response."""
+        response = build_302_redirect(
+            request=sample_request,
+            contact_uri="sip:+14445678901@carrier.com",
+            vvp_identity="base64url-identity",
+            vvp_passport="eyJhbGciOiJFZERTQSJ9...",
+            vvp_status="VALID",
+        )
+
+        assert response.status_code == 302
+        assert response.reason_phrase == "Moved Temporarily"
+        assert response.vvp_identity == "base64url-identity"
+        assert response.vvp_passport == "eyJhbGciOiJFZERTQSJ9..."
+        assert response.vvp_status == "VALID"
+
+    def test_copies_transaction_headers(self, sample_request):
+        """Test that transaction headers are copied from request."""
+        response = build_302_redirect(
+            request=sample_request,
+            contact_uri="sip:+14445678901@carrier.com",
+            vvp_identity="identity",
+            vvp_passport="passport",
+        )
+
+        # Via should be copied exactly
+        assert response.via == sample_request.via
+        # From should be copied exactly
+        assert response.from_header == sample_request.from_header
+        # To should have tag added
+        assert sample_request.to_header in response.to_header
+        assert ";tag=" in response.to_header
+        # Call-ID and CSeq should match
+        assert response.call_id == sample_request.call_id
+        assert response.cseq == sample_request.cseq
+
+    def test_includes_brand_info(self, sample_request):
+        """Test brand info is included in response."""
+        response = build_302_redirect(
+            request=sample_request,
+            contact_uri="sip:+14445678901@carrier.com",
+            vvp_identity="identity",
+            vvp_passport="passport",
+            brand_name="Test Corp",
+            brand_logo_url="https://example.com/logo.png",
+        )
+
+        assert response.brand_name == "Test Corp"
+        assert response.brand_logo_url == "https://example.com/logo.png"
+
+    def test_serialization(self, sample_request):
+        """Test response serializes correctly."""
+        response = build_302_redirect(
+            request=sample_request,
+            contact_uri="sip:+14445678901@carrier.com",
+            vvp_identity="test-identity",
+            vvp_passport="test-passport",
+            vvp_status="VALID",
+            brand_name="Test Corp",
+        )
+
+        data = response.to_bytes()
+        text = data.decode("utf-8")
+
+        # Check status line
+        assert text.startswith("SIP/2.0 302 Moved Temporarily\r\n")
+        # Check required headers
+        assert "Via: SIP/2.0/UDP 192.168.1.1:5060" in text
+        assert "From: <sip:+15551234567@enterprise.com>" in text
+        assert "To: <sip:+14445678901@carrier.com>" in text
+        assert "Call-ID: a84b4c76e66710@enterprise.com\r\n" in text
+        assert "CSeq: 314159 INVITE\r\n" in text
+        # Check VVP headers
+        assert "P-VVP-Identity: test-identity\r\n" in text
+        assert "P-VVP-Passport: test-passport\r\n" in text
+        assert "X-VVP-Status: VALID\r\n" in text
+        assert "X-VVP-Brand-Name: Test Corp\r\n" in text
+
+
+class TestBuild401Unauthorized:
+    """Test 401 Unauthorized response builder."""
+
+    def test_unauthorized_response(self, sample_request):
+        """Test 401 response with error reason."""
+        response = build_401_unauthorized(
+            request=sample_request,
+            reason="Invalid API key",
+        )
+
+        assert response.status_code == 401
+        assert response.reason_phrase == "Unauthorized"
+        assert response.vvp_status == "INVALID"
+        assert response.error_reason == "Invalid API key"
+
+    def test_copies_headers(self, sample_request):
+        """Test transaction headers are copied."""
+        response = build_401_unauthorized(sample_request, "test")
+
+        assert response.via == sample_request.via
+        assert response.call_id == sample_request.call_id
+        assert response.cseq == sample_request.cseq
+
+
+class TestBuild403Forbidden:
+    """Test 403 Forbidden response builder."""
+
+    def test_forbidden_response(self, sample_request):
+        """Test 403 response."""
+        response = build_403_forbidden(
+            request=sample_request,
+            reason="Rate limit exceeded",
+        )
+
+        assert response.status_code == 403
+        assert response.reason_phrase == "Forbidden"
+        assert response.vvp_status == "INVALID"
+
+
+class TestBuild404NotFound:
+    """Test 404 Not Found response builder."""
+
+    def test_not_found_response(self, sample_request):
+        """Test 404 response."""
+        response = build_404_not_found(
+            request=sample_request,
+            reason="No mapping for TN",
+        )
+
+        assert response.status_code == 404
+        assert response.reason_phrase == "Not Found"
+        assert response.vvp_status == "INVALID"
+
+
+class TestBuild500Error:
+    """Test 500 Server Internal Error response builder."""
+
+    def test_error_response(self, sample_request):
+        """Test 500 response with INDETERMINATE status."""
+        response = build_500_error(
+            request=sample_request,
+            reason="Database connection failed",
+        )
+
+        assert response.status_code == 500
+        assert response.reason_phrase == "Server Internal Error"
+        assert response.vvp_status == "INDETERMINATE"
+
+    def test_always_includes_vvp_status(self, sample_request):
+        """Test VVP status is always present."""
+        response = build_500_error(sample_request, "error")
+        data = response.to_bytes().decode("utf-8")
+        assert "X-VVP-Status: INDETERMINATE\r\n" in data

@@ -2,6 +2,15 @@
 
 This guide explains how to configure FusionPBX/FreeSWITCH for bidirectional calling (inbound PSTN and outbound dialing) with a SIP.js WebRTC client.
 
+## Extensions
+
+| Extension | Password | Inbound TN | Description |
+|-----------|----------|------------|-------------|
+| 1001 | vvptest1001 | +441923311000 | Primary test extension |
+| 1006 | vvptest1006 | +441923311006 | Secondary test extension |
+
+To make internal calls between extensions, simply dial the extension number (e.g., `1006`).
+
 ## Why SIP.js Instead of Verto?
 
 FreeSWITCH has two WebRTC approaches:

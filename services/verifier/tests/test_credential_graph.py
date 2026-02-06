@@ -89,7 +89,10 @@ class TestBuildCredentialGraph:
         assert (le_said, "issued_by") in edge_types
 
     def test_layers_computed_correctly(self):
-        """Test that layers are computed from root to leaves."""
+        """Test that layers are computed from dossier (top) to root (bottom).
+
+        Layout: Dossier credentials at top → Evidence → Root at bottom
+        """
         root_aid = "D" + "R" * 43
         le_said = "E" + "L" * 43
         ape_said = "E" + "A" * 43
@@ -116,12 +119,14 @@ class TestBuildCredentialGraph:
         dossier = {le_said: le_cred, ape_said: ape_cred}
         graph = build_credential_graph(dossier, trusted_roots)
 
-        # Layer 0 should be root
+        # With top-down layout: dossier at top, root at bottom
+        # Layer 0 should be dossier credentials (APE is leaf, LE referenced by APE)
+        # APE references LE, so APE is the leaf (not referenced by others)
         assert len(graph.layers) >= 2
-        assert any("root:" in said for said in graph.layers[0])
-
-        # LE should come after root
-        # APE should come after LE
+        # APE should be at layer 0 (dossier leaf - not referenced by others)
+        assert ape_said in graph.layers[0]
+        # Root should be at the last layer
+        assert any("root:" in said for said in graph.layers[-1])
 
     def test_no_trusted_root(self):
         """Test graph when no credential chains to root."""

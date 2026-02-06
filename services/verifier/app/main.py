@@ -30,6 +30,23 @@ log = logging.getLogger("vvp")
 # Default test JWT for simple verification page
 DEFAULT_TEST_JWT = """eyJhbGciOiJFZERTQSIsInR5cCI6InBhc3Nwb3J0IiwicHB0IjoidnZwIiwia2lkIjoiaHR0cDovL3dpdG5lc3M1LnN0YWdlLnByb3ZlbmFudC5uZXQ6NTYzMS9vb2JpL0VHYXk1dWZCcUFhbmJoRmFfcWUtS01GVVBKSG44SjBNRmJhOTZ5eVdSckxGL3dpdG5lc3MifQ.eyJvcmlnIjp7InRuIjpbIjQ0Nzg4NDY2NjIwMCJdfSwiZGVzdCI6eyJ0biI6WyI0NDc3Njk3MTAyODUiXX0sImlhdCI6MTc2OTE4MzMwMiwiY2FyZCI6WyJDQVRFR09SSUVTOiIsIkxPR087SEFTSD1zaGEyNTYtNDBiYWM2ODZhM2YwYjQ4MjUzZGU1NWIzNGY1NTJjODA3MGJhZjIyZjgxMjU1YWFjNDQ5NzIxYzg3OWM3MTZhNDtWQUxVRT1VUkk6aHR0cHM6Ly9vcmlnaW4tY2VsbC1mcmFua2Z1cnQuczMuZXUtY2VudHJhbC0xLmFtYXpvbmF3cy5jb20vYnJhbmQtYXNzZXRzL3JpY2gtY29ubmV4aW9ucy9sb2dvLnBuZyIsIk5PVEU7TEVJOjk4NDUwMERFRTc1MzdBMDdZNjE1IiwiT1JHOlJpY2ggQ29ubmV4aW9ucyJdLCJjYWxsX3JlYXNvbiI6bnVsbCwiZ29hbCI6bnVsbCwiZXZkIjoiaHR0cHM6Ly9vcmlnaW4uZGVtby5wcm92ZW5hbnQubmV0L3YxL2FnZW50L3B1YmxpYy9FSGxWWFVKLWRZS3F0UGR2enRkQ0ZKRWJreXI2elgyZFgxMmh3ZEU5eDhleS9kb3NzaWVyLmNlc3IiLCJvcmlnSWQiOiIiLCJleHAiOjE3NjkxODM2MDIsInJlcXVlc3RfaWQiOiIifQ.OvoaiAwt1dgPb6gLkK7ufWoL2qzdtmudyyiL38oqB0wfaicGSG4B_QFtHY2vS2w-PYZ6LhN9dWXpsOHtpKAXCw""".strip()
 
+# Default test SIP INVITE for tabbed explorer
+DEFAULT_TEST_SIP = """INVITE sip:+447769710285@example.com SIP/2.0
+Via: SIP/2.0/UDP 192.168.1.100:5060;branch=z9hG4bK776asdhds
+Max-Forwards: 70
+To: <sip:+447769710285@example.com>
+From: <sip:+447884666200@example.com>;tag=1928301774
+Call-ID: a84b4c76e66710@192.168.1.100
+CSeq: 314159 INVITE
+Contact: <sip:alice@192.168.1.100>
+Content-Type: application/sdp
+Content-Length: 0
+Identity: eyJhbGciOiJFZERTQSIsInR5cCI6InBhc3Nwb3J0IiwicHB0IjoidnZwIiwia2lkIjoiaHR0cDovL3dpdG5lc3M1LnN0YWdlLnByb3ZlbmFudC5uZXQ6NTYzMS9vb2JpL0VHYXk1dWZCcUFhbmJoRmFfcWUtS01GVVBKSG44SjBNRmJhOTZ5eVdSckxGL3dpdG5lc3MifQ.eyJvcmlnIjp7InRuIjpbIjQ0Nzg4NDY2NjIwMCJdfSwiZGVzdCI6eyJ0biI6WyI0NDc3Njk3MTAyODUiXX0sImlhdCI6MTc2OTE4MzMwMiwiY2FyZCI6WyJDQVRFR09SSUVTOiIsIkxPR087SEFTSD1zaGEyNTYtNDBiYWM2ODZhM2YwYjQ4MjUzZGU1NWIzNGY1NTJjODA3MGJhZjIyZjgxMjU1YWFjNDQ5NzIxYzg3OWM3MTZhNDtWQUxVRT1VUkk6aHR0cHM6Ly9vcmlnaW4tY2VsbC1mcmFua2Z1cnQuczMuZXUtY2VudHJhbC0xLmFtYXpvbmF3cy5jb20vYnJhbmQtYXNzZXRzL3JpY2gtY29ubmV4aW9ucy9sb2dvLnBuZyIsIk5PVEU7TEVJOjk4NDUwMERFRTc1MzdBMDdZNjE1IiwiT1JHOlJpY2ggQ29ubmV4aW9ucyJdLCJjYWxsX3JlYXNvbiI6bnVsbCwiZ29hbCI6bnVsbCwiZXZkIjoiaHR0cHM6Ly9vcmlnaW4uZGVtby5wcm92ZW5hbnQubmV0L3YxL2FnZW50L3B1YmxpYy9FSGxWWFVKLWRZS3F0UGR2enRkQ0ZKRWJreXI2elgyZFgxMmh3ZEU5eDhleS9kb3NzaWVyLmNlc3IiLCJvcmlnSWQiOiIiLCJleHAiOjE3NjkxODM2MDIsInJlcXVlc3RfaWQiOiIifQ.OvoaiAwt1dgPb6gLkK7ufWoL2qzdtmudyyiL38oqB0wfaicGSG4B_QFtHY2vS2w-PYZ6LhN9dWXpsOHtpKAXCw
+""".strip()
+
+# Default test SAID for tabbed explorer (extracted from sample JWT evd claim)
+DEFAULT_TEST_SAID = "EHlVXUJ-dYKqtPdvztdCFJEbkyr6zX2dX12hwdE9x8ey"
+
 app = FastAPI(title="VVP Verifier", version="0.1.0")
 
 # Template setup
@@ -64,6 +81,17 @@ def verify_simple(request: Request):
     return templates.TemplateResponse("simple.html", {
         "request": request,
         "default_jwt": DEFAULT_TEST_JWT,
+    })
+
+
+@app.get("/verify/explore")
+def verify_explore(request: Request):
+    """Serve the tabbed explorer page with JWT/SIP/SAID inputs."""
+    return templates.TemplateResponse("tabbed_explorer.html", {
+        "request": request,
+        "default_jwt": DEFAULT_TEST_JWT,
+        "default_sip": DEFAULT_TEST_SIP,
+        "default_said": DEFAULT_TEST_SAID,
     })
 
 
@@ -2151,6 +2179,281 @@ async def ui_browse_said(
         )
     except Exception as e:
         log.error(f"Browse SAID failed: {e}")
+        return templates.TemplateResponse(
+            "partials/simple_result.html",
+            {"request": request, "error": str(e)},
+        )
+
+
+@app.post("/ui/jwt-explore")
+async def ui_jwt_explore(
+    request: Request,
+    jwt: str = Form(...),
+    use_jwt_time: str = Form(""),
+):
+    """Parse JWT and explore credential chain - returns SVG graph with click-to-select.
+
+    Similar to simple-verify but focused on exploration rather than full verification.
+    Extracts evd URL from JWT, fetches dossier, and builds credential graph.
+    """
+    from app.vvp.dossier.parser import parse_dossier
+    from app.vvp.acdc import (
+        parse_acdc,
+        credential_graph_to_dict,
+    )
+    from app.vvp.acdc.graph import build_credential_graph_with_resolution
+    from app.vvp.ui.credential_viewmodel import (
+        build_credential_card_vm,
+        build_issuer_identity_map_async,
+        build_schema_info_with_fetch,
+        ValidationCheckResult,
+    )
+    from app.vvp.keri.tel_client import CredentialStatus
+    from app.vvp.keri import get_credential_resolver
+    from app.core.config import TRUSTED_ROOT_AIDS
+
+    try:
+        # Step 1: Parse JWT to extract evd URL
+        jwt = jwt.strip()
+        if ";" in jwt:
+            jwt = jwt.split(";")[0]
+
+        try:
+            jwt_parts = jwt.split(".")
+            if len(jwt_parts) < 2:
+                raise ValueError("Invalid JWT format")
+
+            payload_padded = jwt_parts[1] + "=" * (-len(jwt_parts[1]) % 4)
+            payload_bytes = base64.urlsafe_b64decode(payload_padded)
+            payload_dict = json.loads(payload_bytes)
+            evd_url = payload_dict.get("evd")
+
+            if not evd_url:
+                return templates.TemplateResponse(
+                    "partials/simple_result.html",
+                    {"request": request, "error": "JWT does not contain an 'evd' (evidence) URL"},
+                )
+        except Exception as e:
+            return templates.TemplateResponse(
+                "partials/simple_result.html",
+                {"request": request, "error": f"Failed to parse JWT: {e}"},
+            )
+
+        # Step 2: Fetch dossier and build graph (reuse browse-said logic)
+        raw_bytes = await cached_fetch_dossier(evd_url)
+        raw_text = raw_bytes.decode("utf-8")
+        nodes, signatures = parse_dossier(raw_bytes)
+
+        all_saids = {node.said for node in nodes}
+
+        # Check TEL status for each credential
+        from app.vvp.keri.tel_client import get_tel_client
+        tel_client = get_tel_client()
+        revocation_cache: dict[str, dict] = {}
+        for node in nodes:
+            try:
+                result = await tel_client.check_revocation_with_fallback(
+                    credential_said=node.said,
+                    registry_said=node.raw.get("ri") if node.raw else None,
+                    dossier_data=raw_text,
+                    oobi_url=evd_url,
+                )
+                if result.status != CredentialStatus.UNKNOWN:
+                    revocation_cache[node.said] = {
+                        "status": result.status.value,
+                        "checked_at": datetime.now(timezone.utc).isoformat(),
+                        "source": result.source or "witness",
+                        "error": result.error,
+                    }
+            except Exception as e:
+                log.debug(f"TEL check failed for {node.said[:16]}: {e}")
+
+        # Parse ACDCs
+        dossier_acdcs = {}
+        parsed_acdcs = []
+        for node in nodes:
+            acdc_dict = node.raw.copy() if node.raw else {}
+            acdc_dict["d"] = node.said
+            acdc_dict["i"] = node.issuer
+            acdc_dict["s"] = node.schema
+            if node.attributes:
+                acdc_dict["a"] = node.attributes
+            if node.edges:
+                acdc_dict["e"] = node.edges
+
+            try:
+                acdc = parse_acdc(acdc_dict)
+                dossier_acdcs[acdc.said] = acdc
+                parsed_acdcs.append((acdc, acdc_dict, node.said))
+            except Exception as e:
+                log.warning(f"Failed to parse ACDC {node.said[:16]}: {e}")
+
+        # Build identity map
+        from app.vvp.identity import build_issuer_identity_map
+        sync_identities = build_issuer_identity_map(
+            [acdc for acdc, _, _ in parsed_acdcs if acdc is not None]
+        )
+
+        # Build credential graph with deep vLEI chain resolution
+        credential_resolver = get_credential_resolver()
+        graph = await build_credential_graph_with_resolution(
+            dossier_acdcs=dossier_acdcs,
+            trusted_roots=set(TRUSTED_ROOT_AIDS),
+            revocation_status=None,
+            issuer_identities=sync_identities,
+            credential_resolver=credential_resolver,
+            resolve_chain=True,
+        )
+        graph_dict = credential_graph_to_dict(graph)
+
+        # Build view-models for credentials
+        issuer_identities = await build_issuer_identity_map_async(
+            [acdc for acdc, _, _ in parsed_acdcs if acdc is not None],
+            oobi_url=evd_url,
+            discover_missing=True,
+        )
+
+        # Resolve key states
+        key_states: dict[str, Any] = {}
+        from app.vvp.keri import resolve_key_state, get_witness_pool
+
+        issuer_aids = {acdc.issuer_aid for acdc, _, _ in parsed_acdcs if acdc is not None}
+        pool = get_witness_pool()
+        witnesses = await pool.get_all_witnesses()
+        witness_urls = [w.url for w in witnesses]
+
+        for aid in issuer_aids:
+            if aid in key_states:
+                continue
+            for witness_url in witness_urls:
+                try:
+                    oobi_url_try = f"{witness_url}/oobi/{aid}"
+                    key_state = await resolve_key_state(
+                        kid=aid,
+                        oobi_url=oobi_url_try,
+                        reference_time=None,
+                        _allow_test_mode=False,
+                    )
+                    key_states[aid] = key_state
+                    break
+                except Exception:
+                    continue
+
+        credential_vms: dict[str, Any] = {}
+        for acdc, acdc_dict, said in parsed_acdcs:
+            if acdc is None:
+                continue
+
+            revocation_result = revocation_cache.get(said)
+
+            try:
+                vm = build_credential_card_vm(
+                    acdc=acdc,
+                    chain_result=None,
+                    revocation_result=revocation_result,
+                    available_saids=all_saids,
+                    issuer_identities=issuer_identities,
+                    key_states=key_states,
+                )
+
+                schema_info = await build_schema_info_with_fetch(acdc)
+                vm.schema_info = schema_info
+
+                # Build per-credential validation checks
+                checks = []
+                chain_severity = ("success" if vm.chain_status == "VALID"
+                                 else "error" if vm.chain_status == "INVALID"
+                                 else "warning")
+                checks.append(ValidationCheckResult(
+                    name="Chain",
+                    status=vm.chain_status,
+                    short_reason="Credential chain",
+                    spec_ref="§5.1.1",
+                    severity=chain_severity,
+                ))
+
+                schema_severity = ("success" if schema_info.validation_status == "VALID"
+                                  else "error" if schema_info.validation_status == "INVALID"
+                                  else "warning")
+                checks.append(ValidationCheckResult(
+                    name="Schema",
+                    status=schema_info.validation_status,
+                    short_reason=schema_info.registry_source,
+                    spec_ref="§6.3",
+                    severity=schema_severity,
+                ))
+
+                rev_state = vm.revocation.state
+                rev_severity = ("success" if rev_state == "ACTIVE"
+                               else "error" if rev_state == "REVOKED"
+                               else "warning")
+                rev_status = ("VALID" if rev_state == "ACTIVE"
+                             else "INVALID" if rev_state == "REVOKED"
+                             else "INDETERMINATE")
+                checks.append(ValidationCheckResult(
+                    name="Revocation",
+                    status=rev_status,
+                    short_reason=rev_state,
+                    spec_ref="§5.1.1-2.9",
+                    severity=rev_severity,
+                ))
+
+                vm.validation_checks = checks
+                credential_vms[said] = vm
+
+            except Exception as e:
+                log.warning(f"Failed to build view-model for {said[:16]}: {e}")
+
+        return templates.TemplateResponse(
+            "partials/simple_result.html",
+            {
+                "request": request,
+                "verify_response": None,
+                "graph": graph_dict,
+                "credential_vms": credential_vms,
+            },
+        )
+
+    except httpx.TimeoutException:
+        return templates.TemplateResponse(
+            "partials/simple_result.html",
+            {"request": request, "error": f"Timeout fetching dossier"},
+        )
+    except Exception as e:
+        log.error(f"JWT explore failed: {e}")
+        return templates.TemplateResponse(
+            "partials/simple_result.html",
+            {"request": request, "error": str(e)},
+        )
+
+
+@app.post("/ui/sip-explore")
+async def ui_sip_explore(
+    request: Request,
+    sip_invite: str = Form(...),
+    use_jwt_time: str = Form(""),
+):
+    """Extract JWT from SIP INVITE and explore credential chain.
+
+    Parses the SIP INVITE to extract the Identity header (JWT),
+    then delegates to jwt-explore logic.
+    """
+    try:
+        # Parse SIP INVITE to extract Identity header
+        result = _parse_sip_invite_logic(sip_invite)
+        identity_jwt = result.get("identity_header")
+
+        if not identity_jwt:
+            return templates.TemplateResponse(
+                "partials/simple_result.html",
+                {"request": request, "error": "No Identity header found in SIP INVITE"},
+            )
+
+        # Delegate to jwt-explore logic
+        return await ui_jwt_explore(request, identity_jwt, use_jwt_time)
+
+    except Exception as e:
+        log.error(f"SIP explore failed: {e}")
         return templates.TemplateResponse(
             "partials/simple_result.html",
             {"request": request, "error": str(e)},

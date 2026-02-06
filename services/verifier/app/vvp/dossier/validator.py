@@ -566,7 +566,7 @@ def _check_dossier_delegation(
     delegatee_aid: str,
     delegator_aid: str,
     dossier_nodes: Dict[str, ACDCNode],
-    max_depth: int = 5
+    max_depth: int = 10
 ) -> bool:
     """Check if delegatee_aid is delegated from delegator_aid via dossier credentials.
 

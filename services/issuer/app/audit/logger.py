@@ -5,7 +5,8 @@ resource creation/modification operations.
 """
 
 import logging
-from dataclasses import dataclass, field
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,7 +32,10 @@ class AuditLogger:
     """Audit logger for security operations.
 
     Logs events as structured JSON to stdout via Python's logging module.
+    Also maintains an in-memory ring buffer for recent event retrieval.
     """
+
+    MAX_BUFFER_SIZE = 1000  # Store last 1000 events
 
     def __init__(self, enabled: bool = True):
         """Initialize the audit logger.
@@ -40,16 +44,61 @@ class AuditLogger:
             enabled: Whether audit logging is enabled
         """
         self.enabled = enabled
+        self._buffer: deque[dict] = deque(maxlen=self.MAX_BUFFER_SIZE)
 
-    def log(self, event: AuditEvent) -> None:
+    def log(
+        self,
+        event: AuditEvent | None = None,
+        *,
+        action: str | None = None,
+        principal: str | None = None,
+        resource: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        status: str = "success",
+        details: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> None:
         """Write an audit event to the log.
 
+        Accepts either an AuditEvent object or keyword arguments.
+
         Args:
-            event: The audit event to log
+            event: AuditEvent object (optional)
+            action: Action name if not using event object
+            principal: Principal ID if not using event object
+            resource: Resource identifier if not using event object
+            resource_type: Resource type (combined with resource_id if provided)
+            resource_id: Resource ID (combined with resource_type if provided)
+            status: Status string (default: "success")
+            details: Additional context dict
+            request_id: Correlation ID
         """
         if not self.enabled:
             return
 
+        # Build event from kwargs if not provided
+        if event is None:
+            # Combine resource_type and resource_id if both provided
+            combined_resource = resource
+            if resource_type and resource_id:
+                combined_resource = f"{resource_type}:{resource_id}"
+            elif resource_type:
+                combined_resource = resource_type
+
+            event = AuditEvent(
+                action=action or "unknown",
+                principal=principal or "anonymous",
+                resource=combined_resource,
+                status=status,
+                details=details,
+                request_id=request_id,
+            )
+
+        # Store in ring buffer
+        self._buffer.append(asdict(event))
+
+        # Build extra dict for structured logging
         extra = {
             "type": "audit",
             "principal": event.principal,
@@ -71,6 +120,43 @@ class AuditLogger:
             log.warning(f"audit: {event.action} {event.status}", extra=extra)
         else:
             log.info(f"audit: {event.action} {event.status}", extra=extra)
+
+    def get_recent_events(
+        self,
+        limit: int = 100,
+        action_filter: str | None = None,
+        status_filter: str | None = None,
+    ) -> list[dict]:
+        """Get recent audit events from buffer.
+
+        Args:
+            limit: Max events to return
+            action_filter: Filter by action prefix (e.g., "auth.")
+            status_filter: Filter by status (e.g., "denied")
+
+        Returns:
+            List of audit event dicts, newest first
+        """
+        events = list(self._buffer)
+        events.reverse()  # Newest first
+
+        if action_filter:
+            events = [e for e in events if e["action"].startswith(action_filter)]
+        if status_filter:
+            events = [e for e in events if e["status"] == status_filter]
+
+        return events[:limit]
+
+    def get_buffer_stats(self) -> dict:
+        """Get buffer statistics.
+
+        Returns:
+            Dict with buffer_size, max_buffer_size
+        """
+        return {
+            "buffer_size": len(self._buffer),
+            "max_buffer_size": self.MAX_BUFFER_SIZE,
+        }
 
     def log_auth_success(
         self,

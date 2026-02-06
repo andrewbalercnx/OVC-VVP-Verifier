@@ -329,7 +329,7 @@ def _check_delegation_chain(
     delegatee_aid: str,
     delegator_aid: str,
     all_acdcs: Dict[str, "ACDC"],
-    max_depth: int = 5,
+    max_depth: int = 10,
 ) -> bool:
     """Check if delegatee_aid is delegated from delegator_aid via DE credentials.
 
@@ -404,7 +404,7 @@ async def resolve_vlei_chain_edges(
     dossier_acdcs: Dict[str, "ACDC"],
     credential_resolver: "CredentialResolver",
     trusted_roots: Set[str],
-    max_depth: int = 3,
+    max_depth: int = 10,
     max_concurrent: int = 5,
     max_total_fetches: int = 10,
     timeout: float = 10.0,

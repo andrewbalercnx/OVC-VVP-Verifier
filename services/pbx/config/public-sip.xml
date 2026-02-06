@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  VVP Dialplan - Handles both inbound PSTN and outbound from WebRTC
+  VVP Dialplan - Handles inbound PSTN, outbound, and internal extension calls
 
   This dialplan:
-  1. Routes UK outbound calls (9+0+number) to Twilio with valid caller ID
-  2. Routes international calls (9+00+country+number) to Twilio
-  3. Handles inbound PSTN calls with VVP header injection
-  4. Bridges to SIP-registered WebRTC client (extension 1001)
+  1. Routes internal extension calls (1001, 1006, etc.) directly
+  2. Routes UK outbound calls (9+0+number) to Twilio with valid caller ID
+  3. Routes international calls (9+00+country+number) to Twilio
+  4. Handles inbound PSTN calls with VVP header injection
+  5. Maps +441923311006 → extension 1006
+
+  Extensions:
+  - 1001: Primary test extension (password: vvptest1001)
+  - 1006: Secondary test extension for +441923311006 (password: vvptest1006)
 
   File: /etc/freeswitch/dialplan/public.xml
 
@@ -15,6 +20,63 @@
 -->
 <include>
   <context name="public">
+
+    <!-- Internal extension dialing (1001-1099) - direct, no VVP -->
+    <extension name="internal-extensions">
+      <condition field="${sofia_profile_name}" expression="^internal$"/>
+      <condition field="destination_number" expression="^(10\d{2})$">
+        <action application="log" data="INFO [VVP] Internal call to extension $1"/>
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="bridge" data="user/$1@pbx.rcnx.io"/>
+      </condition>
+    </extension>
+
+    <!-- VVP Loopback Test: 7 + extension -> signing -> verification -> extension -->
+    <!-- Dial 71006 to call 1006 through full VVP signing/verification flow -->
+    <extension name="vvp-loopback-outbound">
+      <condition field="${sofia_profile_name}" expression="^internal$"/>
+      <condition field="destination_number" expression="^7(10\d{2})$">
+        <action application="log" data="INFO [VVP] Loopback call to extension $1 via VVP signing"/>
+        <action application="set" data="hangup_after_bridge=true"/>
+        <!-- Map extension to test TN range: 1001->+441923311001, 1006->+441923311006 -->
+        <action application="set" data="loopback_dest_tn=+4419233110${1:1}"/>
+        <action application="set" data="effective_caller_id_number=+441923311000"/>
+        <action application="set" data="effective_caller_id_name=VVP Loopback"/>
+        <!-- Route through mock signing service -->
+        <action application="export" data="nolocal:sip_h_X-VVP-API-Key=mock-test-key"/>
+        <action application="log" data="INFO [VVP] Routing to signing service: ${loopback_dest_tn}"/>
+        <action application="bridge" data="sofia/external/${loopback_dest_tn}@127.0.0.1:5070"/>
+      </condition>
+    </extension>
+
+    <!-- VVP Loopback Inbound: calls from verification service with VVP headers -->
+    <extension name="vvp-loopback-inbound">
+      <condition field="${sofia_profile_name}" expression="^external$"/>
+      <condition field="destination_number" expression="^\+?4419233110(\d{2})$">
+        <action application="log" data="INFO [VVP] Loopback inbound for extension 10$1"/>
+        <!-- Extract VVP headers from 302 response (sip_rh_*) or INVITE (sip_h_*) -->
+        <action application="set" data="vvp_brand_name=${sip_rh_X-VVP-Brand-Name}"/>
+        <action application="set" data="vvp_brand_logo=${sip_rh_X-VVP-Brand-Logo}"/>
+        <action application="set" data="vvp_status=${sip_rh_X-VVP-Status}"/>
+        <!-- Fallback to request headers if response headers not available -->
+        <action application="set" data="vvp_brand_name=${vvp_brand_name:${sip_h_X-VVP-Brand-Name}}"/>
+        <action application="set" data="vvp_brand_logo=${vvp_brand_logo:${sip_h_X-VVP-Brand-Logo}}"/>
+        <action application="set" data="vvp_status=${vvp_status:${sip_h_X-VVP-Status}}"/>
+        <!-- URL decode -->
+        <action application="set" data="vvp_brand_name=${url_decode(${vvp_brand_name})}"/>
+        <action application="set" data="vvp_brand_logo=${url_decode(${vvp_brand_logo})}"/>
+        <action application="log" data="INFO [VVP] Loopback: brand=${vvp_brand_name}, status=${vvp_status}"/>
+        <!-- Export to B-leg for WebRTC client -->
+        <action application="export" data="nolocal:sip_h_X-VVP-Brand-Name=${vvp_brand_name}"/>
+        <action application="export" data="nolocal:sip_h_X-VVP-Brand-Logo=${vvp_brand_logo}"/>
+        <action application="export" data="nolocal:sip_h_X-VVP-Status=${vvp_status}"/>
+        <action application="ring_ready"/>
+        <action application="set" data="hangup_after_bridge=true"/>
+        <!-- Bridge to destination extension -->
+        <action application="set" data="target_ext=10$1"/>
+        <action application="bridge" data="user/${target_ext}@pbx.rcnx.io"/>
+      </condition>
+    </extension>
 
     <!-- UK Outbound: 9 + 0 + UK number -> Twilio gateway -->
     <extension name="uk-outbound-9prefix">
@@ -46,43 +108,52 @@
       </condition>
     </extension>
 
-    <!-- VVP Inbound Call Handler - ONLY for external/PSTN calls -->
-    <extension name="vvp-inbound-sip">
-      <condition field="${sofia_profile_name}" expression="^external$">
-
-        <!-- Log the incoming call -->
-        <action application="log" data="INFO [VVP] Inbound PSTN call from ${caller_id_number} to ${destination_number}"/>
-
-        <!-- Set VVP verification data (simulated - real data comes from VVP SIP Redirect in Sprint 42) -->
+    <!-- VVP Inbound to +441923311006 -> extension 1006 -->
+    <extension name="vvp-inbound-1006">
+      <condition field="${sofia_profile_name}" expression="^external$"/>
+      <condition field="destination_number" expression="^\+?441923311006$">
+        <action application="log" data="INFO [VVP] Inbound PSTN call to 1006 from ${caller_id_number}"/>
         <action application="set" data="vvp_brand_name=Test Corporation Ltd"/>
         <action application="set" data="vvp_brand_logo=https://example.com/logo.png"/>
         <action application="set" data="vvp_status=VALID"/>
-
-        <!-- Convert VVP variables to SIP headers for the B-leg INVITE to WebRTC client -->
         <action application="set" data="sip_h_X-VVP-Brand-Name=${vvp_brand_name}"/>
         <action application="set" data="sip_h_X-VVP-Brand-Logo=${vvp_brand_logo}"/>
         <action application="set" data="sip_h_X-VVP-Status=${vvp_status}"/>
-
-        <!-- Export headers to B-leg -->
         <action application="export" data="nolocal:sip_h_X-VVP-Brand-Name=${vvp_brand_name}"/>
         <action application="export" data="nolocal:sip_h_X-VVP-Brand-Logo=${vvp_brand_logo}"/>
         <action application="export" data="nolocal:sip_h_X-VVP-Status=${vvp_status}"/>
-
-        <!-- Set call options -->
         <action application="ring_ready"/>
         <action application="set" data="hangup_after_bridge=true"/>
         <action application="set" data="continue_on_fail=true"/>
-
-        <!-- Bridge to SIP-registered WebRTC client (extension 1001) -->
-        <action application="log" data="INFO [VVP] Bridging to user/1001@pbx.rcnx.io"/>
-        <action application="bridge" data="user/1001@pbx.rcnx.io"/>
-
-        <!-- Fallback if bridge fails -->
-        <action application="log" data="WARNING [VVP] Bridge failed, playing error message"/>
+        <action application="bridge" data="user/1006@pbx.rcnx.io"/>
+        <action application="log" data="WARNING [VVP] Bridge to 1006 failed"/>
         <action application="answer"/>
         <action application="playback" data="ivr/ivr-call_cannot_be_completed_as_dialed.wav"/>
         <action application="hangup" data="USER_BUSY"/>
+      </condition>
+    </extension>
 
+    <!-- VVP Inbound to +441923311000 -> extension 1001 (default) -->
+    <extension name="vvp-inbound-1001">
+      <condition field="${sofia_profile_name}" expression="^external$">
+        <action application="log" data="INFO [VVP] Inbound PSTN call to 1001 from ${caller_id_number}"/>
+        <action application="set" data="vvp_brand_name=Test Corporation Ltd"/>
+        <action application="set" data="vvp_brand_logo=https://example.com/logo.png"/>
+        <action application="set" data="vvp_status=VALID"/>
+        <action application="set" data="sip_h_X-VVP-Brand-Name=${vvp_brand_name}"/>
+        <action application="set" data="sip_h_X-VVP-Brand-Logo=${vvp_brand_logo}"/>
+        <action application="set" data="sip_h_X-VVP-Status=${vvp_status}"/>
+        <action application="export" data="nolocal:sip_h_X-VVP-Brand-Name=${vvp_brand_name}"/>
+        <action application="export" data="nolocal:sip_h_X-VVP-Brand-Logo=${vvp_brand_logo}"/>
+        <action application="export" data="nolocal:sip_h_X-VVP-Status=${vvp_status}"/>
+        <action application="ring_ready"/>
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="set" data="continue_on_fail=true"/>
+        <action application="bridge" data="user/1001@pbx.rcnx.io"/>
+        <action application="log" data="WARNING [VVP] Bridge to 1001 failed"/>
+        <action application="answer"/>
+        <action application="playback" data="ivr/ivr-call_cannot_be_completed_as_dialed.wav"/>
+        <action application="hangup" data="USER_BUSY"/>
       </condition>
     </extension>
 

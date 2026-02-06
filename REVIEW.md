@@ -1,21 +1,15 @@
-## Code Review: Sprint 41 - Org Role Access Resolution
+## Plan Re-Review: Sprint 44 - SIP Redirect Verification Service (Revised)
 
 **Verdict:** APPROVED
 
-### Previous Finding Resolution
-Yes. Credential/dossier endpoints now use `require_auth` plus explicit combined role checks, so org-only principals can access these APIs while still being constrained by org scoping. This resolves the prior [High] finding.
+### Issues Addressed
+- Architecture: now creates a new `services/sip-verify/` service and extracts shared SIP utilities to `common/common/vvp/sip/`.
+- Verifier enhancements: VerifyResponse includes `brand_name` and `brand_logo_url`, with extraction in verify_brand().
+- VVP-Identity decoder: explicitly added as a dedicated phase and file.
+- Exit criteria: reorganized by phase and aligned with deliverables.
 
-### Implementation Assessment
-The combined system/org role helpers in `roles.py` are clear and consistent with existing patterns. Endpoints call `check_credential_access_role` / `check_credential_write_role` / `check_credential_admin_role` appropriately, and existing scoping (`can_access_credential`, `validate_dossier_chain_access`) continues to enforce tenant isolation. Changes are targeted and easy to follow.
+### Remaining Concerns (if any)
+- None.
 
-### Security Review
-No new isolation gaps observed. Access is granted by role, while resource-level checks still enforce org ownership. Full-chain dossier validation remains in place. The only policy consideration is whether org:dossier_manager should be allowed to issue credentials (now possible via `check_credential_write_role`). If issuance should be system-only, tighten that check.
-
-### Test Coverage
-New tests cover combined role checks and org role hierarchy, and existing multi-tenant tests already validate scoping. Coverage is adequate for the new authorization functions; endpoint-level role behavior is indirectly covered by these checks.
-
-### Findings
-- [Low]: Confirm whether `org:dossier_manager` should be allowed to issue credentials. If not, restrict `check_credential_write_role` for `/credential/issue` to system operator+ or org:administrator.
-
-### Required Changes (if not APPROVED)
-1. N/A
+### Recommendations
+- Consider adding a test case that exercises both Identity and P‑VVP‑Identity inputs to ensure the parser and handler handle mixed header presence correctly.

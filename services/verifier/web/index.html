@@ -22,6 +22,13 @@
       <div id="dossierOutput" style="background:#f6f6f6;padding:1rem;overflow:auto;white-space:pre-wrap;font-family:monospace;min-height:100px;margin-top:1rem;"></div>
     </div>
 
+    <div id="verifySection" style="display:none; margin-top:1.5rem; padding:1rem; background:#f0f8ff; border:1px solid #0066cc; border-radius:4px;">
+      <h3 style="margin-top:0;">Full Verification</h3>
+      <p style="font-size:0.9em; color:#555;">Run the complete /verify API flow to test if this attestation would pass in production.</p>
+      <button id="runVerifyBtn" style="background:#0066cc;color:white;border:none;padding:8px 16px;cursor:pointer;border-radius:4px;font-size:1em;">Run Full Verification</button>
+      <div id="verifyResult" style="margin-top:1rem;"></div>
+    </div>
+
     <hr style="margin:2rem 0"/>
 
     <details>
@@ -39,6 +46,8 @@
       let currentOobiUrl = null;
       let currentKidUrl = null;  // kid field from JWT header - witness OOBI URL
       let currentDossierStream = null;  // Raw CESR dossier for inline TEL parsing
+      let currentPassportJwt = null;  // Full JWT string for verification
+      let currentParsedPayload = null;  // Parsed JWT payload for iat extraction
 
       // Base64url decode helper
       function base64urlDecode(str) {
@@ -70,6 +79,10 @@
           const header = JSON.parse(base64urlDecode(parts[0]));
           const payload = JSON.parse(base64urlDecode(parts[1]));
 
+          // Store JWT and payload for verification
+          currentPassportJwt = jwt;
+          currentParsedPayload = payload;
+
           // Format output
           const result = {
             header: header,
@@ -95,6 +108,10 @@
           } else {
             document.getElementById("dossierSection").style.display = "none";
           }
+
+          // Reset verify section (will show after dossier is fetched)
+          document.getElementById("verifySection").style.display = "none";
+          document.getElementById("verifyResult").innerHTML = "";
 
           return true;
 
@@ -512,6 +529,11 @@
         // Store ACDCs globally
         currentAcdcs = acdcs;
         currentOobiUrl = currentEvdUrl;
+
+        // Show verify section if we have a JWT
+        if (currentPassportJwt) {
+          document.getElementById("verifySection").style.display = "block";
+        }
 
         // Convert inline TEL revocation map to unified format and store globally
         currentRevocationStatus = {};
@@ -1351,6 +1373,170 @@
         const output = document.getElementById("dossierOutput");
         output.innerHTML = html + output.innerHTML;
       }
+
+      // Build VVP-Identity header from parsed JWT data
+      // Per VVP spec: ppt="vvp" (literal string), JWT goes in request body
+      function buildVVPIdentityHeader(evdUrl, kidUrl, originalIat) {
+        const header = {
+          kid: kidUrl,         // OOBI URL for signer's key
+          ppt: "vvp",          // Passport type identifier (always "vvp")
+          evd: evdUrl,         // Evidence/dossier URL
+          iat: originalIat,    // Use iat from the original PASSporT for consistency
+        };
+
+        // Base64url encode (no padding)
+        const json = JSON.stringify(header);
+        const base64 = btoa(json)
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+
+        return base64;
+      }
+
+      // Run full verification against /verify endpoint
+      async function runFullVerification() {
+        const resultDiv = document.getElementById('verifyResult');
+        resultDiv.innerHTML = '<p style="color:#666;"><em>Running verification...</em></p>';
+
+        try {
+          // Get values from current state
+          const passportJwt = currentPassportJwt;
+          const evdUrl = currentEvdUrl;
+          const kidUrl = currentKidUrl;
+          const originalIat = currentParsedPayload?.iat;
+
+          if (!passportJwt || !evdUrl) {
+            resultDiv.innerHTML = '<p style="color:#dc3545;">Missing JWT or evidence URL. Parse a JWT first.</p>';
+            return;
+          }
+
+          if (!originalIat) {
+            resultDiv.innerHTML = '<p style="color:#dc3545;">Could not extract iat from PASSporT payload.</p>';
+            return;
+          }
+
+          // Build VVP-Identity header (ppt="vvp", JWT goes in body)
+          const vvpIdentity = buildVVPIdentityHeader(evdUrl, kidUrl, originalIat);
+
+          // Call /verify endpoint
+          const response = await fetch('/verify', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'VVP-Identity': vvpIdentity,
+            },
+            body: JSON.stringify({
+              passport_jwt: passportJwt,
+              context: {
+                call_id: 'ui-test-' + Date.now(),
+                received_at: new Date().toISOString(),
+              }
+            }),
+          });
+
+          const data = await response.json();
+          renderVerifyResult(data);
+
+        } catch (err) {
+          resultDiv.innerHTML = `<p style="color:#dc3545;">Verification failed: ${escapeHtml(err.message)}</p>`;
+        }
+      }
+
+      // Render verification result with color-coded status
+      function renderVerifyResult(result) {
+        const status = result.overall_status || result.status || 'UNKNOWN';
+        let statusClass, statusIcon, statusBg;
+
+        if (status === 'VALID' || status === 'valid') {
+          statusClass = '#28a745';
+          statusIcon = '✓';
+          statusBg = '#d4edda';
+        } else if (status === 'INVALID' || status === 'invalid') {
+          statusClass = '#dc3545';
+          statusIcon = '✗';
+          statusBg = '#f8d7da';
+        } else {
+          statusClass = '#ffc107';
+          statusIcon = '⚠';
+          statusBg = '#fff3cd';
+        }
+
+        let html = `
+          <div style="background:${statusBg};border:2px solid ${statusClass};border-radius:4px;padding:1rem;margin-top:0.5rem;">
+            <h4 style="margin:0 0 0.5rem 0;color:${statusClass};">${statusIcon} Verification Result: ${status.toUpperCase()}</h4>
+        `;
+
+        if (result.request_id) {
+          html += `<p style="font-size:0.85em;color:#666;margin:0.25rem 0;">Request ID: ${escapeHtml(result.request_id)}</p>`;
+        }
+
+        // Show errors if any
+        if (result.errors && result.errors.length > 0) {
+          html += '<div style="margin-top:0.75rem;"><strong>Errors:</strong><ul style="margin:0.25rem 0 0 1rem;padding:0;">';
+          for (const err of result.errors) {
+            const code = err.code || err.error_code || 'ERROR';
+            const msg = err.message || err.detail || JSON.stringify(err);
+            html += `<li style="color:#dc3545;font-size:0.9em;"><strong>${escapeHtml(code)}</strong>: ${escapeHtml(msg)}</li>`;
+          }
+          html += '</ul></div>';
+        }
+
+        // Show warnings if any
+        if (result.warnings && result.warnings.length > 0) {
+          html += '<div style="margin-top:0.75rem;"><strong>Warnings:</strong><ul style="margin:0.25rem 0 0 1rem;padding:0;">';
+          for (const warn of result.warnings) {
+            html += `<li style="color:#856404;font-size:0.9em;">${escapeHtml(typeof warn === 'string' ? warn : JSON.stringify(warn))}</li>`;
+          }
+          html += '</ul></div>';
+        }
+
+        // Show claims summary if available
+        if (result.claims && result.claims.length > 0) {
+          html += '<div style="margin-top:0.75rem;"><strong>Verified Claims:</strong>';
+          html += '<div style="background:white;padding:0.5rem;border-radius:4px;margin-top:0.25rem;font-size:0.85em;">';
+          for (const claim of result.claims) {
+            const claimStatus = claim.status || claim.valid ? '✓' : '✗';
+            const claimName = claim.name || claim.type || 'Claim';
+            html += `<div style="margin:2px 0;">${claimStatus} ${escapeHtml(claimName)}</div>`;
+          }
+          html += '</div></div>';
+        }
+
+        // Show brand info if available
+        if (result.brand_name || result.brand_logo_url) {
+          html += '<div style="margin-top:0.75rem;"><strong>Brand Information:</strong>';
+          html += '<div style="background:white;padding:0.5rem;border-radius:4px;margin-top:0.25rem;display:flex;align-items:center;gap:0.5rem;">';
+          if (result.brand_logo_url) {
+            html += `<img src="${escapeHtml(result.brand_logo_url)}" style="max-height:32px;max-width:64px;" onerror="this.style.display='none'"/>`;
+          }
+          if (result.brand_name) {
+            html += `<span style="font-weight:bold;">${escapeHtml(result.brand_name)}</span>`;
+          }
+          html += '</div></div>';
+        }
+
+        // Show raw response in collapsible
+        html += `<details style="margin-top:0.75rem;">
+          <summary style="cursor:pointer;font-size:0.85em;color:#666;">Raw Response</summary>
+          <pre style="background:white;padding:0.5rem;overflow:auto;font-size:0.75em;max-height:200px;margin-top:0.25rem;">${escapeHtml(JSON.stringify(result, null, 2))}</pre>
+        </details>`;
+
+        html += '</div>';
+
+        document.getElementById('verifyResult').innerHTML = html;
+      }
+
+      // Escape HTML helper
+      function escapeHtml(text) {
+        if (text === null || text === undefined) return '';
+        const div = document.createElement('div');
+        div.textContent = String(text);
+        return div.innerHTML;
+      }
+
+      // Run Verify button click handler
+      document.getElementById("runVerifyBtn").addEventListener("click", runFullVerification);
     </script>
   </body>
 </html>

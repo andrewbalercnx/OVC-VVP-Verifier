@@ -1,0 +1,19 @@
+[Unit]
+Description=VVP Mock SIP Redirect Services
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vvp/mock
+ExecStart=/usr/bin/python3 /opt/vvp/mock/mock_sip_redirect.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

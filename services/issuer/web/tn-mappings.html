@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TN Mappings - VVP Issuer</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+    }
+    .page-header h1 {
+      margin: 0;
+    }
+    .mappings-table {
+      width: 100%;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    .mappings-table table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .mappings-table th,
+    .mappings-table td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--vvp-border);
+    }
+    .mappings-table th {
+      background: var(--vvp-bg);
+      font-weight: 600;
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--vvp-text-muted);
+    }
+    .mappings-table tr:hover {
+      background: var(--vvp-bg);
+    }
+    .tn-value {
+      font-family: monospace;
+      font-weight: 600;
+    }
+    .truncated {
+      max-width: 200px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-family: monospace;
+      font-size: 0.875rem;
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+    .status-badge.enabled {
+      background: var(--vvp-success-light, #d1fae5);
+      color: var(--vvp-success);
+    }
+    .status-badge.disabled {
+      background: var(--vvp-danger-bg, #fee2e2);
+      color: var(--vvp-danger);
+    }
+    .brand-info {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .brand-logo {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      object-fit: contain;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 3rem;
+      color: var(--vvp-text-muted);
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .modal-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .modal-form label {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-weight: 500;
+    }
+    .modal-form input,
+    .modal-form select {
+      width: 100%;
+      padding: 0.5rem;
+      border: 1px solid var(--vvp-border);
+      border-radius: 4px;
+    }
+    .modal-form .hint {
+      font-size: 0.875rem;
+      color: var(--vvp-text-muted);
+      margin-top: 0.25rem;
+    }
+    .modal-buttons {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+      margin-top: 1rem;
+    }
+    .action-buttons {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .action-buttons button {
+      font-size: 0.875rem;
+      padding: 0.375rem 0.75rem;
+    }
+    .test-result {
+      padding: 1rem;
+    }
+    .test-result.success h3 {
+      color: var(--vvp-success);
+      margin-top: 0;
+    }
+    .test-result.error h3 {
+      color: var(--vvp-danger);
+      margin-top: 0;
+    }
+    .test-result dl {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.5rem 1rem;
+      margin: 1rem 0 0 0;
+    }
+    .test-result dt {
+      font-weight: 600;
+      color: var(--vvp-text-muted);
+    }
+    .test-result dd {
+      margin: 0;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-brand">
+      <img src="/static/ovc-logo.png" alt="OVC" class="ovc-logo">
+      <a href="/ui/" class="logo">
+        <span class="service-label">VVP</span>
+        Issuer
+      </a>
+    </div>
+    <nav class="nav-links">
+      <a href="/ui/identity">Identities</a>
+      <a href="/ui/registry">Registries</a>
+      <a href="/ui/schemas">Schemas</a>
+      <a href="/ui/credentials">Credentials</a>
+      <a href="/ui/dossier">Dossiers</a>
+      <a href="/ui/vvp">VVP</a>
+      <a href="/ui/tn-mappings" class="active">TN Mappings</a>
+    </nav>
+    <div class="header-user" id="header-user"></div>
+  </header>
+
+  <main>
+    <div class="page-header">
+      <h1>TN Mappings</h1>
+      <button class="primary" id="create-mapping-btn">Create TN Mapping</button>
+    </div>
+
+    <div id="mappings-container">
+      <div class="empty-state">Loading TN mappings...</div>
+    </div>
+  </main>
+
+  <script src="/static/shared.js"></script>
+  <script>
+    let dossiers = [];
+    let identities = [];
+
+    async function init() {
+      // Check auth
+      const session = await checkAuthStatus();
+      if (!session.authenticated) {
+        window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname);
+        return;
+      }
+
+      // Load dossiers and identities for dropdowns
+      await Promise.all([
+        loadDossiers(),
+        loadIdentities(),
+      ]);
+
+      await loadMappings();
+
+      document.getElementById('create-mapping-btn').addEventListener('click', showCreateMappingModal);
+    }
+
+    async function loadDossiers() {
+      try {
+        const response = await fetch('/dossier', {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          dossiers = data.dossiers || [];
+        }
+      } catch (err) {
+        console.error('Failed to load dossiers:', err);
+      }
+    }
+
+    async function loadIdentities() {
+      try {
+        const response = await fetch('/identities', {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          identities = data.identities || [];
+        }
+      } catch (err) {
+        console.error('Failed to load identities:', err);
+      }
+    }
+
+    async function loadMappings() {
+      const container = document.getElementById('mappings-container');
+
+      try {
+        const response = await fetch('/tn/mappings', {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+
+        if (!response.ok) {
+          if (response.status === 403) {
+            container.innerHTML = `
+              <div class="empty-state">
+                You do not have permission to view TN mappings.
+                Contact your administrator to request access.
+              </div>
+            `;
+            document.getElementById('create-mapping-btn').style.display = 'none';
+            return;
+          }
+          throw new Error('Failed to load TN mappings');
+        }
+
+        const data = await response.json();
+        renderMappings(data.mappings || []);
+      } catch (err) {
+        container.innerHTML = `<div class="empty-state error">Error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function renderMappings(mappings) {
+      const container = document.getElementById('mappings-container');
+
+      if (mappings.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            No TN mappings configured yet.<br>
+            Create a TN mapping to enable VVP attestation for outbound calls.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="mappings-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Telephone Number</th>
+                <th>Brand</th>
+                <th>Identity</th>
+                <th>Dossier</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${mappings.map(m => `
+                <tr data-mapping-id="${escapeHtml(m.id)}">
+                  <td class="tn-value">${escapeHtml(m.tn)}</td>
+                  <td>
+                    <div class="brand-info">
+                      ${m.brand_logo_url ? `<img src="${escapeHtml(m.brand_logo_url)}" alt="" class="brand-logo" onerror="this.style.display='none'">` : ''}
+                      <span>${escapeHtml(m.brand_name || '-')}</span>
+                    </div>
+                  </td>
+                  <td>${escapeHtml(m.identity_name)}</td>
+                  <td>
+                    <span class="truncated" title="${escapeHtml(m.dossier_said)}">${escapeHtml(m.dossier_said)}</span>
+                  </td>
+                  <td>
+                    <span class="status-badge ${m.enabled ? 'enabled' : 'disabled'}">
+                      ${m.enabled ? 'Active' : 'Disabled'}
+                    </span>
+                  </td>
+                  <td>${new Date(m.created_at).toLocaleDateString()}</td>
+                  <td>
+                    <div class="action-buttons">
+                      <button class="secondary small" onclick="testTNLookup('${escapeHtml(m.id)}', '${escapeHtml(m.tn)}')">Test</button>
+                      <button class="secondary small" onclick="showEditMappingModal('${escapeHtml(m.id)}')">Edit</button>
+                      <button class="danger small" onclick="deleteMapping('${escapeHtml(m.id)}', '${escapeHtml(m.tn)}')">Delete</button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function showCreateMappingModal() {
+      const dossierOptions = dossiers.map(d =>
+        `<option value="${escapeHtml(d.root_said)}">${escapeHtml(d.name || d.root_said.substring(0, 16) + '...')}</option>`
+      ).join('');
+
+      const identityOptions = identities.map(i =>
+        `<option value="${escapeHtml(i.name)}">${escapeHtml(i.name)}</option>`
+      ).join('');
+
+      const html = `
+        <form id="create-mapping-form" class="modal-form">
+          <div>
+            <label for="mapping-tn">Telephone Number</label>
+            <input type="text" id="mapping-tn" required placeholder="+15551234567" pattern="\\+?[0-9]{10,15}">
+            <div class="hint">E.164 format (e.g., +15551234567)</div>
+          </div>
+          <div>
+            <label for="mapping-dossier">Dossier</label>
+            <select id="mapping-dossier" required>
+              <option value="">Select a dossier...</option>
+              ${dossierOptions}
+            </select>
+            <div class="hint">The credential chain for VVP attestation</div>
+          </div>
+          <div>
+            <label for="mapping-identity">Signing Identity</label>
+            <select id="mapping-identity" required>
+              <option value="">Select an identity...</option>
+              ${identityOptions}
+            </select>
+            <div class="hint">KERI identity used to sign VVP headers</div>
+          </div>
+          <div class="modal-buttons">
+            <button type="button" class="secondary" onclick="closeModal(this)">Cancel</button>
+            <button type="submit" class="primary">Create Mapping</button>
+          </div>
+        </form>
+      `;
+
+      showModal(html, { title: 'Create TN Mapping' });
+
+      document.getElementById('create-mapping-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await createMapping();
+      });
+    }
+
+    async function createMapping() {
+      const tn = document.getElementById('mapping-tn').value;
+      const dossier_said = document.getElementById('mapping-dossier').value;
+      const identity_name = document.getElementById('mapping-identity').value;
+
+      try {
+        const response = await fetch('/tn/mappings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: JSON.stringify({ tn, dossier_said, identity_name }),
+        });
+
+        if (response.ok) {
+          closeModal(document.querySelector('.modal-overlay'));
+          showToast('TN mapping created successfully', 'success');
+          loadMappings();
+        } else {
+          const data = await response.json();
+          showToast(data.detail || 'Failed to create TN mapping', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+      }
+    }
+
+    async function showEditMappingModal(mappingId) {
+      // Fetch the mapping details
+      try {
+        const response = await fetch(`/tn/mappings/${mappingId}`, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+
+        if (!response.ok) {
+          showToast('Failed to load mapping details', 'error');
+          return;
+        }
+
+        const mapping = await response.json();
+
+        const dossierOptions = dossiers.map(d =>
+          `<option value="${escapeHtml(d.root_said)}" ${d.root_said === mapping.dossier_said ? 'selected' : ''}>${escapeHtml(d.name || d.root_said.substring(0, 16) + '...')}</option>`
+        ).join('');
+
+        const identityOptions = identities.map(i =>
+          `<option value="${escapeHtml(i.name)}" ${i.name === mapping.identity_name ? 'selected' : ''}>${escapeHtml(i.name)}</option>`
+        ).join('');
+
+        const html = `
+          <form id="edit-mapping-form" class="modal-form">
+            <div>
+              <label>Telephone Number</label>
+              <input type="text" value="${escapeHtml(mapping.tn)}" disabled>
+              <div class="hint">TN cannot be changed. Delete and recreate to use a different number.</div>
+            </div>
+            <div>
+              <label for="edit-dossier">Dossier</label>
+              <select id="edit-dossier" required>
+                ${dossierOptions}
+              </select>
+            </div>
+            <div>
+              <label for="edit-identity">Signing Identity</label>
+              <select id="edit-identity" required>
+                ${identityOptions}
+              </select>
+            </div>
+            <div>
+              <label>
+                <input type="checkbox" id="edit-enabled" ${mapping.enabled ? 'checked' : ''}>
+                Enabled
+              </label>
+              <div class="hint">Disabled mappings will not be used for VVP attestation</div>
+            </div>
+            <div class="modal-buttons">
+              <button type="button" class="secondary" onclick="closeModal(this)">Cancel</button>
+              <button type="submit" class="primary">Save Changes</button>
+            </div>
+          </form>
+        `;
+
+        showModal(html, { title: 'Edit TN Mapping' });
+
+        document.getElementById('edit-mapping-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          await updateMapping(mappingId);
+        });
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    async function updateMapping(mappingId) {
+      const dossier_said = document.getElementById('edit-dossier').value;
+      const identity_name = document.getElementById('edit-identity').value;
+      const enabled = document.getElementById('edit-enabled').checked;
+
+      try {
+        const response = await fetch(`/tn/mappings/${mappingId}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: JSON.stringify({ dossier_said, identity_name, enabled }),
+        });
+
+        if (response.ok) {
+          closeModal(document.querySelector('.modal-overlay'));
+          showToast('TN mapping updated successfully', 'success');
+          loadMappings();
+        } else {
+          const data = await response.json();
+          showToast(data.detail || 'Failed to update TN mapping', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+      }
+    }
+
+    async function deleteMapping(mappingId, tn) {
+      if (!confirm(`Are you sure you want to delete the mapping for ${tn}? This cannot be undone.`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/tn/mappings/${mappingId}`, {
+          method: 'DELETE',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+
+        if (response.ok) {
+          showToast('TN mapping deleted', 'success');
+          loadMappings();
+        } else {
+          const data = await response.json();
+          showToast(data.detail || 'Failed to delete TN mapping', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+      }
+    }
+
+    async function testTNLookup(mappingId, tn) {
+      try {
+        const response = await fetch(`/tn/test-lookup/${mappingId}`, {
+          method: 'POST',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+
+        const data = await response.json();
+
+        if (data.found) {
+          showModal(`
+            <div class="test-result success">
+              <h3>&#10003; TN Lookup Successful</h3>
+              <p>This TN mapping is correctly configured and ready for VVP attestation.</p>
+              <dl>
+                <dt>TN</dt><dd>${escapeHtml(tn)}</dd>
+                <dt>Organization</dt><dd>${escapeHtml(data.organization_name || '-')}</dd>
+                <dt>Dossier SAID</dt><dd class="truncated">${escapeHtml(data.dossier_said || '-')}</dd>
+                <dt>Identity</dt><dd>${escapeHtml(data.identity_name || '-')}</dd>
+                <dt>Brand</dt><dd>${escapeHtml(data.brand_name || '(none)')}</dd>
+              </dl>
+            </div>
+          `, { title: 'TN Lookup Test Result' });
+        } else {
+          showModal(`
+            <div class="test-result error">
+              <h3>&#10007; TN Lookup Failed</h3>
+              <p>This TN mapping has configuration issues that will prevent VVP attestation:</p>
+              <p><strong>${escapeHtml(data.error || 'Unknown error')}</strong></p>
+            </div>
+          `, { title: 'TN Lookup Test Result' });
+        }
+      } catch (err) {
+        showToast('Test failed: ' + err.message, 'error');
+      }
+    }
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      initNavigation();
+      init();
+    });
+  </script>
+</body>
+</html>

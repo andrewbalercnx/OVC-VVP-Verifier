@@ -396,3 +396,87 @@ class CreateVVPResponse(BaseModel):
     kid_oobi: str = Field(..., description="Full kid OOBI URL for issuer")
     iat: int = Field(..., description="Issued-at timestamp (seconds since epoch)")
     exp: int = Field(..., description="Expiry timestamp (seconds since epoch)")
+
+
+# =============================================================================
+# TN Mapping Models (Sprint 42)
+# =============================================================================
+
+
+class CreateTNMappingRequest(BaseModel):
+    """Request to create a TN mapping for SIP redirect signing."""
+
+    tn: str = Field(
+        ...,
+        description="E.164 telephone number (e.g., +15551234567)",
+        pattern=r"^\+[1-9]\d{1,14}$",
+    )
+    dossier_said: str = Field(
+        ...,
+        description="Root credential SAID for the dossier",
+        min_length=44,
+        max_length=44,
+    )
+    identity_name: str = Field(
+        ...,
+        description="KERI identity name for signing",
+    )
+
+
+class UpdateTNMappingRequest(BaseModel):
+    """Request to update a TN mapping."""
+
+    dossier_said: Optional[str] = Field(
+        None,
+        description="Root credential SAID for the dossier",
+        min_length=44,
+        max_length=44,
+    )
+    identity_name: Optional[str] = Field(
+        None,
+        description="KERI identity name for signing",
+    )
+    enabled: Optional[bool] = Field(None, description="Enable/disable mapping")
+
+
+class TNMappingResponse(BaseModel):
+    """Response containing TN mapping information."""
+
+    id: str = Field(..., description="Mapping ID (UUID)")
+    tn: str = Field(..., description="E.164 telephone number")
+    organization_id: str = Field(..., description="Organization ID")
+    dossier_said: str = Field(..., description="Root credential SAID")
+    identity_name: str = Field(..., description="KERI identity name")
+    brand_name: Optional[str] = Field(None, description="Brand name from dossier")
+    brand_logo_url: Optional[str] = Field(None, description="Brand logo URL")
+    enabled: bool = Field(..., description="Whether mapping is active")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Last update timestamp")
+
+
+class TNMappingListResponse(BaseModel):
+    """Response listing TN mappings."""
+
+    count: int = Field(..., description="Total count")
+    mappings: list[TNMappingResponse] = Field(..., description="TN mappings")
+
+
+class TNLookupRequest(BaseModel):
+    """Internal request for TN lookup (from SIP service)."""
+
+    tn: str = Field(..., description="E.164 telephone number to lookup")
+    api_key: str = Field(..., description="API key for authentication")
+
+
+class TNLookupResponse(BaseModel):
+    """Response from TN lookup."""
+
+    found: bool = Field(..., description="Whether mapping was found")
+    tn: Optional[str] = Field(None, description="Matched TN")
+    organization_id: Optional[str] = Field(None, description="Organization ID")
+    organization_name: Optional[str] = Field(None, description="Organization name")
+    dossier_said: Optional[str] = Field(None, description="Root credential SAID")
+    identity_name: Optional[str] = Field(None, description="KERI identity name")
+    brand_name: Optional[str] = Field(None, description="Brand name")
+    brand_logo_url: Optional[str] = Field(None, description="Brand logo URL")
+    error: Optional[str] = Field(None, description="Error message if not found")

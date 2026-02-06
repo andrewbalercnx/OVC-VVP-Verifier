@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.authentication import AuthenticationMiddleware
 
 from common.vvp.core.logging import configure_logging
-from app.api import admin, auth, credential, dossier, health, identity, organization, org_api_key, registry, schema, user, vvp
+from app.api import admin, auth, credential, dossier, health, identity, organization, org_api_key, registry, schema, tn, user, vvp
 from app.auth.api_key import APIKeyBackend, get_api_key_store
 from app.auth.session import get_session_store
 from app.config import (
@@ -238,6 +238,12 @@ def ui_benchmarks():
     return FileResponse(WEB_DIR / "benchmarks.html", media_type="text/html")
 
 
+@app.get("/ui/tn-mappings", response_class=FileResponse)
+def ui_tn_mappings():
+    """Serve the TN mapping management web UI (Sprint 42)."""
+    return FileResponse(WEB_DIR / "tn-mappings.html", media_type="text/html")
+
+
 # -----------------------------------------------------------------------------
 # Sprint 41: User Management & Multi-tenancy UI Routes
 # -----------------------------------------------------------------------------
@@ -321,6 +327,7 @@ app.include_router(schema.router)
 app.include_router(credential.router)
 app.include_router(dossier.router)
 app.include_router(vvp.router)
+app.include_router(tn.router)  # Sprint 42: TN mapping for SIP redirect
 app.include_router(admin.router)
 
 

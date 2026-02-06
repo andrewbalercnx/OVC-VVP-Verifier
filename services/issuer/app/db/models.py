@@ -16,6 +16,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -236,6 +237,48 @@ class MockVLEIState(Base):
 
     def __repr__(self) -> str:
         return f"<MockVLEIState(id={self.id}, gleif_aid={self.gleif_aid!r}, qvi_aid={self.qvi_aid!r})>"
+
+
+class TNMapping(Base):
+    """Telephone Number to Dossier mapping for SIP redirect signing.
+
+    Sprint 42: Maps E.164 telephone numbers to the dossier and identity used
+    for signing VVP attestations. Each organization can have one mapping per TN.
+
+    When an enterprise SBC sends a SIP INVITE to the redirect service:
+    1. The TN is extracted from the From header
+    2. This table is queried to find the dossier_said and identity_name
+    3. The VVP-Identity header and PASSporT are created using that identity
+    4. The 302 response includes brand info cached from the dossier
+    """
+
+    __tablename__ = "tn_mappings"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    tn = Column(String(20), nullable=False)  # E.164 format (+15551234567)
+    organization_id = Column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+    dossier_said = Column(String(44), nullable=False)  # Root credential SAID
+    identity_name = Column(String(255), nullable=False)  # KERI identity name for signing
+    brand_name = Column(String(255), nullable=True)  # Cached brand name from dossier
+    brand_logo_url = Column(String(1024), nullable=True)  # Cached logo URL
+    enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    # Relationships
+    organization = relationship("Organization", backref="tn_mappings")
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "tn", name="uq_org_tn"),
+        Index("ix_tn_mappings_tn", "tn"),  # Fast TN lookup
+    )
+
+    def __repr__(self) -> str:
+        return f"<TNMapping(id={self.id!r}, tn={self.tn!r}, org={self.organization_id[:8] if self.organization_id else None!r}...)>"
 
 
 # Event listener to normalize email to lowercase before insert/update

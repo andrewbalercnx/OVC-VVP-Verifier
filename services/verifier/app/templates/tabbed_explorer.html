@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}VVP Explorer{% endblock %}
+
+{% block header %}VVP Explorer{% endblock %}
+
+{% block content %}
+<p>Explore VVP credentials by resolving a PASSporT JWT, SIP INVITE, or Dossier SAID.</p>
+
+<section class="tabs-container">
+    <!-- Hidden radio buttons for CSS-only tab switching -->
+    <input type="radio" name="input-tab" id="tab-jwt" checked>
+    <input type="radio" name="input-tab" id="tab-sip">
+    <input type="radio" name="input-tab" id="tab-said">
+
+    <nav class="tab-labels">
+        <label for="tab-jwt">PASSporT JWT</label>
+        <label for="tab-sip">SIP INVITE</label>
+        <label for="tab-said">Dossier SAID</label>
+    </nav>
+
+    <!-- JWT Tab Panel -->
+    <div class="tab-panel" id="panel-jwt">
+        <p style="margin-bottom: 0.75rem; color: var(--vvp-muted); font-size: 0.9em;">
+            Paste a VVP PASSporT JWT to extract the evidence URL and explore the credential chain.
+        </p>
+        <form hx-post="/ui/jwt-explore" hx-target="#result-container" hx-swap="innerHTML" hx-indicator="#jwt-loading">
+            <label for="jwt-input">PASSporT JWT</label>
+            <textarea
+                id="jwt-input"
+                name="jwt"
+                rows="4"
+                style="font-family: monospace; font-size: 0.85em;"
+                placeholder="eyJhbGciOiJFZERTQSIsInR5cCI6InBhc3Nwb3J0Ii..."
+            >{{ default_jwt }}</textarea>
+
+            <div class="options-row">
+                <label>
+                    <input type="checkbox" name="use_jwt_time" value="on">
+                    Use JWT time for expiry check (testing mode for old JWTs)
+                </label>
+            </div>
+
+            <button type="submit">
+                <span id="jwt-loading" class="htmx-indicator">Resolving...</span>
+                <span>Resolve</span>
+            </button>
+        </form>
+    </div>
+
+    <!-- SIP INVITE Tab Panel -->
+    <div class="tab-panel" id="panel-sip">
+        <p style="margin-bottom: 0.75rem; color: var(--vvp-muted); font-size: 0.9em;">
+            Paste a raw SIP INVITE message to extract the Identity header and explore the credential chain.
+        </p>
+        <form hx-post="/ui/sip-explore" hx-target="#result-container" hx-swap="innerHTML" hx-indicator="#sip-loading">
+            <label for="sip-input">Raw SIP INVITE</label>
+            <textarea
+                id="sip-input"
+                name="sip_invite"
+                rows="10"
+                style="font-family: monospace; font-size: 0.85em;"
+                placeholder="INVITE sip:+441234567890@example.com SIP/2.0&#10;Via: ...&#10;Identity: ..."
+            >{{ default_sip }}</textarea>
+
+            <div class="options-row">
+                <label>
+                    <input type="checkbox" name="use_jwt_time" value="on">
+                    Use JWT time for expiry check (testing mode for old JWTs)
+                </label>
+            </div>
+
+            <button type="submit">
+                <span id="sip-loading" class="htmx-indicator">Resolving...</span>
+                <span>Resolve</span>
+            </button>
+        </form>
+    </div>
+
+    <!-- SAID Tab Panel -->
+    <div class="tab-panel" id="panel-said">
+        <p style="margin-bottom: 0.75rem; color: var(--vvp-muted); font-size: 0.9em;">
+            Enter a dossier SAID to fetch credentials directly from Provenant without a PASSporT.
+        </p>
+        <form id="said-form" hx-post="/ui/browse-said" hx-target="#result-container" hx-swap="innerHTML" hx-indicator="#said-loading">
+            <label for="said-input">Dossier SAID</label>
+            <div style="display: flex; gap: 0.5rem; align-items: flex-start; flex-wrap: wrap;">
+                <input
+                    type="text"
+                    id="said-input"
+                    name="dossier_said"
+                    value="{{ default_said }}"
+                    placeholder="EEgz2TdB8ldZ9wAKJBtwIlu5OnJ6xWPPrnYUtwLep6Lq"
+                    style="flex: 1; min-width: 300px; font-family: monospace;"
+                    required
+                >
+            </div>
+
+            <details style="margin-top: 0.75rem;">
+                <summary style="cursor: pointer; font-size: 0.9em; color: var(--vvp-muted);">EVD URL Pattern (advanced)</summary>
+                <div style="padding: 0.5rem; background: var(--vvp-surface, #f8f9fa); border-radius: 0.25rem; margin-top: 0.5rem;">
+                    <label for="evd-pattern" style="font-size: 0.85em;">URL Pattern (use {SAID} as placeholder)</label>
+                    <input
+                        type="text"
+                        id="evd-pattern"
+                        value="https://origin.demo.provenant.net/v1/agent/public/{SAID}/dossier.cesr"
+                        style="font-family: monospace; font-size: 0.85em;"
+                    >
+                </div>
+            </details>
+
+            <input type="hidden" id="evd_url" name="evd_url" value="">
+
+            <button type="submit" style="margin-top: 0.75rem;">
+                <span id="said-loading" class="htmx-indicator">Resolving...</span>
+                <span>Resolve</span>
+            </button>
+        </form>
+    </div>
+</section>
+
+<hr style="margin: 1.5rem 0;">
+
+<!-- Result container - populated by HTMX responses -->
+<section id="result-container">
+    <p style="text-align: center; color: var(--vvp-muted);">
+        <em>Select an input method above and click "Resolve" to explore the credential chain.</em>
+    </p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Construct EVD URL from SAID and pattern before form submit
+document.addEventListener('DOMContentLoaded', function() {
+    const saidInput = document.getElementById('said-input');
+    const patternInput = document.getElementById('evd-pattern');
+    const evdUrlInput = document.getElementById('evd_url');
+    const saidForm = document.getElementById('said-form');
+
+    function updateEvdUrl() {
+        const said = saidInput?.value?.trim() || '';
+        const pattern = patternInput?.value?.trim() || '';
+        if (said && pattern) {
+            evdUrlInput.value = pattern.replace('{SAID}', said);
+        }
+    }
+
+    // Update URL on input changes
+    saidInput?.addEventListener('input', updateEvdUrl);
+    patternInput?.addEventListener('input', updateEvdUrl);
+
+    // Ensure URL is set before form submit
+    saidForm?.addEventListener('htmx:beforeRequest', function(evt) {
+        const said = saidInput?.value?.trim();
+        if (!said) {
+            evt.preventDefault();
+            document.getElementById('result-container').innerHTML =
+                '<p style="color: var(--vvp-danger);"><strong>Error:</strong> Please enter a dossier SAID.</p>';
+            return;
+        }
+        updateEvdUrl();
+    });
+
+    // Initial update
+    updateEvdUrl();
+});
+</script>
+{% endblock %}

@@ -1232,3 +1232,66 @@ async def get_benchmark_results(
         history=history,
         thresholds=thresholds,
     )
+
+
+# =============================================================================
+# Audit Log Viewer
+# =============================================================================
+
+
+class AuditLogEntry(BaseModel):
+    """Single audit log entry."""
+
+    action: str
+    principal: str
+    resource: str | None = None
+    status: str
+    details: dict | None = None
+    request_id: str | None = None
+    timestamp: str
+
+
+class AuditLogResponse(BaseModel):
+    """Response for audit log endpoint."""
+
+    count: int
+    events: list[AuditLogEntry]
+    buffer_size: int
+    max_buffer_size: int
+
+
+@router.get("/audit-logs", response_model=AuditLogResponse)
+async def get_audit_logs(
+    limit: int = 100,
+    action: str | None = None,
+    status: str | None = None,
+    principal: Principal = require_admin,
+) -> AuditLogResponse:
+    """Get recent audit log entries from memory buffer.
+
+    Returns recent audit events for diagnostics and monitoring.
+    Events are stored in an in-memory ring buffer (max 1000 events).
+
+    Query parameters:
+    - limit: Max events to return (default 100)
+    - action: Filter by action prefix (e.g., "auth.", "tn_mapping.")
+    - status: Filter by status (e.g., "success", "denied", "error")
+
+    Requires: issuer:admin role
+    """
+    audit = get_audit_logger()
+
+    events = audit.get_recent_events(
+        limit=limit,
+        action_filter=action,
+        status_filter=status,
+    )
+
+    stats = audit.get_buffer_stats()
+
+    return AuditLogResponse(
+        count=len(events),
+        events=[AuditLogEntry(**e) for e in events],
+        buffer_size=stats["buffer_size"],
+        max_buffer_size=stats["max_buffer_size"],
+    )

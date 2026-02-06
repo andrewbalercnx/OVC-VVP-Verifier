@@ -449,48 +449,78 @@ def _get_issuer_display_name(
 def _compute_layers(graph: CredentialGraph, trusted_roots: Set[str]) -> None:
     """Compute layers for hierarchical visualization.
 
-    Layer 0 = root/issuer nodes, increasing layers toward leaf credentials.
+    Layout: Top-down from dossier credentials to root of trust.
+    - Layer 0: Dossier credentials (in_dossier=True, not referenced by others)
+    - Layer N: Evidence trees (credentials referenced by previous layers)
+    - Final Layer: Root of trust / terminal issuers
+
+    This creates an intuitive top-down flow: Dossier → Evidence → Authority → Root
     """
     if not graph.nodes:
         return
 
-    # Find root nodes (trusted roots) and issuer nodes (untrusted chain terminators)
-    # Both serve as starting points for layer computation
-    root_nodes = [
+    # Find "leaf" nodes: credentials in dossier that are NOT referenced by other dossier credentials
+    # These are the starting points (top of the tree)
+    all_referenced: Set[str] = set()
+    for node in graph.nodes.values():
+        all_referenced.update(node.edges_to)
+
+    dossier_leaves = [
         said for said, node in graph.nodes.items()
-        if node.is_root or node.credential_type == "ISSUER"
+        if node.in_dossier and said not in all_referenced
     ]
 
-    if not root_nodes:
-        # No root/issuer found - just return nodes in order
+    # If no dossier leaves found, fall back to all dossier credentials
+    if not dossier_leaves:
+        dossier_leaves = [
+            said for said, node in graph.nodes.items()
+            if node.in_dossier
+        ]
+
+    # If still nothing, start with non-root nodes
+    if not dossier_leaves:
+        dossier_leaves = [
+            said for said, node in graph.nodes.items()
+            if not node.is_root and node.credential_type != "ISSUER"
+        ]
+
+    if not dossier_leaves:
+        # Just use all nodes
         graph.layers = [list(graph.nodes.keys())]
         return
 
-    # BFS from roots to compute layers
+    # BFS from dossier leaves DOWN to roots (following edges_to)
     visited: Set[str] = set()
     layers: List[List[str]] = []
-    current_layer = root_nodes
+    current_layer = dossier_leaves
+    max_depth = 10  # Prevent infinite loops
 
-    while current_layer:
+    depth = 0
+    while current_layer and depth < max_depth:
         layers.append(current_layer)
         visited.update(current_layer)
+        depth += 1
 
-        # Find nodes that point TO any node in current layer
+        # Find credentials that the current layer references (edges_to)
         next_layer = []
-        for said, node in graph.nodes.items():
-            if said in visited:
+        for said in current_layer:
+            node = graph.nodes.get(said)
+            if not node:
                 continue
-            # Check if this node has an edge to any node in current layer
-            if any(edge_to in current_layer for edge_to in node.edges_to):
-                next_layer.append(said)
+            for target_said in node.edges_to:
+                if target_said not in visited and target_said in graph.nodes:
+                    if target_said not in next_layer:
+                        next_layer.append(target_said)
 
         current_layer = next_layer
 
-    # Add any remaining nodes not connected to root
+    # Add any remaining nodes (disconnected credentials)
     remaining = [said for said in graph.nodes if said not in visited]
     if remaining:
         layers.append(remaining)
-        graph.errors.append("Some credentials not connected to trusted root")
+        if not any(graph.nodes[s].is_root or graph.nodes[s].credential_type in ("ISSUER", "ROOT", "QVI")
+                   for s in remaining):
+            graph.errors.append("Some credentials not connected to evidence chain")
 
     graph.layers = layers
 

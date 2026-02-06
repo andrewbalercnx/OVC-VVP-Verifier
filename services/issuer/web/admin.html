@@ -400,6 +400,64 @@
     .btn-danger:hover {
       opacity: 0.9;
     }
+
+    /* Audit Log Styles */
+    .audit-filter-bar {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    .audit-filter-bar select {
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      border: 1px solid #dee2e6;
+    }
+    .audit-log-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9em;
+    }
+    .audit-log-table th,
+    .audit-log-table td {
+      padding: 0.5rem;
+      text-align: left;
+      border-bottom: 1px solid #dee2e6;
+    }
+    .audit-log-table th {
+      background: #f8f9fa;
+      font-weight: 600;
+      font-size: 0.85em;
+      color: var(--vvp-muted);
+    }
+    .audit-log-table tbody tr:hover {
+      background: #f8f9fa;
+    }
+    .audit-log-table .status-success { color: var(--vvp-success); }
+    .audit-log-table .status-denied { color: var(--vvp-danger); }
+    .audit-log-table .status-error { color: var(--vvp-danger); }
+    .audit-log-table .status-revoked { color: var(--vvp-warning); }
+    .audit-log-table .timestamp {
+      font-family: monospace;
+      font-size: 0.85em;
+      white-space: nowrap;
+    }
+    .audit-log-table .action {
+      font-family: monospace;
+    }
+    .audit-log-table .details {
+      max-width: 300px;
+      font-family: monospace;
+      font-size: 0.8em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .audit-buffer-info {
+      font-size: 0.85em;
+      color: var(--vvp-muted);
+      margin-top: 0.5rem;
+    }
   </style>
 </head>
 <body>
@@ -615,6 +673,53 @@
         </form>
       </div>
     </div>
+
+    <!-- Audit Log -->
+    <details class="config-section" open>
+      <summary>
+        <span class="section-title">Audit Log</span>
+        <span class="badge badge-info" id="audit-count">Loading...</span>
+      </summary>
+      <div style="padding: 1rem;">
+        <div class="audit-filter-bar">
+          <select id="audit-action-filter" onchange="loadAuditLogs()">
+            <option value="">All Actions</option>
+            <option value="auth.">Authentication</option>
+            <option value="identity.">Identity</option>
+            <option value="credential.">Credentials</option>
+            <option value="tn_mapping.">TN Mappings</option>
+            <option value="organization.">Organizations</option>
+            <option value="user.">Users</option>
+          </select>
+          <select id="audit-status-filter" onchange="loadAuditLogs()">
+            <option value="">All Statuses</option>
+            <option value="success">Success</option>
+            <option value="denied">Denied</option>
+            <option value="error">Error</option>
+            <option value="revoked">Revoked</option>
+          </select>
+          <button onclick="loadAuditLogs()">Refresh</button>
+        </div>
+        <div style="overflow-x: auto;">
+          <table class="audit-log-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Action</th>
+                <th>Principal</th>
+                <th>Status</th>
+                <th>Resource</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="audit-log-body">
+              <tr><td colspan="6">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="audit-buffer-info" id="audit-buffer-info"></div>
+      </div>
+    </details>
 
     <!-- Witness Configuration -->
     <details class="config-section">
@@ -1142,11 +1247,78 @@
       }
     }
 
+    // Audit Log functions
+    async function loadAuditLogs() {
+      const tbody = document.getElementById('audit-log-body');
+      const countBadge = document.getElementById('audit-count');
+      const bufferInfo = document.getElementById('audit-buffer-info');
+
+      const actionFilter = document.getElementById('audit-action-filter').value;
+      const statusFilter = document.getElementById('audit-status-filter').value;
+
+      try {
+        let url = '/admin/audit-logs?limit=100';
+        if (actionFilter) url += '&action=' + encodeURIComponent(actionFilter);
+        if (statusFilter) url += '&status=' + encodeURIComponent(statusFilter);
+
+        const resp = await authFetch(url);
+        if (!resp.ok) {
+          if (resp.status === 401) {
+            tbody.innerHTML = '<tr><td colspan="6">Authentication required</td></tr>';
+            countBadge.textContent = 'Auth Required';
+            countBadge.className = 'badge badge-warning';
+            return;
+          }
+          throw new Error('Failed to fetch audit logs');
+        }
+
+        const data = await resp.json();
+        countBadge.textContent = data.count + ' events';
+        countBadge.className = 'badge badge-info';
+        bufferInfo.textContent = `Buffer: ${data.buffer_size} / ${data.max_buffer_size} events`;
+
+        if (data.events.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6">No audit events found</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = data.events.map(event => {
+          const timestamp = new Date(event.timestamp).toLocaleString();
+          const statusClass = 'status-' + (event.status || 'success');
+          const details = event.details ? JSON.stringify(event.details) : '-';
+          return `
+            <tr>
+              <td class="timestamp">${escapeHtmlSimple(timestamp)}</td>
+              <td class="action">${escapeHtmlSimple(event.action)}</td>
+              <td>${escapeHtmlSimple(event.principal || 'anonymous')}</td>
+              <td class="${statusClass}">${escapeHtmlSimple(event.status || 'success')}</td>
+              <td>${escapeHtmlSimple(event.resource || '-')}</td>
+              <td class="details" title="${escapeHtmlSimple(details)}">${escapeHtmlSimple(details)}</td>
+            </tr>
+          `;
+        }).join('');
+
+      } catch (err) {
+        console.error('Failed to load audit logs:', err);
+        tbody.innerHTML = '<tr><td colspan="6">Error: ' + escapeHtmlSimple(err.message) + '</td></tr>';
+        countBadge.textContent = 'Error';
+        countBadge.className = 'badge badge-danger';
+      }
+    }
+
+    function escapeHtmlSimple(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
     // Load data on page load
     document.addEventListener('DOMContentLoaded', () => {
       loadAdminData();
       loadDeploymentTests();
       loadUsers();
+      loadAuditLogs();
     });
   </script>
 </body>

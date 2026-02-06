@@ -54,6 +54,10 @@ The following commands are pre-authorized and do not require user confirmation:
 
 All test-related commands are pre-authorized.
 
+### Web Search
+
+Web searches (WebSearch tool) are pre-authorized without confirmation, especially during plan mode research phases.
+
 ### MCP Services
 
 The following MCP (Model Context Protocol) services are pre-authorized for use without permission:
