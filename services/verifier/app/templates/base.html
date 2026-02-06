@@ -852,31 +852,22 @@
                     <h3>VVP Verifier Help</h3>
 
                     <div class="help-section">
+                        <h4><a href="/verify/explore">Explorer</a></h4>
+                        <p>Unified credential chain explorer with tabbed input.</p>
+                        <ul class="help-options">
+                            <li><strong>JWT Tab</strong><span>Paste a PASSporT JWT to explore the credential chain</span></li>
+                            <li><strong>SIP Tab</strong><span>Paste a SIP INVITE to extract the Identity header</span></li>
+                            <li><strong>SAID Tab</strong><span>Enter a dossier SAID to fetch credentials directly</span></li>
+                            <li><strong>Credential Graph</strong><span>Click nodes in the SVG to view credential details</span></li>
+                        </ul>
+                    </div>
+
+                    <div class="help-section">
                         <h4><a href="/verify">Verify</a></h4>
-                        <p>Main verification interface for VVP PASSporT tokens.</p>
+                        <p>Verification mode selection and API documentation.</p>
                         <ul class="help-options">
-                            <li><strong>Paste JWT</strong><span>Enter a VVP PASSporT JWT token to verify</span></li>
-                            <li><strong>View Results</strong><span>See validation status, errors, and credential details</span></li>
-                        </ul>
-                    </div>
-
-                    <div class="help-section">
-                        <h4><a href="/verify/simple">Quick Verify</a></h4>
-                        <p>Simplified verification with streamlined output.</p>
-                        <ul class="help-options">
-                            <li><strong>Paste & Verify</strong><span>Quick JWT verification in one step</span></li>
-                            <li><strong>Testing Mode</strong><span>Use JWT time for expiry check (useful for old test tokens)</span></li>
-                        </ul>
-                    </div>
-
-                    <div class="help-section">
-                        <h4><a href="/verify/full">Explorer</a></h4>
-                        <p>Full credential chain explorer with detailed visualization.</p>
-                        <ul class="help-options">
-                            <li><strong>Credential Graph</strong><span>Visual representation of the credential chain</span></li>
-                            <li><strong>Validation Summary</strong><span>Dashboard showing all validation checks</span></li>
-                            <li><strong>Delegation Chain</strong><span>View the trust hierarchy from root to leaf</span></li>
-                            <li><strong>Evidence Timeline</strong><span>See when evidence was fetched and from where</span></li>
+                            <li><strong>Mode Selection</strong><span>Choose between Explorer and Quick Verify</span></li>
+                            <li><strong>API Reference</strong><span>Documentation for verification endpoints</span></li>
                         </ul>
                     </div>
 
@@ -891,7 +882,7 @@
                     </div>
 
                     <div class="help-tip">
-                        <strong>Tip:</strong> Use Quick Verify for fast checks, or Explorer for detailed credential chain analysis.
+                        <strong>Tip:</strong> Use the Explorer for the best experience with tabbed input and interactive credential graph.
                     </div>
 
                     <button onclick="this.closest('.help-overlay').remove()" style="margin-top:1rem;">Close</button>
