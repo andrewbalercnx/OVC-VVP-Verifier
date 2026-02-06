@@ -7,7 +7,7 @@ dependencies = [
   "vvp-common",
   "fastapi==0.115.6",
   "uvicorn[standard]==0.34.0",
-  "pydantic==2.10.6",
+  "pydantic[email]==2.10.6",
   "pysodium>=0.7.18",
   "httpx>=0.27.0",
   "hio>=0.6.9",
