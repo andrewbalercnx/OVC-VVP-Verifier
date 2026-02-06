@@ -10,7 +10,7 @@ Tests cover:
 """
 
 import pytest
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 
 from app.vvp.brand import (
@@ -491,3 +491,135 @@ class TestExtractBrandInfo:
         card = {"org": "ACME", "logo": "http://cdn.acme.com/logo.png"}
         info = extract_brand_info(card)
         assert info.brand_logo_url == "http://cdn.acme.com/logo.png"
+
+    def test_vcard_format_url_search_fallback(self):
+        """vCard format fallback should find URL when split doesn't give valid URL directly.
+
+        When split(":") gives parts[1] that doesn't start with http/https,
+        the code falls back to searching for the URL anywhere in the string.
+        """
+        # After split on ":", parts[1] = "see https://..." which doesn't start with http
+        card = {"org": "ACME", "logo": "LOGO;VALUE=URI:see https://cdn.acme.com/logo.png"}
+        info = extract_brand_info(card)
+        assert info.brand_logo_url == "https://cdn.acme.com/logo.png"
+
+    def test_vcard_format_http_fallback(self):
+        """vCard format fallback should work with HTTP URLs too."""
+        # After split on ":", parts[1] = "check http://..." which doesn't start with http
+        card = {"org": "ACME", "logo": "LOGO;VALUE=URI:check http://cdn.acme.com/logo.png"}
+        info = extract_brand_info(card)
+        assert info.brand_logo_url == "http://cdn.acme.com/logo.png"
+
+    def test_vcard_format_no_url_found(self):
+        """vCard format without valid URL should return None"""
+        card = {"org": "ACME", "logo": "LOGO;VALUE=URI:not-a-url"}
+        info = extract_brand_info(card)
+        assert info.brand_logo_url is None
+
+
+# =============================================================================
+# Sprint 44: Additional Edge Case Tests for Coverage
+# =============================================================================
+
+
+class TestFindBrandCredentialEdgeCases:
+    """Edge case tests for find_brand_credential function."""
+
+    def test_find_credential_via_raw_dict(self):
+        """Should find brand credential via raw dict when attributes is None."""
+
+        @dataclass
+        class RawOnlyACDC:
+            said: str
+            issuer_aid: str
+            attributes: Any = None  # No attributes property
+            raw: Dict[str, Any] = None
+
+            def __post_init__(self):
+                if self.raw is None:
+                    self.raw = {}
+
+        dossier = {
+            "ABC123": RawOnlyACDC(
+                said="ABC123",
+                issuer_aid="ISSUER1",
+                raw={"a": {"fn": "ACME Corp", "org": "ACME", "logo": "https://acme.com"}},
+            ),
+        }
+
+        result = find_brand_credential(dossier)
+        assert result is not None
+        assert result.said == "ABC123"
+
+    def test_skip_non_dict_attrs(self):
+        """Should skip credentials where attrs is not a dict."""
+
+        @dataclass
+        class BadAttrsACDC:
+            said: str
+            issuer_aid: str
+            attributes: Any = None
+            raw: Dict[str, Any] = None
+
+        dossier = {
+            "BAD123": BadAttrsACDC(
+                said="BAD123",
+                issuer_aid="ISSUER1",
+                attributes="not-a-dict",  # Invalid type
+            ),
+            "GOOD456": MockACDC(
+                said="GOOD456",
+                issuer_aid="ISSUER2",
+                attributes={"fn": "ACME Corp", "org": "ACME"},
+            ),
+        }
+
+        result = find_brand_credential(dossier)
+        # Should skip BAD123 and find GOOD456
+        assert result is not None
+        assert result.said == "GOOD456"
+
+
+class TestVerifyBrandAttributesEdgeCases:
+    """Edge case tests for verify_brand_attributes function."""
+
+    def test_verify_via_raw_dict(self):
+        """Should verify attributes via raw dict when attributes is None."""
+
+        @dataclass
+        class RawOnlyBrand:
+            said: str
+            issuer_aid: str
+            attributes: Any = None
+            raw: Dict[str, Any] = None
+
+        brand = RawOnlyBrand(
+            said="BRAND123",
+            issuer_aid="ISSUER1",
+            raw={"a": {"fn": "ACME Corp", "org": "ACME"}},
+        )
+        card = {"fn": "ACME Corp", "org": "ACME"}
+
+        valid, result = verify_brand_attributes(card, brand)
+        assert valid is True
+
+    def test_non_dict_attrs_returns_invalid(self):
+        """Should return invalid when credential attrs is not a dict."""
+
+        @dataclass
+        class BadAttrsBrand:
+            said: str
+            issuer_aid: str
+            attributes: Any = None
+            raw: Dict[str, Any] = None
+
+        brand = BadAttrsBrand(
+            said="BRAND123",
+            issuer_aid="ISSUER1",
+            raw={"a": "not-a-dict"},
+        )
+        card = {"fn": "ACME Corp"}
+
+        valid, result = verify_brand_attributes(card, brand)
+        assert valid is False
+        assert "no attributes" in result[0]

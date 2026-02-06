@@ -23,6 +23,8 @@ from app.vvp.vetter.country_codes import (
     normalize_country_code,
     E164_COUNTRY_CODES,
     ISO3166_ALPHA3_CODES,
+    is_valid_e164_code,
+    is_valid_iso3166_alpha3,
 )
 from app.vvp.vetter.traversal import (
     find_vetter_certification,
@@ -739,3 +741,228 @@ class TestVetterConstraintResult:
         assert d["credential_type"] == "TN"
         assert d["constraint_type"] == "ecc"
         assert d["is_authorized"] is True
+
+
+# =============================================================================
+# Sprint 44: Coverage Tests for Country Code Validation Functions
+# =============================================================================
+
+
+class TestCountryCodeValidation:
+    """Tests for country code validation functions."""
+
+    def test_is_valid_e164_code_valid(self):
+        """Known E.164 codes return True."""
+        assert is_valid_e164_code("1") is True  # US/Canada
+        assert is_valid_e164_code("44") is True  # UK
+        assert is_valid_e164_code("33") is True  # France
+
+    def test_is_valid_e164_code_invalid(self):
+        """Unknown codes return False."""
+        assert is_valid_e164_code("999") is False
+        assert is_valid_e164_code("xyz") is False
+        assert is_valid_e164_code("") is False
+
+    def test_is_valid_iso3166_alpha3_valid(self):
+        """Known ISO 3166-1 alpha-3 codes return True."""
+        assert is_valid_iso3166_alpha3("USA") is True
+        assert is_valid_iso3166_alpha3("GBR") is True
+        assert is_valid_iso3166_alpha3("FRA") is True
+
+    def test_is_valid_iso3166_alpha3_case_insensitive(self):
+        """ISO 3166-1 alpha-3 validation is case-insensitive."""
+        assert is_valid_iso3166_alpha3("usa") is True
+        assert is_valid_iso3166_alpha3("gbr") is True
+        assert is_valid_iso3166_alpha3("Usa") is True
+
+    def test_is_valid_iso3166_alpha3_invalid(self):
+        """Unknown codes return False."""
+        assert is_valid_iso3166_alpha3("XXX") is False
+        assert is_valid_iso3166_alpha3("ABC") is False
+        assert is_valid_iso3166_alpha3("") is False
+
+
+# =============================================================================
+# Sprint 44: Coverage Tests for Traversal Functions
+# =============================================================================
+
+
+class TestTraversalEdgeCases:
+    """Edge case tests for traversal helper functions."""
+
+    def test_get_certification_edge_said_legacy_edge(self):
+        """Should find certification via legacy edge names."""
+        # Test with "vetter" edge name (legacy)
+        cred = {"e": {"vetter": {"n": "CERT_SAID_123"}}}
+        result = get_certification_edge_said(cred)
+        assert result == "CERT_SAID_123"
+
+    def test_get_certification_edge_said_string_ref(self):
+        """Should handle string edge references."""
+        cred = {"e": {"certification": "CERT_SAID_456"}}
+        result = get_certification_edge_said(cred)
+        assert result == "CERT_SAID_456"
+
+    def test_has_certification_edge_legacy(self):
+        """Should detect legacy certification edge names."""
+        cred = {"e": {"vetter_cert": "CERT_SAID_789"}}
+        assert has_certification_edge(cred) is True
+
+    def test_find_vetter_certification_legacy_edge(self):
+        """Should find certification via legacy edge with warning."""
+        cert_acdc = {
+            "d": "CERT_SAID_123",
+            "i": "ISSUER_AID",
+            "s": list(VETTER_CERTIFICATION_SCHEMA_SAIDS)[0],
+            "a": {
+                "i": "VETTER_AID",
+                "ecc_targets": ["44", "1"],
+                "jurisdiction_targets": ["GBR", "USA"],
+            },
+        }
+        cred = {
+            "d": "CRED_SAID",
+            "i": "CRED_ISSUER",
+            "e": {"vetter": {"n": "CERT_SAID_123"}},  # Legacy edge name
+        }
+        dossier = {"CERT_SAID_123": cert_acdc}
+
+        result = find_vetter_certification(cred, dossier)
+        assert result is not None
+        assert result.said == "CERT_SAID_123"
+
+    def test_find_vetter_certification_unknown_schema(self):
+        """Should find certification with unknown schema if structure matches."""
+        cert_acdc = {
+            "d": "CERT_SAID_UNKNOWN",
+            "i": "ISSUER_AID",
+            "s": "UNKNOWN_SCHEMA_SAID",  # Not in known list
+            "a": {
+                "i": "VETTER_AID",
+                "ecc_targets": ["44"],
+                "jurisdiction_targets": ["GBR"],
+            },
+        }
+        cred = {
+            "d": "CRED_SAID",
+            "i": "CRED_ISSUER",
+            "e": {"certification": {"n": "CERT_SAID_UNKNOWN"}},
+        }
+        dossier = {"CERT_SAID_UNKNOWN": cert_acdc}
+
+        result = find_vetter_certification(cred, dossier)
+        assert result is not None
+        assert result.said == "CERT_SAID_UNKNOWN"
+
+    def test_find_vetter_certification_cert_not_in_dossier(self):
+        """Should return None when certification SAID not in dossier."""
+        cred = {
+            "d": "CRED_SAID",
+            "e": {"certification": {"n": "MISSING_CERT_SAID"}},
+        }
+        result = find_vetter_certification(cred, {})  # Empty dossier
+        assert result is None
+
+    def test_find_vetter_certification_invalid_cert_structure(self):
+        """Should return None when referenced cred is not a valid certification."""
+        # Credential without proper certification structure
+        non_cert_acdc = {
+            "d": "NOT_A_CERT",
+            "i": "ISSUER_AID",
+            "s": "SOME_OTHER_SCHEMA",
+            "a": {"some_field": "value"},  # Missing ecc_targets and jurisdiction_targets
+        }
+        cred = {
+            "d": "CRED_SAID",
+            "e": {"certification": {"n": "NOT_A_CERT"}},
+        }
+        dossier = {"NOT_A_CERT": non_cert_acdc}
+
+        result = find_vetter_certification(cred, dossier)
+        assert result is None
+
+    def test_get_certification_edge_said_no_certification_edge(self):
+        """Should return None when no certification-related edges exist."""
+        cred = {"e": {"unrelated_edge": {"n": "SOME_SAID"}}}
+        result = get_certification_edge_said(cred)
+        assert result is None
+
+    def test_find_vetter_certification_empty_edge_dict(self):
+        """Should return None when edge reference has no SAID."""
+        cert_acdc = {
+            "d": "CERT_SAID",
+            "i": "ISSUER_AID",
+            "a": {"i": "VETTER", "ecc_targets": ["44"], "jurisdiction_targets": ["GBR"]},
+        }
+        cred = {
+            "d": "CRED_SAID",
+            "e": {"certification": {}},  # Empty dict - no 'n' key
+        }
+        dossier = {"CERT_SAID": cert_acdc}
+
+        result = find_vetter_certification(cred, dossier)
+        assert result is None
+
+
+class TestTraversalPrivateHelpers:
+    """Tests for traversal private helper functions."""
+
+    def test_get_edges_compact_form(self):
+        """Compact edges (string SAID) should return None."""
+        from app.vvp.vetter.traversal import _get_edges
+
+        cred = {"e": "EDGES_COMPACT_SAID"}
+        assert _get_edges(cred) is None
+
+    def test_get_edges_from_object_with_raw(self):
+        """Should get edges from object.raw.e when edges attr is None."""
+        from dataclasses import dataclass
+        from app.vvp.vetter.traversal import _get_edges
+
+        @dataclass
+        class MockCred:
+            edges: Dict = None
+            raw: Dict = None
+
+        cred = MockCred(edges=None, raw={"e": {"certification": {"n": "SAID"}}})
+        result = _get_edges(cred)
+        assert result == {"certification": {"n": "SAID"}}
+
+    def test_extract_edge_said_invalid_types(self):
+        """Invalid types should return None."""
+        from app.vvp.vetter.traversal import _extract_edge_said
+
+        assert _extract_edge_said(None) is None
+        assert _extract_edge_said(123) is None
+        assert _extract_edge_said([]) is None
+
+    def test_get_schema_said_from_object(self):
+        """Should extract schema SAID from object attributes."""
+        from dataclasses import dataclass
+        from app.vvp.vetter.traversal import _get_schema_said
+
+        @dataclass
+        class MockCred:
+            schema_said: str = "SCHEMA_SAID_XYZ"
+
+        result = _get_schema_said(MockCred())
+        assert result == "SCHEMA_SAID_XYZ"
+
+    def test_get_issuer_aid_from_dict(self):
+        """Should extract issuer AID from dict."""
+        from app.vvp.vetter.traversal import _get_issuer_aid
+
+        cred = {"i": "ISSUER_AID_123"}
+        assert _get_issuer_aid(cred) == "ISSUER_AID_123"
+
+    def test_get_issuer_aid_from_object(self):
+        """Should extract issuer AID from object."""
+        from dataclasses import dataclass
+        from app.vvp.vetter.traversal import _get_issuer_aid
+
+        @dataclass
+        class MockCred:
+            issuer_aid: str = "ISSUER_AID_456"
+
+        result = _get_issuer_aid(MockCred())
+        assert result == "ISSUER_AID_456"
