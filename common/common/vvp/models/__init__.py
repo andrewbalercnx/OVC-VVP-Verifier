@@ -5,6 +5,8 @@ from common.vvp.models.dossier import (
     ACDCNode,
     DossierDAG,
     DossierWarning,
+    EdgeOperator,
+    EdgeValidationWarning,
     ToIPWarningCode,
 )
 
@@ -14,5 +16,7 @@ __all__ = [
     "ACDCNode",
     "DossierDAG",
     "DossierWarning",
+    "EdgeOperator",
+    "EdgeValidationWarning",
     "ToIPWarningCode",
 ]

@@ -19,6 +19,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
+from common.vvp.models import EdgeOperator, EdgeValidationWarning
+
 if TYPE_CHECKING:
     from .models import ACDC
     from ..keri.credential_resolver import CredentialResolver
@@ -171,12 +173,14 @@ class ChainResolutionResult:
         errors: Error messages from resolution failures.
         chain_complete: True if all required edges were resolved.
         root_reached: True if chain reaches a trusted root (GLEIF).
+        operator_warnings: Edge operator constraint violations (I2I/DI2I/NI2I).
     """
     augmented_acdcs: Dict[str, "ACDC"] = field(default_factory=dict)
     resolved_saids: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     chain_complete: bool = False
     root_reached: bool = False
+    operator_warnings: List[EdgeValidationWarning] = field(default_factory=list)
 
 
 def _extract_edge_target(edge_ref: Any) -> Optional[str]:
@@ -198,6 +202,198 @@ def _extract_edge_target(edge_ref: Any) -> Optional[str]:
     if isinstance(edge_ref, dict):
         return edge_ref.get("n") or edge_ref.get("d")
     return None
+
+
+def _extract_edge_operator(edge_ref: Any) -> EdgeOperator:
+    """Extract edge operator from edge reference.
+
+    Per ACDC spec, the 'o' field specifies the operator constraint.
+    Default is I2I (Issuer-to-Issuee) when not specified.
+
+    Args:
+        edge_ref: The edge reference (string or dict).
+
+    Returns:
+        EdgeOperator enum value (I2I, DI2I, or NI2I).
+    """
+    if isinstance(edge_ref, dict):
+        operator_str = edge_ref.get("o", "I2I")
+        try:
+            return EdgeOperator(operator_str)
+        except ValueError:
+            log.warning(f"Unknown edge operator '{operator_str}', defaulting to I2I")
+            return EdgeOperator.I2I
+    # Bare SAID string - default to I2I
+    return EdgeOperator.I2I
+
+
+def _get_issuee_from_acdc(acdc: "ACDC") -> Optional[str]:
+    """Extract issuee AID from ACDC attributes.
+
+    Issuee can be in various field names:
+    - 'i': Standard ACDC issuee field
+    - 'issuee': Alternative naming
+    - 'holder': Alternative naming
+
+    Args:
+        acdc: The ACDC to extract issuee from.
+
+    Returns:
+        Issuee AID string or None if bearer credential.
+    """
+    if not acdc.attributes or not isinstance(acdc.attributes, dict):
+        return None
+    return (
+        acdc.attributes.get("i") or
+        acdc.attributes.get("issuee") or
+        acdc.attributes.get("holder")
+    )
+
+
+def _validate_edge_operator(
+    child: "ACDC",
+    parent: "ACDC",
+    edge_name: str,
+    operator: EdgeOperator,
+    all_acdcs: Dict[str, "ACDC"],
+) -> Optional[EdgeValidationWarning]:
+    """Validate edge operator constraint between child and parent credentials.
+
+    Per ACDC spec:
+    - I2I: child.issuer == parent.issuee (strict)
+    - DI2I: child.issuer == parent.issuee OR delegated from parent.issuee
+    - NI2I: No constraint (permissive, reference-only)
+
+    For bearer credentials (no issuee), I2I constraints don't apply.
+
+    Args:
+        child: Child credential (contains the edge).
+        parent: Parent credential (edge target).
+        edge_name: Name of the edge (e.g., "qvi", "le", "auth").
+        operator: Edge operator constraint.
+        all_acdcs: All known ACDCs (for delegation chain lookup).
+
+    Returns:
+        EdgeValidationWarning if constraint violated, None if valid.
+    """
+    if operator == EdgeOperator.NI2I:
+        # NI2I has no constraint - always passes
+        return None
+
+    child_issuer = child.issuer_aid
+    parent_issuee = _get_issuee_from_acdc(parent)
+
+    if not parent_issuee:
+        # Parent is bearer credential - I2I doesn't apply
+        log.debug(
+            f"Skipping {operator.value} check for edge '{edge_name}': "
+            f"parent {parent.said[:16]}... is bearer credential"
+        )
+        return None
+
+    # Check direct match (satisfies both I2I and DI2I)
+    if child_issuer == parent_issuee:
+        return None
+
+    if operator == EdgeOperator.I2I:
+        # I2I requires exact match
+        return EdgeValidationWarning(
+            operator=EdgeOperator.I2I,
+            edge_name=edge_name,
+            child_said=child.said,
+            parent_said=parent.said,
+            constraint_violated=(
+                f"issuer {child_issuer[:16]}... != issuee {parent_issuee[:16]}..."
+            ),
+        )
+
+    if operator == EdgeOperator.DI2I:
+        # DI2I allows delegation - check for DE credential chain
+        if _check_delegation_chain(child_issuer, parent_issuee, all_acdcs):
+            return None
+
+        return EdgeValidationWarning(
+            operator=EdgeOperator.DI2I,
+            edge_name=edge_name,
+            child_said=child.said,
+            parent_said=parent.said,
+            constraint_violated=(
+                f"issuer {child_issuer[:16]}... not delegated from {parent_issuee[:16]}..."
+            ),
+        )
+
+    return None
+
+
+def _check_delegation_chain(
+    delegatee_aid: str,
+    delegator_aid: str,
+    all_acdcs: Dict[str, "ACDC"],
+    max_depth: int = 5,
+) -> bool:
+    """Check if delegatee_aid is delegated from delegator_aid via DE credentials.
+
+    Looks for a chain: DE(issuee=delegatee) -> ... -> credential(issuee=delegator)
+
+    This implements dossier-based delegation checking. KEL-based delegated AID
+    verification is deferred to a future phase when KEL integration is complete.
+
+    Args:
+        delegatee_aid: AID claiming delegation authority.
+        delegator_aid: AID that should have granted delegation.
+        all_acdcs: All known ACDCs to search for DE credentials.
+        max_depth: Maximum delegation chain depth.
+
+    Returns:
+        True if delegation chain exists, False otherwise.
+    """
+    # Find DE credentials where issuee == delegatee_aid
+    for acdc in all_acdcs.values():
+        if acdc.credential_type != "DE":
+            continue
+
+        de_issuee = _get_issuee_from_acdc(acdc)
+        if de_issuee != delegatee_aid:
+            continue
+
+        # Walk delegation chain from this DE
+        visited = {acdc.said}
+        current = acdc
+        depth = 0
+
+        while depth < max_depth:
+            # Look for delegation edge target
+            target_said = None
+            if current.edges:
+                for edge_name in ("delegation", "issuer", "auth"):
+                    if edge_name in current.edges:
+                        target_said = _extract_edge_target(current.edges[edge_name])
+                        break
+
+            if not target_said or target_said not in all_acdcs:
+                break
+
+            target = all_acdcs[target_said]
+            if target.said in visited:
+                break  # Cycle detected
+
+            visited.add(target.said)
+            target_issuee = _get_issuee_from_acdc(target)
+
+            if target_issuee == delegator_aid:
+                log.debug(
+                    f"Delegation chain found: {delegatee_aid[:16]}... -> "
+                    f"{delegator_aid[:16]}... via DE chain"
+                )
+                return True
+
+            if target.credential_type == "DE":
+                current = target
+                depth += 1
+            else:
+                break  # Non-DE terminus
+
+    return False
 
 
 # =============================================================================
@@ -247,6 +443,7 @@ async def resolve_vlei_chain_edges(
     augmented = dict(dossier_acdcs)
     errors: List[str] = []
     resolved_saids: List[str] = []
+    operator_warnings: List[EdgeValidationWarning] = []
     fetch_count = 0
     semaphore = asyncio.Semaphore(max_concurrent)
     root_reached = False
@@ -338,6 +535,38 @@ async def resolve_vlei_chain_edges(
         errors.append(f"Resolution error: {e}")
         log.exception(f"vLEI chain resolution failed: {e}")
 
+    # Validate edge operator constraints for all resolved credentials
+    # Per ACDC spec, edges have operator constraints (I2I/DI2I/NI2I)
+    for acdc in augmented.values():
+        if not acdc.edges:
+            continue
+
+        for edge_name, edge_ref in acdc.edges.items():
+            if edge_name in ("d", "n"):
+                continue
+
+            target_said = _extract_edge_target(edge_ref)
+            if not target_said or target_said not in augmented:
+                continue  # Can't validate edges to unresolved credentials
+
+            operator = _extract_edge_operator(edge_ref)
+            target_acdc = augmented[target_said]
+
+            warning = _validate_edge_operator(
+                child=acdc,
+                parent=target_acdc,
+                edge_name=edge_name,
+                operator=operator,
+                all_acdcs=augmented,
+            )
+            if warning:
+                operator_warnings.append(warning)
+                log.info(
+                    f"Edge operator violation: {operator.value} constraint on "
+                    f"'{edge_name}' edge from {acdc.said[:16]}... - "
+                    f"{warning.constraint_violated}"
+                )
+
     # Determine chain_complete: all vLEI credentials have required edges resolved
     chain_complete = True
     for acdc in augmented.values():
@@ -355,7 +584,8 @@ async def resolve_vlei_chain_edges(
 
     log.info(
         f"vLEI chain resolution complete: resolved={len(resolved_saids)}, "
-        f"chain_complete={chain_complete}, root_reached={root_reached}"
+        f"chain_complete={chain_complete}, root_reached={root_reached}, "
+        f"operator_warnings={len(operator_warnings)}"
     )
 
     return ChainResolutionResult(
@@ -364,4 +594,5 @@ async def resolve_vlei_chain_edges(
         errors=errors,
         chain_complete=chain_complete,
         root_reached=root_reached,
+        operator_warnings=operator_warnings,
     )

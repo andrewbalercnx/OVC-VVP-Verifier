@@ -30,6 +30,7 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 41 | User Management & Mock vLEI | COMPLETE | Sprint 37 |
 | 42 | SIP Redirect Signing Service | PLANNED | Sprint 41 |
 | 43 | PBX Test Infrastructure | IN PROGRESS (Phase 2 Complete) | Sprint 42 |
+| 44 | SIP Redirect Verification Service | PLANNED | Sprint 43 |
 
 ---
 
@@ -1012,6 +1013,50 @@ services/verifier/tests/test_chain_revocation.py  # New tests
 
 ---
 
+## Edge Operator Validation + DAG Visualization (COMPLETE)
+
+**Goal:** Implement ACDC edge operator validation (I2I/DI2I/NI2I) and fix DAG visualization to properly represent credential chains.
+
+**Deliverables:**
+- [x] EdgeOperator enum (I2I, DI2I, NI2I) and EdgeValidationWarning dataclass
+- [x] I2I validation: child.issuer == parent.issuee constraint
+- [x] DI2I validation: delegation chain via DE credentials in dossier
+- [x] NI2I validation: permissive, no constraint (reference-only edges)
+- [x] Bearer credential recognition (`is_bearer`, `is_subject_bound` properties)
+- [x] Schema constraint validation (warning-only, not blocking)
+- [x] Operator validation integrated into vLEI chain resolution
+- [x] `VVP_OPERATOR_VIOLATION_SEVERITY` config flag (INDETERMINATE/INVALID)
+- [x] DAG visualization: arrows flow top→bottom (root→leaf)
+- [x] DAG visualization: layer labels, separator lines, back-reference highlighting
+- [x] Unit tests for operator validation (25 tests)
+
+**Key Files:**
+```
+common/common/vvp/models/dossier.py          # EdgeOperator, EdgeValidationWarning
+common/common/vvp/models/acdc.py             # is_bearer, issuee_aid properties
+services/verifier/app/vvp/dossier/validator.py  # validate_i2i_edge, validate_di2i_edge, etc.
+services/verifier/app/vvp/acdc/vlei_chain.py    # operator validation in chain resolution
+services/verifier/app/core/config.py            # VVP_OPERATOR_VIOLATION_SEVERITY
+services/verifier/app/templates/partials/credential_graph.html  # DAG visualization
+services/verifier/tests/test_edge_operator.py   # 25 unit tests
+```
+
+**Technical Notes:**
+- I2I is default operator when `o` field absent in edge
+- Bearer credentials (no issuee) skip I2I constraint validation
+- DI2I uses dossier-based delegation (DE credential chains)
+- KEL-based delegated AID verification deferred to future phase
+- DAG edges in data model: from=child, to=parent (reversed for display)
+- Back-references highlighted in red with dashed lines
+
+**Exit Criteria:**
+- [x] All edge operators validated per ACDC spec
+- [x] Operator warnings visible in chain resolution result
+- [x] DAG visualization flows top-to-bottom (root to leaf)
+- [x] All 1711 tests pass (25 new tests added)
+
+---
+
 ## Sprint 41: User Management & Mock vLEI Infrastructure (COMPLETE)
 
 **Goal:** Add multi-tenant user and organization management with mock vLEI credential chain and complete UI.
@@ -1362,6 +1407,297 @@ Documentation/
 
 ---
 
+## Sprint 44: SIP Redirect Verification Service
+
+**Goal:** Implement a SIP redirect-based verification service that receives inbound SIP INVITEs containing VVP headers (Identity/PASSporT), validates the dossier via the VVP Verifier, and returns the verified brand information as X-VVP-* headers for the receiving endpoint.
+
+**Prerequisites:** Sprint 43 (PBX Test Infrastructure) MUST be COMPLETE.
+
+**Background:**
+
+Sprint 42 implements a **signing** service for outbound calls (enterprise → carrier). Sprint 44 implements the complementary **verification** service for inbound calls (carrier → enterprise). The PBX (Sprint 43) has already defined the expected header format and demonstrated header propagation to WebRTC clients.
+
+**Architecture:**
+
+```
+Carrier SBC ──SIP INVITE + Identity/PASSporT──> SIP Redirect Verifier
+                                                       │
+                                                       ▼ HTTPS
+                                                 VVP Verifier API
+                                                 (/verify-callee)
+                                                       │
+                                                       ▼
+                                                 Verification Result
+                                                 (status, brand, logo)
+                                                       │
+PBX/WebRTC <──SIP 302 + X-VVP-* headers──────────────────┘
+```
+
+**Flow:**
+1. Carrier sends SIP INVITE with RFC 8224 `Identity` header containing VVP PASSporT
+2. SIP Redirect Verifier extracts headers: `Identity`, `P-VVP-Identity`, `P-VVP-Passport`
+3. Service calls VVP Verifier `/verify-callee` endpoint with parsed data
+4. Verifier validates: signature, dossier chain, revocation, TN authorization, brand
+5. Service extracts verification result (status, brand name, logo URL)
+6. Returns SIP 302 with X-VVP-* headers for PBX to pass to receiving endpoint
+
+**Deliverables:**
+
+**Phase 1: SIP Verification Service** (`services/sip-verify/`)
+- [ ] **SIP Parser** - Extract `Identity`, `P-VVP-Identity`, `P-VVP-Passport` headers from INVITE
+- [ ] **Identity Header Parser** - Parse RFC 8224 Identity header format:
+  - `Identity: <base64url PASSporT>;info=<oobi>;alg=EdDSA;ppt=vvp`
+- [ ] **VVP-Identity Decoder** - Base64url decode JSON payload
+- [ ] **Verifier API Client** - Call VVP Verifier `/verify-callee` endpoint
+- [ ] **SIP 302 Response Builder** - Include X-VVP-* headers based on verification result
+- [ ] **SIP 4xx Response Builder** - Return appropriate errors for failed verification
+- [ ] **AsyncIO UDP/TCP Transport** - Reuse pattern from Sprint 42 `services/sip-redirect/`
+
+**Phase 2: VVP Verifier Enhancements** (`services/verifier/`)
+- [ ] **Brand Info Extraction** - Add `brand_name` and `brand_logo_url` to VerifyResponse
+- [ ] **Caller ID from PASSporT** - Extract orig.tn for X-VVP-Caller-ID header
+- [ ] **SIP Context Endpoint** - Optional: `/verify-sip` endpoint that accepts raw SIP headers
+
+**Phase 3: PBX Integration** (`services/pbx/`)
+- [ ] **Gateway Configuration** - Add `vvp-verify` gateway pointing to SIP Verify service
+- [ ] **Dialplan Extension** - Route inbound PSTN calls through verification service first
+- [ ] **Header Propagation Test** - Validate X-VVP-* headers reach WebRTC client
+
+**Phase 4: Azure Deployment**
+- [ ] **Deploy SIP Verify VM** - Azure VM with UDP/TCP 5060 (or share with Sprint 42 VM)
+- [ ] **Network Security** - Configure NSG for carrier source IPs
+- [ ] **Monitoring** - CloudWatch/Azure Monitor dashboards
+
+**Key Files:**
+
+```
+services/sip-verify/                        # NEW SERVICE
+├── app/
+│   ├── main.py                             # AsyncIO entrypoint
+│   ├── config.py                           # Configuration
+│   ├── sip/
+│   │   ├── parser.py                       # SIP message parser (shared with sip-redirect)
+│   │   ├── identity_parser.py              # RFC 8224 Identity header parser
+│   │   ├── builder.py                      # SIP response builder
+│   │   └── transport.py                    # UDP/TCP server
+│   ├── verify/
+│   │   ├── handler.py                      # INVITE verification handler
+│   │   ├── client.py                       # VVP Verifier API client
+│   │   └── response_mapper.py              # Map VerifyResponse → X-VVP-* headers
+│   └── models.py                           # VerificationResult, SIPRequest, SIPResponse
+├── tests/
+│   ├── test_identity_parser.py             # RFC 8224 parsing tests
+│   ├── test_handler.py                     # Verification flow tests
+│   └── test_response_mapper.py             # Header mapping tests
+├── pyproject.toml
+└── Dockerfile
+
+services/verifier/app/vvp/
+├── api_models.py                           # Update VerifyResponse with brand fields
+└── verify_callee.py                        # Ensure brand info returned
+
+services/pbx/config/
+├── 00_vvp_verify_gateway.xml               # Gateway to SIP Verify service
+└── 01_vvp_verify_dialplan.xml              # Inbound verification routing
+
+common/common/vvp/sip/                      # NEW: Shared SIP utilities
+├── __init__.py
+├── parser.py                               # Shared SIP parser
+├── identity.py                             # RFC 8224 Identity header utilities
+└── builder.py                              # Shared response builder
+```
+
+**SIP Protocol:**
+
+**Incoming INVITE (from carrier):**
+```
+INVITE sip:+14155551234@pbx.rcnx.io SIP/2.0
+From: <sip:+15551234567@carrier.com>;tag=abc123
+To: <sip:+14155551234@pbx.rcnx.io>
+Call-ID: xyz789@carrier.com
+Identity: eyJ0eXAiOiJwYXNzcG9ydCIsImFsZyI6IkVkRFNBIiwicHB0IjoidnZwIn0.eyJpYXQiOjE3MDcwMDAwMDAsIm9yaWciOnsidG4iOlsiKzE1NTUxMjM0NTY3Il19LCJkZXN0Ijp7InRuIjpbIisxNDE1NTU1MTIzNCJdfSwiZXZkIjoiaHR0cHM6Ly9pc3N1ZXIucmNueC5pby9kb3NzaWVyL0VGdm5vSERZN0kta2FCQmVLbGJEYmtqRzRCYUkwbktMR2FkeEJkak1HZ1NRIn0.signature;info=<https://vvp-witness1.rcnx.io/oobi/EGay...>;alg=EdDSA;ppt=vvp
+...
+```
+
+**Outgoing 302 (to PBX - VALID verification):**
+```
+SIP/2.0 302 Moved Temporarily
+Via: ...
+From: ...
+To: ...;tag=vvp-verify
+Call-ID: xyz789@carrier.com
+CSeq: 1 INVITE
+Contact: <sip:+14155551234@pbx.rcnx.io:5060>
+X-VVP-Brand-Name: Acme Corporation
+X-VVP-Brand-Logo: https://cdn.acme.com/logo.png
+X-VVP-Status: VALID
+X-VVP-Caller-ID: +15551234567
+Content-Length: 0
+```
+
+**Outgoing 302 (to PBX - INVALID verification):**
+```
+SIP/2.0 302 Moved Temporarily
+...
+Contact: <sip:+14155551234@pbx.rcnx.io:5060>
+X-VVP-Brand-Name: Unknown
+X-VVP-Status: INVALID
+X-VVP-Error: SIGNATURE_INVALID
+Content-Length: 0
+```
+
+**Outgoing 302 (to PBX - INDETERMINATE):**
+```
+SIP/2.0 302 Moved Temporarily
+...
+Contact: <sip:+14155551234@pbx.rcnx.io:5060>
+X-VVP-Brand-Name: Acme Corporation
+X-VVP-Brand-Logo: https://cdn.acme.com/logo.png
+X-VVP-Status: INDETERMINATE
+X-VVP-Warning: DOSSIER_FETCH_TIMEOUT
+Content-Length: 0
+```
+
+**X-Header Response Format:**
+
+| Header | Required | Source | Description |
+|--------|----------|--------|-------------|
+| `X-VVP-Status` | Yes | `VerifyResponse.overall_status` | VALID, INVALID, or INDETERMINATE |
+| `X-VVP-Brand-Name` | Yes | Brand credential `fn` or `org` | Organization display name |
+| `X-VVP-Brand-Logo` | No | Brand credential `logo` | Logo URL (may be absent) |
+| `X-VVP-Caller-ID` | No | `PASSporT.orig.tn[0]` | Original caller number |
+| `X-VVP-Error` | No | `VerifyResponse.errors[0].code` | Error code if INVALID |
+| `X-VVP-Warning` | No | - | Warning if INDETERMINATE |
+
+**Verifier API Call:**
+
+```python
+# POST /verify-callee
+{
+    "vvp_identity": {
+        "ppt": "vvp",
+        "kid": "https://vvp-witness1.rcnx.io/oobi/EGay...",
+        "evd": "https://issuer.rcnx.io/dossier/EFvno...",
+        "iat": 1707000000,
+        "exp": 1707000300
+    },
+    "passport": "eyJhbGciOiJFZERTQSI...",
+    "call_context": {
+        "call_id": "xyz789@carrier.com",
+        "cseq": "1 INVITE",
+        "from_uri": "sip:+15551234567@carrier.com",
+        "to_uri": "sip:+14155551234@pbx.rcnx.io"
+    }
+}
+```
+
+**Response Mapping:**
+
+```python
+def map_verify_response_to_headers(resp: VerifyResponse) -> dict:
+    headers = {
+        "X-VVP-Status": resp.overall_status.value,  # VALID/INVALID/INDETERMINATE
+    }
+
+    # Extract brand info from claims tree
+    brand_claim = find_claim(resp.claims, "brand_verified")
+    if brand_claim:
+        # Evidence contains brand_credential:SAID, card.fn:matched, etc.
+        headers["X-VVP-Brand-Name"] = extract_brand_name(brand_claim)
+        logo = extract_brand_logo(brand_claim)
+        if logo:
+            headers["X-VVP-Brand-Logo"] = logo
+    else:
+        # Fallback: use identity name from dossier
+        headers["X-VVP-Brand-Name"] = resp.issuer_identity.name or "Unknown"
+
+    # Extract caller ID from passport
+    if resp.passport_claims and resp.passport_claims.orig_tn:
+        headers["X-VVP-Caller-ID"] = resp.passport_claims.orig_tn[0]
+
+    # Add error/warning for non-VALID status
+    if resp.overall_status == ClaimStatus.INVALID and resp.errors:
+        headers["X-VVP-Error"] = resp.errors[0].code.value
+    elif resp.overall_status == ClaimStatus.INDETERMINATE:
+        headers["X-VVP-Warning"] = "VERIFICATION_INCOMPLETE"
+
+    return headers
+```
+
+**Configuration:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VVP_SIP_VERIFY_HOST` | `0.0.0.0` | Listen address |
+| `VVP_SIP_VERIFY_PORT` | `5061` | SIP port (5060 if sharing with signing) |
+| `VVP_SIP_VERIFY_TRANSPORT` | `udp` | Transport (udp, tcp, both) |
+| `VVP_VERIFIER_URL` | `https://vvp-verifier.rcnx.io` | VVP Verifier API URL |
+| `VVP_VERIFY_TIMEOUT` | `5.0` | Verification timeout in seconds |
+| `VVP_FALLBACK_STATUS` | `INDETERMINATE` | Status when verification times out |
+| `VVP_REDIRECT_TARGET` | `pbx.rcnx.io:5060` | Where to redirect after verification |
+
+**Error Handling:**
+
+| Scenario | SIP Response | X-VVP-Status | X-VVP-Error |
+|----------|--------------|--------------|-------------|
+| No Identity header | 400 Bad Request | - | - |
+| Malformed Identity | 400 Bad Request | - | - |
+| Signature invalid | 302 + headers | INVALID | `SIGNATURE_INVALID` |
+| Dossier fetch failed | 302 + headers | INDETERMINATE | - |
+| Revoked credential | 302 + headers | INVALID | `CREDENTIAL_REVOKED` |
+| TN not authorized | 302 + headers | INVALID | `TN_NOT_AUTHORIZED` |
+| Verification timeout | 302 + headers | INDETERMINATE | - |
+| Verifier unreachable | 302 + headers | INDETERMINATE | - |
+
+**Security:**
+
+1. **TLS for Verifier API** - All calls to VVP Verifier use HTTPS
+2. **Source IP filtering** - NSG restricts to known carrier IPs
+3. **Rate limiting** - Per-source-IP rate limits to prevent DoS
+4. **Audit logging** - All verification requests logged with result
+5. **No credential storage** - Service is stateless; no secrets stored
+
+**Relationship to Sprint 42:**
+
+| Aspect | Sprint 42 (Signing) | Sprint 44 (Verification) |
+|--------|---------------------|--------------------------|
+| Direction | Outbound calls | Inbound calls |
+| Input | API key + TN | Identity header + PASSporT |
+| Processing | Lookup → Create dossier | Parse → Verify dossier |
+| Output | 302 + VVP headers (new) | 302 + VVP headers (verified) |
+| Backend | Issuer API | Verifier API |
+| Shared | SIP parser, transport, 302 builder | Same infrastructure |
+
+**Exit Criteria:**
+
+- [ ] SIP Verify service listens on UDP/TCP port 5061
+- [ ] Parses RFC 8224 `Identity` header from INVITE
+- [ ] Extracts and decodes `P-VVP-Identity` JSON
+- [ ] Calls VVP Verifier `/verify-callee` with parsed data
+- [ ] Returns SIP 302 with X-VVP-* headers based on result
+- [ ] Brand name and logo extracted from verification response
+- [ ] All three statuses (VALID/INVALID/INDETERMINATE) handled correctly
+- [ ] PBX receives and propagates headers to WebRTC client
+- [ ] End-to-end test: carrier → SIP Verify → PBX → WebRTC with VVP display
+- [ ] Error cases return appropriate X-VVP-Error codes
+- [ ] Timeout/unreachable falls back to INDETERMINATE
+- [ ] Azure VM deployed (or shared with Sprint 42 service)
+- [ ] All tests passing
+
+**Test Scenarios:**
+
+| Scenario | Expected Result |
+|----------|-----------------|
+| Valid VVP call | VALID + brand name + logo displayed |
+| Invalid signature | INVALID + "Unknown" brand |
+| Revoked credential | INVALID + X-VVP-Error: CREDENTIAL_REVOKED |
+| TN not in allocation | INVALID + X-VVP-Error: TN_NOT_AUTHORIZED |
+| Dossier fetch timeout | INDETERMINATE + last known brand |
+| Missing Identity header | 400 Bad Request (not forwarded) |
+| Malformed PASSporT | INVALID + X-VVP-Error: PASSPORT_MALFORMED |
+
+---
+
 ## Quick Reference
 
 To start a sprint, say:
@@ -1382,6 +1718,7 @@ To start a sprint, say:
 - "Sprint 41" - User management & mock vLEI (multi-tenant orgs, users, login UI)
 - "Sprint 42" - SIP redirect signing service (native SIP/UDP on Azure VM)
 - "Sprint 43" - PBX test infrastructure (FusionPBX + WebRTC for testing Sprint 42)
+- "Sprint 44" - SIP redirect verification service (verify inbound calls, extract brand info)
 
 Each sprint follows the pair programming workflow:
 1. Plan phase (design, review, approval)

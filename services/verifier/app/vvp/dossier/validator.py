@@ -8,10 +8,17 @@ Validates:
 Also collects ToIP Verifiable Dossiers spec warnings (non-blocking).
 """
 
-from typing import List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from .exceptions import GraphError
-from .models import ACDCNode, DossierDAG, DossierWarning, ToIPWarningCode
+from .models import (
+    ACDCNode,
+    DossierDAG,
+    DossierWarning,
+    EdgeOperator,
+    EdgeValidationWarning,
+    ToIPWarningCode,
+)
 
 
 def extract_edge_targets(acdc: ACDCNode) -> Set[str]:
@@ -413,5 +420,442 @@ def _check_prev_edge(node: ACDCNode) -> List[DossierWarning]:
                 field_path="e.prev",
             )
         )
+
+    return warnings
+
+
+# -----------------------------------------------------------------------------
+# Edge Operator Validation (I2I/DI2I/NI2I)
+# Per ACDC specification, edge operators define issuer-issuee constraints.
+# -----------------------------------------------------------------------------
+
+
+def _get_issuee_from_attributes(attributes: Optional[Any]) -> Optional[str]:
+    """Extract issuee AID from ACDC attributes block.
+
+    Per ACDC spec, the issuee may be in 'i', 'issuee', or 'holder' field.
+
+    Args:
+        attributes: ACDC attributes (dict, str SAID, or None)
+
+    Returns:
+        Issuee AID string or None if not found/not a dict
+    """
+    if not isinstance(attributes, dict):
+        return None
+    return (
+        attributes.get("i") or
+        attributes.get("issuee") or
+        attributes.get("holder")
+    )
+
+
+def _get_edge_operator(edge_ref: Any) -> EdgeOperator:
+    """Extract edge operator from edge reference.
+
+    Per ACDC spec, the 'o' field specifies the operator. If omitted,
+    defaults to I2I (Issuer-to-Issuee).
+
+    Args:
+        edge_ref: Edge reference (dict or string SAID)
+
+    Returns:
+        EdgeOperator enum value (defaults to I2I)
+    """
+    if isinstance(edge_ref, dict):
+        op_str = edge_ref.get("o", "I2I")
+        try:
+            return EdgeOperator(op_str)
+        except ValueError:
+            return EdgeOperator.I2I  # Unknown operator defaults to I2I
+    return EdgeOperator.I2I  # Bare SAID string defaults to I2I
+
+
+def validate_i2i_edge(
+    child: ACDCNode,
+    parent: ACDCNode,
+    edge_name: str
+) -> Optional[EdgeValidationWarning]:
+    """Validate I2I edge constraint: child.issuer == parent.issuee.
+
+    Per ACDC spec, I2I (Issuer-to-Issuee) is the default and strictest
+    operator. It requires that the child credential's issuer AID matches
+    the parent credential's issuee AID, creating a direct chain of authority.
+
+    Args:
+        child: The child ACDCNode (contains the edge)
+        parent: The parent ACDCNode (edge target)
+        edge_name: Name of the edge (for error reporting)
+
+    Returns:
+        EdgeValidationWarning if constraint violated, None if valid
+    """
+    child_issuer = child.issuer
+    parent_issuee = _get_issuee_from_attributes(parent.attributes)
+
+    if not parent_issuee:
+        # Parent is bearer credential - I2I doesn't apply
+        return None
+
+    if child_issuer != parent_issuee:
+        return EdgeValidationWarning(
+            operator=EdgeOperator.I2I,
+            edge_name=edge_name,
+            child_said=child.said,
+            parent_said=parent.said,
+            constraint_violated=(
+                f"issuer {child_issuer[:16]}... != issuee {parent_issuee[:16]}..."
+            )
+        )
+    return None
+
+
+def validate_di2i_edge(
+    child: ACDCNode,
+    parent: ACDCNode,
+    edge_name: str,
+    dossier_nodes: Dict[str, ACDCNode]
+) -> Optional[EdgeValidationWarning]:
+    """Validate DI2I edge constraint: child.issuer == parent.issuee OR delegated.
+
+    Per ACDC spec, DI2I (Delegated-Issuer-to-Issuee) extends I2I to allow
+    the child's issuer to be a delegated AID from the parent's issuee.
+
+    Phase 1 Implementation: Uses dossier-based delegation checking only.
+    Looks for DE (Delegate Entity) credentials in the dossier that prove
+    the delegation chain from child.issuer to parent.issuee.
+
+    KEL-based delegated AID verification is deferred to a future phase.
+
+    Args:
+        child: The child ACDCNode (contains the edge)
+        parent: The parent ACDCNode (edge target)
+        edge_name: Name of the edge (for error reporting)
+        dossier_nodes: All ACDCNodes in the dossier for delegation lookup
+
+    Returns:
+        EdgeValidationWarning if constraint violated, None if valid
+    """
+    child_issuer = child.issuer
+    parent_issuee = _get_issuee_from_attributes(parent.attributes)
+
+    if not parent_issuee:
+        # Parent is bearer credential - DI2I doesn't apply
+        return None
+
+    # Check direct match first (satisfies I2I, therefore DI2I)
+    if child_issuer == parent_issuee:
+        return None
+
+    # Check dossier-based delegation
+    if _check_dossier_delegation(child_issuer, parent_issuee, dossier_nodes):
+        return None
+
+    return EdgeValidationWarning(
+        operator=EdgeOperator.DI2I,
+        edge_name=edge_name,
+        child_said=child.said,
+        parent_said=parent.said,
+        constraint_violated=(
+            f"issuer {child_issuer[:16]}... not delegated from {parent_issuee[:16]}..."
+        )
+    )
+
+
+def _check_dossier_delegation(
+    delegatee_aid: str,
+    delegator_aid: str,
+    dossier_nodes: Dict[str, ACDCNode],
+    max_depth: int = 5
+) -> bool:
+    """Check if delegatee_aid is delegated from delegator_aid via dossier credentials.
+
+    Looks for a chain: DE(issuee=delegatee) -> ... -> credential(issuee=delegator)
+
+    This checks for DE (Delegate Entity) credentials where the issuee matches
+    the delegatee, and the delegation edge chain terminates at a credential
+    whose issuee is the delegator.
+
+    Args:
+        delegatee_aid: The AID to check as delegatee
+        delegator_aid: The AID to check as delegator
+        dossier_nodes: All nodes in the dossier
+        max_depth: Maximum chain depth to prevent infinite loops
+
+    Returns:
+        True if delegation proven via dossier credentials, False otherwise
+    """
+    # Look for DE credentials where issuee == delegatee_aid
+    for node in dossier_nodes.values():
+        # Check if this is a DE credential (by credential_type from raw or schema)
+        raw = node.raw
+        cred_type = raw.get("credential_type") if raw else None
+        if not cred_type:
+            # Infer from schema or attributes
+            attrs = node.attributes if isinstance(node.attributes, dict) else {}
+            if "delegate" in str(attrs).lower():
+                cred_type = "DE"
+
+        if cred_type != "DE":
+            continue
+
+        de_issuee = _get_issuee_from_attributes(node.attributes)
+        if de_issuee != delegatee_aid:
+            continue
+
+        # Found a DE with issuee == delegatee - walk delegation chain
+        visited: Set[str] = {node.said}
+        current = node
+        depth = 0
+
+        while depth < max_depth:
+            target = _find_delegation_target(current, dossier_nodes)
+            if not target:
+                break
+            if target.said in visited:
+                break  # Cycle detected
+
+            visited.add(target.said)
+
+            target_issuee = _get_issuee_from_attributes(target.attributes)
+            if target_issuee == delegator_aid:
+                return True  # Found complete delegation chain
+
+            # Check if target is another DE to continue walking
+            target_raw = target.raw
+            target_type = target_raw.get("credential_type") if target_raw else None
+            if target_type == "DE":
+                current = target
+                depth += 1
+            else:
+                break  # Non-DE terminus, chain incomplete
+
+    return False
+
+
+def _find_delegation_target(
+    node: ACDCNode,
+    dossier_nodes: Dict[str, ACDCNode]
+) -> Optional[ACDCNode]:
+    """Find the target of a delegation edge from a DE credential.
+
+    Looks for edges named 'delegation', 'd', 'delegate', 'delegator', or 'issuer'.
+
+    Args:
+        node: The DE credential node
+        dossier_nodes: All nodes in the dossier
+
+    Returns:
+        The target ACDCNode, or None if not found
+    """
+    if not node.edges:
+        return None
+
+    delegation_edge_names = ("delegation", "d", "delegate", "delegator", "issuer")
+
+    for edge_name, edge_ref in node.edges.items():
+        if edge_name.lower() not in delegation_edge_names:
+            continue
+
+        # Extract target SAID
+        target_said = None
+        if isinstance(edge_ref, str):
+            target_said = edge_ref
+        elif isinstance(edge_ref, dict):
+            target_said = edge_ref.get("n") or edge_ref.get("d")
+
+        if target_said and target_said in dossier_nodes:
+            return dossier_nodes[target_said]
+
+    return None
+
+
+def validate_ni2i_edge(
+    child: ACDCNode,
+    parent: ACDCNode,
+    edge_name: str
+) -> Optional[EdgeValidationWarning]:
+    """Validate NI2I edge constraint: no constraint (permissive).
+
+    Per ACDC spec, NI2I (Not-Issuer-to-Issuee) is the permissive operator
+    that allows any issuer-issuee relationship. It's used for reference-only
+    edges where no authority transfer is implied.
+
+    Args:
+        child: The child ACDCNode (contains the edge)
+        parent: The parent ACDCNode (edge target)
+        edge_name: Name of the edge (for error reporting)
+
+    Returns:
+        Always returns None (NI2I has no constraint to violate)
+    """
+    return None  # NI2I is permissive - always passes
+
+
+def validate_edge_operator(
+    child: ACDCNode,
+    parent: ACDCNode,
+    edge_name: str,
+    edge_ref: Any,
+    dossier_nodes: Optional[Dict[str, ACDCNode]] = None
+) -> Optional[EdgeValidationWarning]:
+    """Validate an edge against its operator constraint.
+
+    Dispatches to the appropriate validator based on the edge operator.
+
+    Args:
+        child: The child ACDCNode (contains the edge)
+        parent: The parent ACDCNode (edge target)
+        edge_name: Name of the edge
+        edge_ref: The edge reference (dict or string SAID)
+        dossier_nodes: All nodes in dossier (needed for DI2I validation)
+
+    Returns:
+        EdgeValidationWarning if constraint violated, None if valid
+    """
+    operator = _get_edge_operator(edge_ref)
+
+    if operator == EdgeOperator.I2I:
+        return validate_i2i_edge(child, parent, edge_name)
+    elif operator == EdgeOperator.DI2I:
+        return validate_di2i_edge(
+            child, parent, edge_name,
+            dossier_nodes or {}
+        )
+    elif operator == EdgeOperator.NI2I:
+        return validate_ni2i_edge(child, parent, edge_name)
+    else:
+        # Unknown operator - treat as I2I (strictest)
+        return validate_i2i_edge(child, parent, edge_name)
+
+
+def validate_all_edge_operators(
+    dag: DossierDAG
+) -> List[EdgeValidationWarning]:
+    """Validate all edge operators in a dossier DAG.
+
+    Checks every edge in the DAG against its operator constraint and
+    returns a list of warnings for any violations.
+
+    Args:
+        dag: The DossierDAG to validate
+
+    Returns:
+        List of EdgeValidationWarning for any constraint violations
+    """
+    warnings: List[EdgeValidationWarning] = []
+
+    for child_said, child in dag.nodes.items():
+        if not child.edges:
+            continue
+
+        for edge_name, edge_ref in child.edges.items():
+            if edge_name in ("d", "n"):
+                continue  # Skip SAID fields
+
+            # Get target SAID
+            target_said = None
+            if isinstance(edge_ref, str):
+                target_said = edge_ref
+            elif isinstance(edge_ref, dict):
+                target_said = edge_ref.get("n") or edge_ref.get("d")
+
+            if not target_said:
+                continue
+
+            # Look up parent in DAG
+            parent = dag.nodes.get(target_said)
+            if not parent:
+                continue  # Dangling reference - can't validate operator
+
+            # Validate the edge operator
+            warning = validate_edge_operator(
+                child, parent, edge_name, edge_ref, dag.nodes
+            )
+            if warning:
+                warnings.append(warning)
+
+    return warnings
+
+
+def validate_edge_schema(
+    edge_ref: Any,
+    target_node: ACDCNode,
+    edge_name: str,
+    source_said: str
+) -> Optional[DossierWarning]:
+    """Validate that target credential matches edge schema constraint.
+
+    Per ToIP spec, edges with 's' field should have targets matching that
+    schema SAID. This is a type-safety check.
+
+    Policy: Schema constraint violations are warnings only (INDETERMINATE),
+    not hard failures, for backward compatibility.
+
+    Args:
+        edge_ref: The edge reference (dict or string SAID)
+        target_node: The target ACDCNode
+        edge_name: Name of the edge
+        source_said: SAID of the source credential (for warning)
+
+    Returns:
+        DossierWarning if schema mismatch, None if valid or no constraint
+    """
+    if not isinstance(edge_ref, dict):
+        return None  # Bare SAID has no schema constraint
+
+    expected_schema = edge_ref.get("s")
+    if not expected_schema:
+        return None  # No schema constraint specified
+
+    actual_schema = target_node.schema
+    if expected_schema != actual_schema:
+        return DossierWarning(
+            code=ToIPWarningCode.EDGE_SCHEMA_MISMATCH,
+            message=f"Edge '{edge_name}' schema constraint violated",
+            said=source_said,
+            field_path=f"e.{edge_name}.s",
+            details=f"expected {expected_schema[:20]}..., got {actual_schema[:20]}..."
+        )
+
+    return None
+
+
+def validate_all_edge_schemas(dag: DossierDAG) -> List[DossierWarning]:
+    """Validate all edge schema constraints in a dossier DAG.
+
+    Args:
+        dag: The DossierDAG to validate
+
+    Returns:
+        List of DossierWarning for any schema mismatches
+    """
+    warnings: List[DossierWarning] = []
+
+    for source_said, source in dag.nodes.items():
+        if not source.edges:
+            continue
+
+        for edge_name, edge_ref in source.edges.items():
+            if edge_name in ("d", "n"):
+                continue
+
+            # Get target SAID
+            target_said = None
+            if isinstance(edge_ref, str):
+                target_said = edge_ref
+            elif isinstance(edge_ref, dict):
+                target_said = edge_ref.get("n") or edge_ref.get("d")
+
+            if not target_said:
+                continue
+
+            target = dag.nodes.get(target_said)
+            if not target:
+                continue  # Dangling reference
+
+            warning = validate_edge_schema(edge_ref, target, edge_name, source_said)
+            if warning:
+                warnings.append(warning)
 
     return warnings

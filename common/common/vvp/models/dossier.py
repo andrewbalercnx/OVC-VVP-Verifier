@@ -14,6 +14,21 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 
+class EdgeOperator(str, Enum):
+    """ACDC edge operators defining issuer-issuee relationship constraints.
+
+    Per ACDC specification, edge operators control how authority flows through
+    credential chains:
+    - I2I: Strict chain where child issuer must equal parent issuee
+    - DI2I: Extended to allow delegated issuers
+    - NI2I: Permissive, no issuer-issuee relationship required
+    """
+
+    I2I = "I2I"      # Issuer-to-Issuee (default)
+    DI2I = "DI2I"    # Delegated-Issuer-to-Issuee
+    NI2I = "NI2I"    # Not-Issuer-to-Issuee (permissive)
+
+
 class ToIPWarningCode(str, Enum):
     """ToIP Verifiable Dossiers Specification v0.6 warning codes.
 
@@ -23,6 +38,8 @@ class ToIPWarningCode(str, Enum):
 
     EDGE_MISSING_SCHEMA = "EDGE_MISSING_SCHEMA"  # Edge has 'n' but no 's' (schema SAID)
     EDGE_NON_OBJECT_FORMAT = "EDGE_NON_OBJECT_FORMAT"  # Edge is direct SAID string, not {n,s} object
+    EDGE_SCHEMA_MISMATCH = "EDGE_SCHEMA_MISMATCH"  # Edge 's' doesn't match target schema
+    EDGE_OPERATOR_VIOLATION = "EDGE_OPERATOR_VIOLATION"  # I2I/DI2I constraint violated
     DOSSIER_HAS_ISSUEE = "DOSSIER_HAS_ISSUEE"  # Root dossier ACDC has 'issuee' or 'ri'
     DOSSIER_HAS_PREV_EDGE = "DOSSIER_HAS_PREV_EDGE"  # Dossier has 'prev' edge (versioning)
     EVIDENCE_IN_ATTRIBUTES = "EVIDENCE_IN_ATTRIBUTES"  # Evidence-like data in 'a' not 'e'
@@ -41,12 +58,39 @@ class DossierWarning:
         message: Human-readable warning message.
         said: SAID of the credential that triggered the warning (optional).
         field_path: JSON path to the problematic field (e.g., "e.vetting").
+        details: Additional details about the warning (optional).
     """
 
     code: ToIPWarningCode
     message: str
     said: Optional[str] = None
     field_path: Optional[str] = None
+    details: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class EdgeValidationWarning:
+    """Warning for edge operator constraint violations.
+
+    Per ACDC spec, edge operators (I2I/DI2I/NI2I) define constraints on how
+    issuers relate to issuees in credential chains. Violations are reported
+    as warnings (INDETERMINATE) by default, not hard failures.
+
+    Attributes:
+        operator: The edge operator that was violated.
+        edge_name: Name of the edge (e.g., "auth", "qvi", "le").
+        child_said: SAID of the child credential (contains the edge).
+        parent_said: SAID of the parent credential (edge target).
+        constraint_violated: Description of how the constraint was violated.
+        severity: Severity level (default INDETERMINATE for soft failure).
+    """
+
+    operator: EdgeOperator
+    edge_name: str
+    child_said: str
+    parent_said: str
+    constraint_violated: str
+    severity: str = "INDETERMINATE"
 
 
 @dataclass(frozen=True)

@@ -8031,3 +8031,74 @@ Phase 4 requires Sprint 42 (SIP Redirect Signing Service) to be complete:
 ## Date Completed
 
 2026-02-05 (Phases 1-3)
+
+---
+
+# Edge Operator Validation + DAG Visualization
+
+**Date Completed:** 2026-02-06
+
+## Executive Summary
+
+Implemented ACDC edge operator validation (I2I/DI2I/NI2I) and fixed DAG visualization to properly represent credential chains. This addresses gaps in the VVP dossier resolution implementation where edge operator constraints were ignored.
+
+## Key Changes
+
+### Phase 1: Edge Operator Validation Framework
+- Added `EdgeOperator` enum (I2I, DI2I, NI2I) to `common/vvp/models/dossier.py`
+- Added `EdgeValidationWarning` dataclass for constraint violations
+- Added `EDGE_OPERATOR_VIOLATION` and `EDGE_SCHEMA_MISMATCH` warning codes
+
+### Phase 2: Schema Constraint Validation
+- Added `validate_edge_schema()` function (warning-only, not blocking)
+- Added `validate_all_edge_schemas()` for DAG-wide validation
+
+### Phase 3: Bearer Credential Recognition
+- Added `is_bearer` property to ACDC model
+- Added `is_subject_bound` and `issuee_aid` properties
+- Bearer credentials (no issuee) skip I2I constraint validation
+
+### Phase 4: Chain Resolution Integration
+- Updated `vlei_chain.py` to validate edge operators during resolution
+- Added `operator_warnings` to `ChainResolutionResult`
+
+### Phase 5: DAG Visualization Improvements
+- Edge arrows now point parent→child (top-to-bottom trust flow)
+- Added layer labels and separator lines
+- Back-references highlighted in red with dashed lines
+- Added legend explaining edge colors
+
+## Files Changed
+
+| File | Changes |
+|------|---------|
+| `common/common/vvp/models/dossier.py` | EdgeOperator, EdgeValidationWarning, ToIPWarningCode updates |
+| `common/common/vvp/models/acdc.py` | is_bearer, is_subject_bound, issuee_aid properties |
+| `services/verifier/app/vvp/dossier/validator.py` | I2I/DI2I/NI2I validation functions (~450 lines) |
+| `services/verifier/app/vvp/acdc/vlei_chain.py` | Operator validation in chain resolution (~230 lines) |
+| `services/verifier/app/core/config.py` | VVP_OPERATOR_VIOLATION_SEVERITY config flag |
+| `services/verifier/app/templates/partials/credential_graph.html` | DAG visualization fixes |
+| `services/verifier/tests/test_edge_operator.py` | 25 unit tests |
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VVP_OPERATOR_VIOLATION_SEVERITY` | `INDETERMINATE` | Soft warnings (INDETERMINATE) or hard failures (INVALID) |
+
+## Test Results
+
+All 1711 tests pass (25 new tests added for operator validation).
+
+## Exit Criteria
+
+- [x] EdgeOperator enum and validation functions implemented
+- [x] I2I/DI2I/NI2I validation produces warnings (not failures)
+- [x] Schema constraint validation produces warnings
+- [x] Bearer credential recognition via is_bearer property
+- [x] Operator validation integrated with vLEI chain resolution
+- [x] VVP_OPERATOR_VIOLATION_SEVERITY config flag added
+- [x] DAG visualization flows top-to-bottom (root to leaf)
+- [x] Layer labels and back-reference highlighting
+- [x] All tests pass
+

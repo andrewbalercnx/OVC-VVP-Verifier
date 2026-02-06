@@ -482,6 +482,24 @@ ENFORCE_VETTER_CONSTRAINTS: bool = os.getenv(
 
 
 # =============================================================================
+# EDGE OPERATOR VALIDATION (ACDC spec I2I/DI2I/NI2I constraints)
+# =============================================================================
+# Per ACDC spec, edge operators control how authority flows through credential
+# chains. Operator violations can be treated as soft warnings (INDETERMINATE)
+# or hard failures (INVALID) based on deployment policy.
+
+# Operator violation severity
+# "INDETERMINATE" (default): Soft warnings - verification continues, violations logged
+# "INVALID": Hard failures - operator violations result in INVALID verification status
+#
+# Use "INVALID" for strict deployments requiring full ACDC compliance.
+# Use "INDETERMINATE" for backward compatibility and graceful handling.
+VVP_OPERATOR_VIOLATION_SEVERITY: str = os.getenv(
+    "VVP_OPERATOR_VIOLATION_SEVERITY", "INDETERMINATE"
+)
+
+
+# =============================================================================
 # VLEI CHAIN RESOLUTION (Deep chain traversal to GLEIF root)
 # =============================================================================
 # When enabled, the verifier follows e.qvi edges from LE credentials to fetch

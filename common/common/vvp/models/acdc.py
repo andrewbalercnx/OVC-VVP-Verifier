@@ -148,6 +148,58 @@ class ACDC:
                 return False
         return True
 
+    @property
+    def is_bearer(self) -> bool:
+        """Check if this credential is a bearer credential (no issuee binding).
+
+        Per ACDC spec, bearer credentials have no issuee field in attributes.
+        They assert authority boundaries or undirected claims, not facts about
+        a specific party. Examples include vetter certifications and governance
+        credentials.
+
+        Returns:
+            True if credential has no issuee binding, False if subject-bound.
+        """
+        if not self.attributes:
+            return True
+        if not isinstance(self.attributes, dict):
+            # Compact variant (SAID reference) - cannot determine without expansion
+            # Conservatively treat as bearer since we can't verify binding
+            return True
+        return not (
+            self.attributes.get("i") or
+            self.attributes.get("issuee") or
+            self.attributes.get("holder")
+        )
+
+    @property
+    def is_subject_bound(self) -> bool:
+        """Check if this credential is bound to a specific subject (issuee).
+
+        Subject-bound credentials make directed assertions about a specific
+        party identified by the issuee AID. Examples include Legal Entity
+        credentials, OOR credentials, and APE credentials.
+
+        Returns:
+            True if credential is bound to an issuee, False if bearer.
+        """
+        return not self.is_bearer
+
+    @property
+    def issuee_aid(self) -> Optional[str]:
+        """Get the issuee (subject) AID if this is a subject-bound credential.
+
+        Returns:
+            The issuee AID from attributes, or None if bearer credential.
+        """
+        if not isinstance(self.attributes, dict):
+            return None
+        return (
+            self.attributes.get("i") or
+            self.attributes.get("issuee") or
+            self.attributes.get("holder")
+        )
+
 
 @dataclass
 class ACDCChainResult:
