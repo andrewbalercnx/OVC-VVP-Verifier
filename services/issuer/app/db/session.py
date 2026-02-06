@@ -93,8 +93,18 @@ def init_database() -> None:
 
     This is called during application startup in the lifespan handler.
     """
+    from pathlib import Path
     from app.db.models import Base
 
     log.info(f"Initializing database at {DATABASE_URL}")
+
+    # Ensure the database directory exists for SQLite
+    if DATABASE_URL.startswith("sqlite:///"):
+        db_path = DATABASE_URL.replace("sqlite:///", "")
+        if db_path and db_path != ":memory:":
+            db_dir = Path(db_path).parent
+            db_dir.mkdir(parents=True, exist_ok=True)
+            log.info(f"Ensured database directory exists: {db_dir}")
+
     Base.metadata.create_all(bind=engine)
     log.info("Database tables created successfully")

@@ -1,0 +1,165 @@
+{
+  "_comment": "VVP Test Fixtures - Sprint 42",
+  "_description": "Complete test data for VVP signing and verification",
+  "_warning": "FOR TESTING ONLY - DO NOT USE IN PRODUCTION",
+
+  "organization": {
+    "name": "Acme Corp",
+    "lei": "549300EXAMPLE000001",
+    "pseudo_lei": "5493001234567890AB12",
+    "address": {
+      "street": "123 Test Street",
+      "city": "London",
+      "country": "GB"
+    }
+  },
+
+  "telephone_numbers": {
+    "extension_1001": {
+      "tn": "+441923311000",
+      "description": "Main test line for extension 1001",
+      "allocated_to": "Acme Corp"
+    }
+  },
+
+  "aids": {
+    "gleif": {
+      "aid": "EKYLUMmNPZeEs77Zvclf0bSN5IN-mLfLpx2ySb-HDlk4",
+      "description": "GLEIF Root of Trust (simulated)"
+    },
+    "qvi": {
+      "aid": "EBcIURLpxmVwahksgrsGW6_dUw0zBhyEHYFk17eWrZfk",
+      "description": "Qualified vLEI Issuer (simulated)"
+    },
+    "acme_corp": {
+      "aid": "EHMnCf8_nIemuPx-cUHb_92fFXt9yjsn7NJJGKfgCkC0",
+      "description": "Acme Corp organization AID"
+    },
+    "acme_signer": {
+      "aid": "EJccSRTfXYF6wrUVuenAIHzwcx3hJugeiJsEKmndi5q1",
+      "description": "Acme Corp authorized signer"
+    }
+  },
+
+  "keys": {
+    "gleif": {
+      "public_b64": "aVMeRZLHvpVNHnfr9T9PZWLV6Xd5PXhzaKfOxKYjvQg=",
+      "private_b64": "qL2YKMPv5VYmKNfr9T9PZWLV6Xd5PXhzaKfOxKYjvQiaVMeRZLHvpVNHnfr9T9PZWLV6Xd5PXhzaKfOxKYjvQg=",
+      "algorithm": "Ed25519"
+    },
+    "qvi": {
+      "public_b64": "bWNeRZLHvpVNHnfr9T9PZWLV6Xd5PXhzaKfOxKYjvQg=",
+      "private_b64": "rM3YKMPv5VYmKNfr9T9PZWLV6Xd5PXhzaKfOxKYjvQibWNeRZLHvpVNHnfr9T9PZWLV6Xd5PXhzaKfOxKYjvQg=",
+      "algorithm": "Ed25519"
+    },
+    "acme_corp": {
+      "public_b64": "cXOeRZLHvpVNHnfr9T9PZWLV6Xd5PXhzaKfOxKYjvQg=",
+      "private_b64": "sN4YKMPv5VYmKNfr9T9PZWLV6Xd5PXhzaKfOxKYjvQicXOeRZLHvpVNHnfr9T9PZWLV6Xd5PXhzaKfOxKYjvQg=",
+      "algorithm": "Ed25519"
+    },
+    "acme_signer": {
+      "public_b64": "dYPeRZLHvpVNHnfr9T9PZWLV6Xd5PXhzaKfOxKYjvQg=",
+      "private_b64": "tO5YKMPv5VYmKNfr9T9PZWLV6Xd5PXhzaKfOxKYjvQidYPeRZLHvpVNHnfr9T9PZWLV6Xd5PXhzaKfOxKYjvQg=",
+      "algorithm": "Ed25519"
+    }
+  },
+
+  "schemas": {
+    "qvi": "EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao",
+    "le": "ENPXp1vQzRF6JwIuS-mp2U8Uf1MoADoP_GqQ62VsDZWY",
+    "oor_auth": "EKA57bKBKxr_kN7iN5i7lMUxpMG-s19dRcmov1iDxz-E",
+    "oor": "EBNaNu-M9P5cgrnfl2Fvymy4E_jvxxyjb70PRtiANlJy",
+    "tn_allocation": "EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ",
+    "tn_allocation_extended": "EGUh_fVLbjfkYFb5zAsY2Rqq0NqwnD3r5jsdKWLTpU8_"
+  },
+
+  "credentials": {
+    "qvi": {
+      "said": "EQviCredentialSAIDforTestingPurposesOnly000",
+      "issuer": "EKYLUMmNPZeEs77Zvclf0bSN5IN-mLfLpx2ySb-HDlk4",
+      "issuee": "EBcIURLpxmVwahksgrsGW6_dUw0zBhyEHYFk17eWrZfk",
+      "schema": "EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao",
+      "description": "QVI credential issued by GLEIF to test QVI"
+    },
+    "le": {
+      "said": "ELeCredentialSAIDforAcmeCorpTestingOnly0000",
+      "issuer": "EBcIURLpxmVwahksgrsGW6_dUw0zBhyEHYFk17eWrZfk",
+      "issuee": "EHMnCf8_nIemuPx-cUHb_92fFXt9yjsn7NJJGKfgCkC0",
+      "schema": "ENPXp1vQzRF6JwIuS-mp2U8Uf1MoADoP_GqQ62VsDZWY",
+      "description": "Legal Entity credential for Acme Corp",
+      "edges": {
+        "qvi": "EQviCredentialSAIDforTestingPurposesOnly000"
+      }
+    },
+    "tn_allocation": {
+      "said": "ETnAllocationSAIDforAcmeCorpExtension1001",
+      "issuer": "EBcIURLpxmVwahksgrsGW6_dUw0zBhyEHYFk17eWrZfk",
+      "issuee": "EHMnCf8_nIemuPx-cUHb_92fFXt9yjsn7NJJGKfgCkC0",
+      "schema": "EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ",
+      "description": "TN Allocation for +441923311000",
+      "attributes": {
+        "numbers": {
+          "tn": ["+441923311000"]
+        },
+        "channel": "voice",
+        "doNotOriginate": false
+      },
+      "edges": {
+        "le": "ELeCredentialSAIDforAcmeCorpTestingOnly0000"
+      }
+    }
+  },
+
+  "tn_mapping": {
+    "id": "tn-mapping-acme-ext-1001",
+    "tn": "+441923311000",
+    "organization_id": "org-acme-corp-test",
+    "organization_name": "Acme Corp",
+    "dossier_said": "ETnAllocationSAIDforAcmeCorpExtension1001",
+    "identity_name": "acme-signer",
+    "brand_name": "Acme Corp",
+    "brand_logo_url": "https://example.com/acme-logo.svg",
+    "enabled": true
+  },
+
+  "api_key": {
+    "key": "vvp_test_acme_corp_api_key_12345678901234567890",
+    "prefix": "vvp_test",
+    "organization_id": "org-acme-corp-test",
+    "roles": ["org:dossier_manager"]
+  },
+
+  "expected_responses": {
+    "successful_302": {
+      "status_code": 302,
+      "reason_phrase": "Moved Temporarily",
+      "vvp_status": "VALID",
+      "headers": {
+        "P-VVP-Identity": "present",
+        "P-VVP-Passport": "present",
+        "X-VVP-Brand-Name": "Acme Corp",
+        "X-VVP-Status": "VALID"
+      }
+    },
+    "missing_api_key_401": {
+      "status_code": 401,
+      "reason_phrase": "Unauthorized",
+      "vvp_status": "INVALID"
+    },
+    "invalid_api_key_401": {
+      "status_code": 401,
+      "reason_phrase": "Unauthorized",
+      "vvp_status": "INVALID"
+    },
+    "unmapped_tn_404": {
+      "status_code": 404,
+      "reason_phrase": "Not Found",
+      "vvp_status": "INVALID"
+    },
+    "rate_limited_403": {
+      "status_code": 403,
+      "reason_phrase": "Forbidden",
+      "vvp_status": "INVALID"
+    }
+  }
+}

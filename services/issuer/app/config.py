@@ -21,7 +21,8 @@ def _get_data_dir() -> Path:
     Priority:
     1. VVP_ISSUER_DATA_DIR env var (explicit override)
     2. /data/vvp-issuer if it exists (Docker volume mount)
-    3. ~/.vvp-issuer (local development fallback)
+    3. ~/.vvp-issuer (local development)
+    4. /tmp/vvp-issuer (container fallback when home unavailable)
     """
     env_path = os.getenv("VVP_ISSUER_DATA_DIR")
     if env_path:
@@ -31,7 +32,15 @@ def _get_data_dir() -> Path:
     if docker_path.exists():
         return docker_path
 
-    return Path.home() / ".vvp-issuer"
+    # Try home directory for local development
+    try:
+        home_path = Path.home() / ".vvp-issuer"
+        # Test if we can create this directory
+        home_path.mkdir(parents=True, exist_ok=True)
+        return home_path
+    except (OSError, PermissionError):
+        # Fall back to /tmp for container environments
+        return Path("/tmp/vvp-issuer")
 
 
 DATA_DIR: Path = _get_data_dir()

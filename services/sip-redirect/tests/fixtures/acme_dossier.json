@@ -1,0 +1,56 @@
+[
+  {
+    "d": "EQviCredentialSAIDforTestingPurposesOnly000",
+    "i": "EKYLUMmNPZeEs77Zvclf0bSN5IN-mLfLpx2ySb-HDlk4",
+    "s": "EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao",
+    "a": {
+      "d": "EQVIAttrBlockSAID0000000000000000000000",
+      "i": "EBcIURLpxmVwahksgrsGW6_dUw0zBhyEHYFk17eWrZfk",
+      "dt": "2024-01-01T00:00:00.000000+00:00",
+      "LEI": "724500VKKSH9QOLTFR81",
+      "gracePeriod": 90
+    },
+    "e": {}
+  },
+  {
+    "d": "ELeCredentialSAIDforAcmeCorpTestingOnly0000",
+    "i": "EBcIURLpxmVwahksgrsGW6_dUw0zBhyEHYFk17eWrZfk",
+    "s": "ENPXp1vQzRF6JwIuS-mp2U8Uf1MoADoP_GqQ62VsDZWY",
+    "a": {
+      "d": "ELEAttrBlockSAID00000000000000000000000",
+      "i": "EHMnCf8_nIemuPx-cUHb_92fFXt9yjsn7NJJGKfgCkC0",
+      "dt": "2024-01-15T00:00:00.000000+00:00",
+      "LEI": "549300EXAMPLE000001",
+      "legalName": "Acme Corp"
+    },
+    "e": {
+      "d": "ELEEdgeBlockSAID0000000000000000000000",
+      "qvi": {
+        "n": "EQviCredentialSAIDforTestingPurposesOnly000",
+        "s": "EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao"
+      }
+    }
+  },
+  {
+    "d": "ETnAllocationSAIDforAcmeCorpExtension1001",
+    "i": "EBcIURLpxmVwahksgrsGW6_dUw0zBhyEHYFk17eWrZfk",
+    "s": "EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ",
+    "a": {
+      "d": "ETNAllocAttrBlockSAID000000000000000000",
+      "i": "EHMnCf8_nIemuPx-cUHb_92fFXt9yjsn7NJJGKfgCkC0",
+      "dt": "2024-02-01T00:00:00.000000+00:00",
+      "numbers": {
+        "tn": ["+441923311000"]
+      },
+      "channel": "voice",
+      "doNotOriginate": false
+    },
+    "e": {
+      "d": "ETNAllocEdgeBlockSAID0000000000000000000",
+      "le": {
+        "n": "ELeCredentialSAIDforAcmeCorpTestingOnly0000",
+        "s": "ENPXp1vQzRF6JwIuS-mp2U8Uf1MoADoP_GqQ62VsDZWY"
+      }
+    }
+  }
+]

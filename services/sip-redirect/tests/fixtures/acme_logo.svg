@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- Acme Corp Test Logo -->
+  <!-- Sprint 42: Test asset for VVP signing verification -->
+
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="90" fill="#1a365d" />
+
+  <!-- Inner circle -->
+  <circle cx="100" cy="100" r="75" fill="#2b6cb0" />
+
+  <!-- Stylized "A" for Acme -->
+  <path d="M100 35 L145 145 L125 145 L115 120 L85 120 L75 145 L55 145 L100 35 Z"
+        fill="#ffffff" />
+  <path d="M100 70 L110 100 L90 100 L100 70 Z"
+        fill="#2b6cb0" />
+
+  <!-- Company name arc -->
+  <defs>
+    <path id="textArc" d="M 30 100 A 70 70 0 0 1 170 100" fill="none" />
+  </defs>
+  <text font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#ffffff">
+    <textPath href="#textArc" startOffset="50%" text-anchor="middle">
+      ACME CORP
+    </textPath>
+  </text>
+
+  <!-- Tagline at bottom -->
+  <text x="100" y="175" font-family="Arial, sans-serif" font-size="10"
+        fill="#ffffff" text-anchor="middle" opacity="0.8">
+    VERIFIED CALLER
+  </text>
+</svg>
