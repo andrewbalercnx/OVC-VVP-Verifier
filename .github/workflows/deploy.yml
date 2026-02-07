@@ -947,19 +947,17 @@ jobs:
               echo 'Backup complete'
             "
 
-      - name: Deploy dialplan files
+      - name: Deploy main dialplan
         run: |
-          for file in services/pbx/config/*.xml; do
-            if [ -f "$file" ]; then
-              FILENAME=$(basename "$file")
-              CONTENT=$(base64 -w0 "$file")
-              echo "Deploying $FILENAME..."
-              az vm run-command invoke \
-                --resource-group VVP --name vvp-pbx \
-                --command-id RunShellScript \
-                --scripts "echo '$CONTENT' | base64 -d > /etc/freeswitch/dialplan/public/$FILENAME"
-            fi
-          done
+          # Deploy public-sip.xml as the main dialplan file
+          if [ -f "services/pbx/config/public-sip.xml" ]; then
+            CONTENT=$(base64 -w0 "services/pbx/config/public-sip.xml")
+            echo "Deploying public-sip.xml as public.xml..."
+            az vm run-command invoke \
+              --resource-group VVP --name vvp-pbx \
+              --command-id RunShellScript \
+              --scripts "echo '$CONTENT' | base64 -d > /etc/freeswitch/dialplan/public.xml && chown www-data:www-data /etc/freeswitch/dialplan/public.xml"
+          fi
 
       - name: Reload FreeSWITCH
         run: |
