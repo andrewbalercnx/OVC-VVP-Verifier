@@ -83,11 +83,11 @@ The VVP (Verified Voice Protocol) system consists of multiple interconnected ser
 | FreeSWITCH WSS | 7443 | WSS | Active | WebRTC SIP over WebSocket |
 | **SIP Signer (Live)** | 5070 | UDP | **Deployed** | VVP signing service (`services/sip-redirect/`) |
 | **SIP Signer (Production)** | 5060/5061 | UDP/TLS | Future | Standard SIP ports for enterprise |
-| **SIP Verifier (Mock)** | 5071 | UDP | Mock | Mock verification for testing |
+| **SIP Verifier (Live)** | 5071 | UDP | **Deployed** | VVP verification service (`services/sip-verify/`) |
 | **SIP Status (Signer)** | 8080 | HTTP | Deployed | `/status` endpoint (admin auth required) |
 | FusionPBX Admin | 443 | HTTPS | Active | Web administration |
 
-**Note:** Production SIP ports (5060/5061) are reserved for future enterprise deployment. Current live testing uses 5070 (signer) and 5071 (mock verifier).
+**Note:** Production SIP ports (5060/5061) are reserved for future enterprise deployment. Current live testing uses 5070 (signer) and 5071 (verifier).
 
 ---
 
