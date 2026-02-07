@@ -8241,3 +8241,71 @@ Accept brief downtime (30-60s) during deployments in exchange for reliable SQLit
 
 3. **Code Review** - APPROVED
    - Implementation matches approved plan
+
+---
+
+# Sprint 47: SIP Monitor - Core Infrastructure + Authentication
+
+## Goal
+Create a web-based monitoring dashboard for the VVP mock SIP signing and verification services, enabling engineers to see recent SIP INVITES, responses, and full VVP header visualization.
+
+## Architecture
+- Dashboard hosted on PBX VM (vvp-pbx) as part of mock SIP service
+- Web server binds to localhost:8090 (nginx reverse proxy for TLS)
+- Session-based authentication with bcrypt password hashing
+
+## Deliverables Implemented
+
+### Core Infrastructure
+- `SIPEvent` dataclass capturing full SIP transaction data
+- `SIPEventBuffer` class with thread-safe deque (100 events max)
+- Instrumentation in both signing and verification handlers
+
+### Web Server
+- aiohttp web server integrated into mock_sip_redirect.py
+- REST API endpoints:
+  - `GET /api/status` - Health check
+  - `GET /api/auth/status` - Check authentication
+  - `POST /api/login` - Authenticate
+  - `POST /api/logout` - Destroy session
+  - `GET /api/events` - Get all buffered events
+  - `GET /api/events/since/{id}` - Poll for new events
+  - `POST /api/clear` - Clear buffer (CSRF protected)
+
+### Authentication
+- Session cookies (HttpOnly, Secure, SameSite=Strict)
+- bcrypt password hashing
+- Rate limiting (5 failed attempts per 15 min)
+- CSRF protection via X-Requested-With header
+
+### Dashboard UI
+- Login page with username/password form
+- Event table with timestamp, service, from/to, status
+- Detail view with tabs (Summary, Headers, VVP, Raw)
+
+## Files Created/Modified
+
+| File | Action | Lines |
+|------|--------|-------|
+| `services/pbx/test/mock_sip_redirect.py` | Modified | +527 |
+| `services/pbx/test/auth.py` | Created | 484 |
+| `services/pbx/test/monitor_web/index.html` | Created | 77 |
+| `services/pbx/test/monitor_web/login.html` | Created | 122 |
+| `services/pbx/test/monitor_web/sip-monitor.js` | Created | 560 |
+| `services/pbx/test/monitor_web/sip-monitor.css` | Created | 650 |
+| `services/pbx/config/users.json.template` | Created | 9 |
+
+**Total:** 2,429 lines added
+
+## Commit
+`0da4d32` - Sprint 47: SIP Monitor core infrastructure and authentication
+
+## Review History
+
+1. **Plan Review** - CHANGES_REQUESTED
+   - [High] TLS termination required
+   - [Medium] CSRF protection needed
+   - [Low] Process isolation recommended
+
+2. **Plan Review (Revision 2)** - APPROVED
+   - All findings addressed
