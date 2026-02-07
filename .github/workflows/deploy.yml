@@ -819,8 +819,8 @@ jobs:
   # Deploys to vvp-pbx VM with atomic symlink switch and rollback capability
   # Only runs when sip-verify code changes and tests pass
   deploy-sip-verify:
-    needs: [changes, test-sip-verify]
-    if: needs.changes.outputs.sip-verify == 'true'
+    needs: [changes, test-sip-verify, deploy-sip-redirect]
+    if: needs.changes.outputs.sip-verify == 'true' && !failure()
     runs-on: ubuntu-latest
 
     steps:
@@ -984,8 +984,8 @@ jobs:
   # Deploys dialplan configuration to PBX VM
   # Only runs when pbx-config changes
   deploy-pbx-config:
-    needs: [changes]
-    if: needs.changes.outputs.pbx-config == 'true'
+    needs: [changes, deploy-sip-redirect, deploy-sip-verify]
+    if: needs.changes.outputs.pbx-config == 'true' && !failure()
     runs-on: ubuntu-latest
 
     steps:
