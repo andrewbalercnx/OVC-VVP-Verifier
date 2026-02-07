@@ -92,6 +92,7 @@
         <a href="/ui/credentials">Credentials</a>
         <a href="/ui/dossier">Dossiers</a>
         <a href="/ui/vvp">VVP Headers</a>
+        <a href="/ui/tn-mappings">TN Mappings</a>
         <a href="/ui/help">Help</a>
         <a href="/ui/admin">Admin</a>
         <a href="/organizations/ui" style="display:none">Organizations</a>
@@ -244,6 +245,12 @@
 
       // Import a schema from WebOfTrust
       async function importSchema(schemaId) {
+        const apiKey = localStorage.getItem('vvp_api_key') || '';
+        if (!apiKey) {
+          importResult.innerHTML = '<div class="error">API key required. Please set your API key in <a href="/ui/admin">Admin</a> settings.</div>';
+          return;
+        }
+
         importResult.innerHTML = '<div class="info"><span class="spinner"></span>Importing...</div>';
 
         try {
@@ -251,7 +258,8 @@
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-API-Key': apiKey
             },
             body: JSON.stringify({
               source: 'weboftrust',
@@ -280,6 +288,13 @@
       // Create new schema
       createForm.addEventListener('submit', async (e) => {
         e.preventDefault();
+
+        const apiKey = localStorage.getItem('vvp_api_key') || '';
+        if (!apiKey) {
+          createResult.innerHTML = '<div class="error">API key required. Please set your API key in <a href="/ui/admin">Admin</a> settings.</div>';
+          return;
+        }
+
         createBtn.disabled = true;
         createBtn.innerHTML = '<span class="spinner"></span>Creating...';
         createResult.innerHTML = '';
@@ -306,7 +321,8 @@
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-API-Key': apiKey
             },
             body: JSON.stringify({
               title,
@@ -496,8 +512,17 @@
       async function deleteSchema(said) {
         if (!confirm(`Delete schema ${said.slice(0,20)}...?`)) return;
 
+        const apiKey = localStorage.getItem('vvp_api_key') || '';
+        if (!apiKey) {
+          alert('API key required. Please set your API key in Admin settings.');
+          return;
+        }
+
         try {
-          const res = await fetch(`/schema/${said}`, { method: 'DELETE' });
+          const res = await fetch(`/schema/${said}`, {
+            method: 'DELETE',
+            headers: { 'X-API-Key': apiKey }
+          });
           const data = await res.json();
 
           if (!res.ok) {

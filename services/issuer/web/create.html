@@ -22,6 +22,7 @@
         <a href="/ui/credentials">Credentials</a>
         <a href="/ui/dossier">Dossiers</a>
         <a href="/ui/vvp">VVP Headers</a>
+        <a href="/ui/tn-mappings">TN Mappings</a>
         <a href="/ui/help">Help</a>
         <a href="/ui/admin">Admin</a>
         <a href="/organizations/ui" style="display:none">Organizations</a>
@@ -78,6 +79,14 @@
         createBtn.innerHTML = '<span class="spinner"></span>Creating...';
         createResult.innerHTML = '';
 
+        const apiKey = localStorage.getItem('vvp_api_key') || '';
+        if (!apiKey) {
+          createResult.innerHTML = '<div class="error">Error: API key required. Please set your API key in <a href="/ui/admin">Admin</a> settings.</div>';
+          createBtn.disabled = false;
+          createBtn.textContent = 'Create Identity';
+          return;
+        }
+
         const name = document.getElementById('name').value.trim();
         const transferable = document.getElementById('transferable').checked;
         const publishToWitnesses = document.getElementById('publishToWitnesses').checked;
@@ -87,7 +96,8 @@
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-API-Key': apiKey
             },
             body: JSON.stringify({
               name,
@@ -252,6 +262,12 @@
           return;
         }
 
+        const apiKey = localStorage.getItem('vvp_api_key') || '';
+        if (!apiKey) {
+          alert('API key required. Please set your API key in Admin settings.');
+          return;
+        }
+
         // Show loading modal
         const modal = document.createElement('div');
         modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;z-index:1000;';
@@ -265,7 +281,8 @@
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-API-Key': apiKey
             },
             body: JSON.stringify({ publish_to_witnesses: true })
           });
@@ -343,6 +360,12 @@
           return;
         }
 
+        const apiKey = localStorage.getItem('vvp_api_key') || '';
+        if (!apiKey) {
+          alert('API key required. Please set your API key in Admin settings.');
+          return;
+        }
+
         // Show loading modal
         const modal = document.createElement('div');
         modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;z-index:1000;';
@@ -356,7 +379,8 @@
             method: 'DELETE',
             headers: {
               'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-API-Key': apiKey
             }
           });
 
