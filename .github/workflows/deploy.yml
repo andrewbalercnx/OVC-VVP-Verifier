@@ -309,7 +309,8 @@ jobs:
             --set-env-vars \
               "GIT_SHA=${{ github.sha }}" \
               "GITHUB_REPOSITORY=${{ github.repository }}" \
-              "VVP_WITNESS_CONFIG=/srv/config/witnesses-azure.json"
+              "VVP_WITNESS_CONFIG=/srv/config/witnesses-azure.json" \
+              "VVP_ISSUER_DATA_DIR=/data/vvp-issuer"
 
   # =========================================================================
   # BUILD WITNESS IMAGE
