@@ -936,33 +936,24 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Backup current dialplan
+      - name: Deploy dialplan (single command)
         run: |
-          az vm run-command invoke \
-            --resource-group VVP --name vvp-pbx \
-            --command-id RunShellScript \
-            --scripts "
-              BACKUP_DIR=/etc/freeswitch/dialplan/backup
-              mkdir -p \$BACKUP_DIR
-              cp /etc/freeswitch/dialplan/public.xml \$BACKUP_DIR/public.xml.\$(date +%Y%m%d%H%M%S) || true
-              echo 'Backup complete'
-            "
-
-      - name: Deploy main dialplan
-        run: |
-          # Deploy public-sip.xml as the main dialplan file
+          # Combine backup, deploy, and reload into a single VM command
+          # This reduces conflicts with other az vm run-command operations
           if [ -f "services/pbx/config/public-sip.xml" ]; then
             CONTENT=$(base64 -w0 "services/pbx/config/public-sip.xml")
-            echo "Deploying public-sip.xml as public.xml..."
+            echo "Deploying dialplan..."
             az vm run-command invoke \
               --resource-group VVP --name vvp-pbx \
               --command-id RunShellScript \
-              --scripts "echo '$CONTENT' | base64 -d > /etc/freeswitch/dialplan/public.xml && chown www-data:www-data /etc/freeswitch/dialplan/public.xml"
+              --scripts "
+                set -e
+                BACKUP_DIR=/etc/freeswitch/dialplan/backup
+                mkdir -p \$BACKUP_DIR
+                cp /etc/freeswitch/dialplan/public.xml \$BACKUP_DIR/public.xml.\$(date +%Y%m%d%H%M%S) 2>/dev/null || true
+                echo '$CONTENT' | base64 -d > /etc/freeswitch/dialplan/public.xml
+                chown www-data:www-data /etc/freeswitch/dialplan/public.xml
+                fs_cli -x 'reloadxml'
+                echo 'Dialplan deployed and reloaded successfully'
+              "
           fi
-
-      - name: Reload FreeSWITCH
-        run: |
-          az vm run-command invoke \
-            --resource-group VVP --name vvp-pbx \
-            --command-id RunShellScript \
-            --scripts "fs_cli -x 'reloadxml' && echo 'FreeSWITCH dialplan reloaded'"
