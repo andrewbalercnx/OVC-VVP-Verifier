@@ -20,6 +20,13 @@
       "hash": "$2b$12$OU2F0EaCTah0NlJm5T3e2uhc1rmi00QsTB1/LuyLtIUpbBx6AV9gq",
       "roles": ["issuer:readonly"],
       "revoked": false
+    },
+    {
+      "id": "sip-redirect-operator",
+      "name": "SIP Redirect Service Operator Key",
+      "hash": "$2b$12$R5aiEJz5dZMxcVEcwP7Nhe72FDIWkW0dkvtmlduzZiItKyeqXn9KW",
+      "roles": ["issuer:operator", "issuer:readonly"],
+      "revoked": false
     }
   ],
   "version": 1

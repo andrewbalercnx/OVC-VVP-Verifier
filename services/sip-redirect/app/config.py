@@ -21,6 +21,10 @@ SIPS_KEY_FILE = os.getenv("VVP_SIPS_KEY_FILE", "")
 ISSUER_URL = os.getenv("VVP_ISSUER_URL", "http://localhost:8001")
 ISSUER_TIMEOUT = float(os.getenv("VVP_ISSUER_TIMEOUT", "10.0"))
 
+# Operator API key for issuer /vvp/create endpoint
+# This is a file-based operator key (issuer:operator role) separate from org API keys
+ISSUER_OPERATOR_KEY = os.getenv("VVP_ISSUER_OPERATOR_KEY", "")
+
 # Rate Limiting
 RATE_LIMIT_RPS = float(os.getenv("VVP_RATE_LIMIT_RPS", "10.0"))
 RATE_LIMIT_BURST = int(os.getenv("VVP_RATE_LIMIT_BURST", "50"))
@@ -42,6 +46,9 @@ STATUS_ADMIN_KEY = os.getenv("VVP_STATUS_ADMIN_KEY", "")
 def validate_config() -> list[str]:
     """Validate configuration and return list of issues."""
     issues = []
+
+    if not ISSUER_OPERATOR_KEY:
+        issues.append("VVP_ISSUER_OPERATOR_KEY required for /vvp/create API calls")
 
     if SIPS_ENABLED:
         if not SIPS_CERT_FILE:
