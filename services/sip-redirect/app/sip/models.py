@@ -1,6 +1,7 @@
 """SIP protocol data models.
 
 Sprint 42: Dataclasses for SIP requests and responses.
+Sprint 47: Added headers dict and source_addr for monitoring dashboard.
 """
 
 from dataclasses import dataclass, field
@@ -38,6 +39,12 @@ class SIPRequest:
     # Optional headers
     contact: Optional[str] = None
     content_length: int = 0
+
+    # All headers dict (Sprint 47: for monitoring dashboard)
+    headers: dict = field(default_factory=dict)
+
+    # Source address (Sprint 47: for monitoring dashboard)
+    source_addr: Optional[str] = None
 
     # Raw message for debugging
     raw: bytes = b""

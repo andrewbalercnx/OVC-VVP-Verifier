@@ -718,6 +718,12 @@ jobs:
               VERSION='${VERSION}'
               DEPLOY_DIR=/opt/vvp/sip-redirect
 
+              # Ensure venv exists with required packages (Sprint 47: monitoring dashboard)
+              if [ ! -d /opt/vvp/venv ]; then
+                python3 -m venv /opt/vvp/venv
+              fi
+              /opt/vvp/venv/bin/pip install -q aiohttp bcrypt
+
               # Download using SAS URL (no az CLI needed on VM)
               curl -sSL -o /tmp/sip-redirect-\${VERSION}.tar.gz '${SAS_URL}'
 
@@ -738,17 +744,28 @@ jobs:
               echo 'Deployed version: '\${VERSION}
             "
 
-      - name: Validate systemd unit and restart
+      - name: Update systemd unit and restart
         run: |
+          # Create systemd unit that uses venv Python and enables monitor
+          UNIT_B64=$(echo -e '[Unit]\nDescription=VVP SIP Redirect Signing Service\nAfter=network.target\n\n[Service]\nType=simple\nUser=root\nEnvironmentFile=/etc/vvp/sip-redirect.env\nWorkingDirectory=/opt/vvp/sip-redirect/current\nExecStart=/opt/vvp/venv/bin/python3 -m app.main\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n' | base64 -w0)
+
           az vm run-command invoke \
             --resource-group VVP --name vvp-pbx \
             --command-id RunShellScript \
             --scripts "
               set -e
-              # Verify unit file exists
-              if [ ! -f /etc/systemd/system/vvp-sip-redirect.service ]; then
-                echo 'ERROR: Systemd unit not found'
-                exit 1
+
+              # Update systemd unit to use venv
+              echo '${UNIT_B64}' | base64 -d > /etc/systemd/system/vvp-sip-redirect.service
+
+              # Ensure env file has monitor enabled
+              if [ -f /etc/vvp/sip-redirect.env ]; then
+                if ! grep -q 'VVP_MONITOR_ENABLED' /etc/vvp/sip-redirect.env; then
+                  echo 'VVP_MONITOR_ENABLED=true' >> /etc/vvp/sip-redirect.env
+                fi
+              else
+                mkdir -p /etc/vvp
+                echo 'VVP_MONITOR_ENABLED=true' > /etc/vvp/sip-redirect.env
               fi
 
               # Reload and restart

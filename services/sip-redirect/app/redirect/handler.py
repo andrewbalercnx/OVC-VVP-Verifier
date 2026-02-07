@@ -1,14 +1,16 @@
 """SIP INVITE handler.
 
 Sprint 42: Processes SIP INVITEs and returns VVP-attested redirects.
+Sprint 47: Added event capture for monitoring dashboard.
 """
 
 import logging
+from typing import Optional
 
 from app.audit import get_audit_logger
 from app.auth.api_key import APIKeyCache, extract_api_key
 from app.auth.rate_limiter import RateLimiter
-from app.config import RATE_LIMIT_RPS, RATE_LIMIT_BURST, API_KEY_CACHE_TTL
+from app.config import RATE_LIMIT_RPS, RATE_LIMIT_BURST, API_KEY_CACHE_TTL, MONITOR_ENABLED
 from app.redirect.client import get_issuer_client
 from app.sip.models import SIPRequest, SIPResponse
 from app.sip.builder import (
@@ -32,6 +34,60 @@ def get_rate_limiter() -> RateLimiter:
     Used by status endpoint to report rate limit state.
     """
     return _rate_limiter
+
+
+async def _capture_event(
+    request: SIPRequest,
+    response_code: int,
+    vvp_status: str,
+    api_key_prefix: Optional[str] = None,
+    redirect_uri: Optional[str] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Capture SIP event for monitoring dashboard.
+
+    Args:
+        request: The SIP request
+        response_code: HTTP-style response code (302, 401, etc.)
+        vvp_status: VVP status (VALID, INVALID, INDETERMINATE)
+        api_key_prefix: First 8 chars of API key
+        redirect_uri: Contact URI from redirect response
+        error: Error message if any
+    """
+    if not MONITOR_ENABLED:
+        return
+
+    try:
+        from app.monitor.buffer import get_event_buffer
+
+        # Extract VVP headers from request
+        vvp_headers = {}
+        for name, value in request.headers.items():
+            name_lower = name.lower()
+            if name_lower.startswith("x-vvp-") or name_lower.startswith("p-vvp-"):
+                vvp_headers[name] = value
+            elif name_lower == "identity":
+                vvp_headers["Identity"] = value
+
+        buffer = get_event_buffer()
+        await buffer.add({
+            "service": "SIGNING",  # Sprint 47: Always SIGNING for sip-redirect
+            "source_addr": request.source_addr or "unknown",
+            "method": request.method,
+            "request_uri": request.request_uri,
+            "call_id": request.call_id or "",
+            "from_tn": request.from_tn,
+            "to_tn": request.to_tn,
+            "api_key_prefix": api_key_prefix,
+            "headers": dict(request.headers),
+            "vvp_headers": vvp_headers,
+            "response_code": response_code,
+            "vvp_status": vvp_status,
+            "redirect_uri": redirect_uri,
+            "error": error,
+        })
+    except Exception as e:
+        log.debug(f"Failed to capture event for monitoring: {e}")
 
 
 async def handle_invite(request: SIPRequest) -> SIPResponse:
@@ -82,6 +138,7 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
             vvp_status="INVALID",
             details={"reason": "Missing API key"},
         )
+        await _capture_event(request, 401, "INVALID", error="Missing API key")
         return build_401_unauthorized(request, "Missing X-VVP-API-Key header")
 
     # Check rate limit
@@ -95,6 +152,7 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
             vvp_status="INVALID",
             details={"retry_after": retry_after},
         )
+        await _capture_event(request, 403, "INVALID", api_key_prefix, error="Rate limit exceeded")
         return build_403_forbidden(request, "Rate limit exceeded")
 
     # Check if from_tn was extracted
@@ -106,6 +164,7 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
             vvp_status="INVALID",
             details={"reason": "Could not extract originating TN"},
         )
+        await _capture_event(request, 400, "INVALID", api_key_prefix, error="Missing From TN")
         return build_403_forbidden(request, "Could not extract originating TN from From header")
 
     try:
@@ -123,6 +182,7 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
                 vvp_status="INVALID",
                 details={"error": lookup_result.error},
             )
+            await _capture_event(request, 404, "INVALID", api_key_prefix, error=lookup_result.error)
             return build_404_not_found(request, lookup_result.error or f"No mapping for {from_tn}")
 
         # Create VVP headers
@@ -144,6 +204,7 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
                 vvp_status="INDETERMINATE",
                 details={"error": vvp_result.error},
             )
+            await _capture_event(request, 500, "INDETERMINATE", api_key_prefix, error=vvp_result.error)
             return build_500_error(request, vvp_result.error or "Failed to create VVP headers")
 
         # Build successful redirect
@@ -174,6 +235,7 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
             },
         )
 
+        await _capture_event(request, 302, "VALID", api_key_prefix, redirect_uri=contact_uri)
         return response
 
     except Exception as e:
@@ -187,4 +249,5 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
             vvp_status="INDETERMINATE",
             details={"error": str(e)},
         )
+        await _capture_event(request, 500, "INDETERMINATE", api_key_prefix, error=str(e))
         return build_500_error(request, "Internal server error")

@@ -1,7 +1,7 @@
 """SIP message parser.
 
 Sprint 42: Minimal RFC 3261 parser for INVITE handling.
-Only parses the headers needed for VVP redirect.
+Sprint 47: Added full headers dict for monitoring dashboard.
 """
 
 import logging
@@ -98,6 +98,7 @@ def parse_sip_request(data: bytes) -> Optional[SIPRequest]:
 
         # Parse headers
         via_headers = []
+        all_headers = {}  # Sprint 47: Collect all headers for monitoring
         for line in lines[1:]:
             line = line.strip()
             if not line:
@@ -107,8 +108,12 @@ def parse_sip_request(data: bytes) -> Optional[SIPRequest]:
             if not match:
                 continue
 
-            name = match.group(1).lower()
+            name_original = match.group(1)  # Preserve original case for headers dict
+            name = name_original.lower()
             value = match.group(2)
+
+            # Store in all_headers with original case
+            all_headers[name_original] = value
 
             if name == "via" or name == "v":
                 via_headers.append(value)
@@ -133,6 +138,7 @@ def parse_sip_request(data: bytes) -> Optional[SIPRequest]:
                 request.vvp_api_key = value
 
         request.via = via_headers
+        request.headers = all_headers  # Sprint 47: For monitoring dashboard
 
         # Validate required headers
         if not request.via:

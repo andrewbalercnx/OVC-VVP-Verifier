@@ -64,6 +64,9 @@ class UDPServerProtocol(asyncio.DatagramProtocol):
                 log.warning(f"Failed to parse SIP from {addr[0]}:{addr[1]}")
                 return
 
+            # Sprint 47: Set source address for monitoring dashboard
+            request.source_addr = f"{addr[0]}:{addr[1]}"
+
             log.debug(f"UDP {request.method} from {addr[0]}:{addr[1]}")
 
             response = await self._handler(request)
@@ -142,6 +145,9 @@ class TCPServerProtocol(asyncio.Protocol):
             if request is None:
                 log.warning(f"Failed to parse SIP from {self._addr[0]}:{self._addr[1]}")
                 return
+
+            # Sprint 47: Set source address for monitoring dashboard
+            request.source_addr = f"{self._addr[0]}:{self._addr[1]}"
 
             log.debug(f"TCP {request.method} from {self._addr[0]}:{self._addr[1]}")
 

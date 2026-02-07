@@ -33,6 +33,7 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 44 | SIP Redirect Verification Service | COMPLETE | Sprint 43 |
 | 45 | CI/CD SQLite Persistence Fixes | COMPLETE | Sprint 41 |
 | 46 | PostgreSQL Migration | COMPLETE | Sprint 45 |
+| 47 | SIP Monitor - Core Infrastructure | COMPLETE | Sprint 43 |
 
 ---
 
@@ -2055,40 +2056,56 @@ Each sprint follows the pair programming workflow:
 
 ---
 
-## Sprint 47: SIP Monitor - Core Infrastructure + Authentication
+## Sprint 47: SIP Monitor - Core Infrastructure + Authentication (COMPLETE)
 
-**Goal:** Add circular buffer event capture and session-authenticated web dashboard to the mock SIP services.
+**Goal:** Add circular buffer event capture and session-authenticated web dashboard to the production SIP redirect service.
 
 **Prerequisites:** Sprint 43 (PBX Test Infrastructure) COMPLETE.
 
 **Background:**
 
-The mock SIP services (ports 5070/5071 on vvp-pbx) currently log to stdout only with no persistent request history. Engineers need to visualize recent SIP INVITES and VVP headers for debugging without tailing logs.
+Engineers need to visualize recent SIP INVITES and VVP headers for debugging. Originally planned for the mock SIP service, this was moved to the production sip-redirect service since the mock is now superseded.
+
+**Implementation Notes:**
+
+The monitoring dashboard was integrated into `services/sip-redirect/` rather than the mock service:
+- Mock SIP service archived to `Documentation/archive/mock-sip-sprint47/`
+- Dashboard enabled via `VVP_MONITOR_ENABLED=true` environment variable
+- aiohttp and bcrypt are optional dependencies (`pip install .[monitor]`)
 
 **Deliverables:**
 
-- [ ] **SIPEvent dataclass** - Capture timestamp, service, source, method, URI, call_id, from/to TNs, all headers, VVP headers, raw SIP, response code, redirect URI
-- [ ] **SIPEventBuffer class** - Thread-safe deque with max 100 events, add/get_all/get_since/clear methods
-- [ ] **Handler instrumentation** - Capture events in both MockSigningService and MockVerificationService before sending response
-- [ ] **aiohttp web server** - Bound to localhost:8090 with REST endpoints:
+- [x] **SIPEventBuffer class** - Async deque with max 100 events, add/get_all/get_since/clear methods
+- [x] **Handler instrumentation** - Capture events in handle_invite() with full headers, source_addr, service field
+- [x] **aiohttp web server** - Bound to localhost:8090 with REST endpoints:
   - `GET /api/events` - Return all buffered events
   - `GET /api/events/since/{id}` - Long-poll for new events
   - `POST /api/clear` - Clear buffer (CSRF protected)
-- [ ] **Session authentication module** (`auth.py`) - HttpOnly/Secure/SameSite cookies, bcrypt password store, rate limiting
-- [ ] **Login page** (`login.html`) - Username/password form
-- [ ] **Basic dashboard** (`index.html`) - Event table with timestamp, service, from→to, status
+- [x] **Session authentication module** (`auth.py`) - HttpOnly/Secure/SameSite cookies, bcrypt password store, rate limiting
+- [x] **Login page** (`login.html`) - Username/password form
+- [x] **Basic dashboard** (`index.html`) - Event table with timestamp, service, from→to, status
+- [x] **SIPRequest model updates** - Added `headers` dict and `source_addr` for event capture
 
 **Key Files:**
 
 ```
-services/pbx/test/
-├── mock_sip_redirect.py          # MODIFY: Add buffer, web server, auth
-├── auth.py                       # NEW: Session auth + rate limiting
+services/sip-redirect/app/
+├── config.py                     # MODIFIED: MONITOR_* settings
+├── main.py                       # MODIFIED: Dashboard startup/shutdown
+├── redirect/handler.py           # MODIFIED: _capture_event() function
+├── sip/models.py                 # MODIFIED: headers, source_addr fields
+├── sip/parser.py                 # MODIFIED: Populate headers dict
+├── sip/transport.py              # MODIFIED: Set source_addr
+├── monitor/                      # NEW DIRECTORY
+│   ├── __init__.py               # Module exports
+│   ├── buffer.py                 # SIPEventBuffer
+│   ├── auth.py                   # Session auth + rate limiting
+│   └── server.py                 # aiohttp web server
 └── monitor_web/                  # NEW DIRECTORY
     ├── index.html                # Dashboard page
     ├── login.html                # Login page
-    ├── sip-monitor.js            # Client logic (basic)
-    └── sip-monitor.css           # Styling (basic)
+    ├── sip-monitor.js            # Client logic
+    └── sip-monitor.css           # Styling
 ```
 
 **Security:**
@@ -2097,15 +2114,15 @@ services/pbx/test/
 - Session cookies: HttpOnly, Secure, SameSite=Strict
 - CSRF: POST endpoints require `X-Requested-With` header
 - Rate limiting: 5 failed logins per 15 min
-- Initial admin user via setup script with forced password change
+- MONITOR_ENABLED defaults to false (opt-in)
 
 **Exit Criteria:**
 
-- [ ] Login required to access dashboard
-- [ ] `/api/events` returns JSON array of captured SIP events
-- [ ] Basic table renders events in browser
-- [ ] Events capture all headers and VVP-specific headers
-- [ ] Buffer limited to 100 events
+- [x] Login required to access dashboard
+- [x] `/api/events` returns JSON array of captured SIP events
+- [x] Basic table renders events in browser
+- [x] Events capture all headers and VVP-specific headers
+- [x] Buffer limited to 100 events
 
 ---
 

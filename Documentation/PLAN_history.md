@@ -8309,3 +8309,47 @@ Create a web-based monitoring dashboard for the VVP mock SIP signing and verific
 
 2. **Plan Review (Revision 2)** - APPROVED
    - All findings addressed
+
+---
+
+## Sprint 47 Revision: Production sip-redirect Integration
+
+**Date:** 2026-02-07
+
+After initial implementation on the mock SIP service, the monitoring dashboard was moved to the production sip-redirect service since the mock service is superseded by production services.
+
+### Changes from Original Plan
+
+1. **Host changed**: From mock SIP (`services/pbx/test/`) to production sip-redirect (`services/sip-redirect/`)
+2. **Mock service archived**: Files moved to `Documentation/archive/mock-sip-sprint47/`
+3. **Opt-in by default**: `VVP_MONITOR_ENABLED` defaults to `false` (was `true` in mock)
+4. **CI/CD updated**: Removed mock-sip deployment job from `.github/workflows/deploy.yml`
+
+### Files Created/Modified (Production Integration)
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `services/sip-redirect/app/monitor/__init__.py` | Created | Module exports |
+| `services/sip-redirect/app/monitor/buffer.py` | Created | SIPEventBuffer |
+| `services/sip-redirect/app/monitor/auth.py` | Created | Session auth |
+| `services/sip-redirect/app/monitor/server.py` | Created | aiohttp web server |
+| `services/sip-redirect/app/monitor_web/*` | Created | Dashboard UI |
+| `services/sip-redirect/app/config.py` | Modified | MONITOR_* settings |
+| `services/sip-redirect/app/main.py` | Modified | Dashboard startup |
+| `services/sip-redirect/app/redirect/handler.py` | Modified | Event capture |
+| `services/sip-redirect/app/sip/models.py` | Modified | headers, source_addr |
+| `services/sip-redirect/app/sip/parser.py` | Modified | Populate headers dict |
+| `services/sip-redirect/app/sip/transport.py` | Modified | Set source_addr |
+| `services/sip-redirect/pyproject.toml` | Modified | Optional deps |
+| `.github/workflows/deploy.yml` | Modified | Removed mock-sip job |
+
+### Code Review History
+
+1. **Code Review (Initial)** - CHANGES_REQUESTED
+   - [High] Event capture broken - SIPRequest lacked headers and source_addr
+   - [Medium] Missing service field in event data
+   - [Low] WebSocket streaming missing (polling only - acknowledged for MVP)
+
+2. **Code Review (Revision 2)** - APPROVED
+   - All High/Medium findings addressed
+   - Data flow verified: parser → transport → handler → buffer → dashboard

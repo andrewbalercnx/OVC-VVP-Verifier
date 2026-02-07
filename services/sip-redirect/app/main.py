@@ -1,6 +1,7 @@
 """VVP SIP Redirect Service.
 
 Sprint 42: AsyncIO entrypoint for SIP redirect signing service.
+Sprint 47: Added monitoring dashboard.
 """
 
 import asyncio
@@ -8,7 +9,7 @@ import logging
 import signal
 import sys
 
-from app.config import LOG_LEVEL, validate_config, STATUS_ADMIN_KEY
+from app.config import LOG_LEVEL, validate_config, STATUS_ADMIN_KEY, MONITOR_ENABLED
 from app.redirect.handler import handle_invite, get_rate_limiter
 from app.redirect.client import close_issuer_client
 from app.sip.transport import run_servers
@@ -47,6 +48,19 @@ async def main() -> None:
     else:
         log.info("Status endpoint disabled (VVP_STATUS_ADMIN_KEY not set)")
 
+    # Start monitoring dashboard (if enabled)
+    dashboard_started = False
+    if MONITOR_ENABLED:
+        try:
+            from app.monitor import start_dashboard_server
+            dashboard_started = await start_dashboard_server()
+        except ImportError as e:
+            log.warning(f"Dashboard disabled - aiohttp not installed: {e}")
+        except Exception as e:
+            log.error(f"Failed to start dashboard: {e}")
+    else:
+        log.info("Monitoring dashboard disabled (VVP_MONITOR_ENABLED not set)")
+
     log.info("VVP SIP Redirect Service started")
 
     # Set up signal handlers for graceful shutdown
@@ -65,6 +79,14 @@ async def main() -> None:
 
     # Cleanup
     log.info("Stopping servers...")
+
+    # Stop monitoring dashboard
+    if dashboard_started:
+        try:
+            from app.monitor import stop_dashboard_server
+            await stop_dashboard_server()
+        except Exception as e:
+            log.warning(f"Error stopping dashboard: {e}")
 
     # Stop status HTTP server
     if status_handler:

@@ -41,6 +41,15 @@ AUDIT_LOG_DIR = Path(os.getenv("VVP_AUDIT_LOG_DIR", "/var/log/vvp-sip"))
 STATUS_HTTP_PORT = int(os.getenv("VVP_STATUS_HTTP_PORT", "8080"))
 STATUS_ADMIN_KEY = os.getenv("VVP_STATUS_ADMIN_KEY", "")
 
+# Monitoring Dashboard Configuration (Sprint 47)
+MONITOR_ENABLED = os.getenv("VVP_MONITOR_ENABLED", "false").lower() == "true"
+MONITOR_PORT = int(os.getenv("VVP_MONITOR_PORT", "8090"))
+MONITOR_BUFFER_SIZE = int(os.getenv("VVP_MONITOR_BUFFER_SIZE", "100"))
+MONITOR_USERS_FILE = os.getenv("VVP_MONITOR_USERS_FILE", "/opt/vvp/sip-redirect/users.json")
+MONITOR_SESSION_TTL = int(os.getenv("VVP_MONITOR_SESSION_TTL", "3600"))  # 1 hour
+MONITOR_RATE_LIMIT_MAX = int(os.getenv("VVP_MONITOR_RATE_LIMIT_MAX", "5"))
+MONITOR_RATE_LIMIT_WINDOW = int(os.getenv("VVP_MONITOR_RATE_LIMIT_WINDOW", "900"))  # 15 min
+
 
 def validate_config() -> list[str]:
     """Validate configuration and return list of issues."""
