@@ -2044,8 +2044,168 @@ To start a sprint, say:
 - "Sprint 44" - SIP redirect verification service (verify inbound calls, extract brand info)
 - "Sprint 45" - CI/CD SQLite persistence fixes (deployment lock conflicts)
 - "Sprint 46" - PostgreSQL migration (zero-downtime deployments)
+- "Sprint 47" - SIP monitor core infrastructure + authentication
+- "Sprint 48" - SIP monitor real-time and VVP visualization
+- "Sprint 49" - SIP monitor polish and deployment
 
 Each sprint follows the pair programming workflow:
 1. Plan phase (design, review, approval)
 2. Implementation phase (code, test, review)
 3. Completion phase (commit, deploy, document)
+
+---
+
+## Sprint 47: SIP Monitor - Core Infrastructure + Authentication
+
+**Goal:** Add circular buffer event capture and session-authenticated web dashboard to the mock SIP services.
+
+**Prerequisites:** Sprint 43 (PBX Test Infrastructure) COMPLETE.
+
+**Background:**
+
+The mock SIP services (ports 5070/5071 on vvp-pbx) currently log to stdout only with no persistent request history. Engineers need to visualize recent SIP INVITES and VVP headers for debugging without tailing logs.
+
+**Deliverables:**
+
+- [ ] **SIPEvent dataclass** - Capture timestamp, service, source, method, URI, call_id, from/to TNs, all headers, VVP headers, raw SIP, response code, redirect URI
+- [ ] **SIPEventBuffer class** - Thread-safe deque with max 100 events, add/get_all/get_since/clear methods
+- [ ] **Handler instrumentation** - Capture events in both MockSigningService and MockVerificationService before sending response
+- [ ] **aiohttp web server** - Bound to localhost:8090 with REST endpoints:
+  - `GET /api/events` - Return all buffered events
+  - `GET /api/events/since/{id}` - Long-poll for new events
+  - `POST /api/clear` - Clear buffer (CSRF protected)
+- [ ] **Session authentication module** (`auth.py`) - HttpOnly/Secure/SameSite cookies, bcrypt password store, rate limiting
+- [ ] **Login page** (`login.html`) - Username/password form
+- [ ] **Basic dashboard** (`index.html`) - Event table with timestamp, service, from→to, status
+
+**Key Files:**
+
+```
+services/pbx/test/
+├── mock_sip_redirect.py          # MODIFY: Add buffer, web server, auth
+├── auth.py                       # NEW: Session auth + rate limiting
+└── monitor_web/                  # NEW DIRECTORY
+    ├── index.html                # Dashboard page
+    ├── login.html                # Login page
+    ├── sip-monitor.js            # Client logic (basic)
+    └── sip-monitor.css           # Styling (basic)
+```
+
+**Security:**
+
+- Dashboard binds to `127.0.0.1:8090` (localhost only)
+- Session cookies: HttpOnly, Secure, SameSite=Strict
+- CSRF: POST endpoints require `X-Requested-With` header
+- Rate limiting: 5 failed logins per 15 min
+- Initial admin user via setup script with forced password change
+
+**Exit Criteria:**
+
+- [ ] Login required to access dashboard
+- [ ] `/api/events` returns JSON array of captured SIP events
+- [ ] Basic table renders events in browser
+- [ ] Events capture all headers and VVP-specific headers
+- [ ] Buffer limited to 100 events
+
+---
+
+## Sprint 48: SIP Monitor - Real-Time and VVP Visualization
+
+**Goal:** Add WebSocket real-time updates and full VVP PASSporT/header visualization.
+
+**Prerequisites:** Sprint 47 (Core Infrastructure) COMPLETE.
+
+**Deliverables:**
+
+- [ ] **WebSocket endpoint** (`GET /ws`) - Stream new events in real-time
+- [ ] **WebSocket auth** - Validate session cookie on connection
+- [ ] **Connection management** - 30s idle timeout, 10 connections per IP limit, auto-restart on crash
+- [ ] **VVP header parsing** (JavaScript) - Extract Identity, P-VVP-Identity, P-VVP-Passport, X-VVP-* headers
+- [ ] **PASSporT JWT decode** (JavaScript) - Reuse base64urlDecode and parsing from verifier
+- [ ] **Tabbed detail view** - Summary, All Headers, VVP Headers, PASSporT, Raw SIP tabs
+- [ ] **Auto-reconnect** - Exponential backoff on WebSocket disconnect
+
+**Code Reuse:**
+
+From `services/verifier/web/index.html`:
+- `base64urlDecode()` function
+- JWT header/payload parsing logic
+- SIP INVITE Identity header extraction regex
+
+From `services/issuer/web/shared.js`:
+- Tab switching logic
+- `escapeHtml()` utility
+
+**Key Files:**
+
+```
+services/pbx/test/
+├── mock_sip_redirect.py          # MODIFY: Add WebSocket endpoint
+└── monitor_web/
+    ├── index.html                # MODIFY: Add tabbed detail view
+    └── sip-monitor.js            # MODIFY: Add WebSocket, JWT parsing
+```
+
+**Exit Criteria:**
+
+- [ ] New events appear in browser within 100ms
+- [ ] WebSocket auto-reconnects on disconnect
+- [ ] JWT header/payload decoded and displayed
+- [ ] All SIP headers visible in table
+- [ ] VVP headers highlighted in dedicated tab
+- [ ] Connection status indicator works
+
+---
+
+## Sprint 49: SIP Monitor - Polish and Deployment
+
+**Goal:** Finalize styling, configure nginx TLS termination, and deploy to PBX.
+
+**Prerequisites:** Sprint 48 (Real-Time and VVP Visualization) COMPLETE.
+
+**Deliverables:**
+
+- [ ] **CSS styling** - Match VVP theme (colors, fonts, badges from WebRTC phone)
+- [ ] **nginx reverse proxy** - TLS termination at `https://pbx.rcnx.io/sip-monitor/`
+- [ ] **Deployment script** - Using `az vm run-command` pattern from CLAUDE.md
+- [ ] **Systemd service update** - Add aiohttp, bcrypt dependencies
+- [ ] **User provisioning script** - Generate random initial password, display once
+- [ ] **Documentation** - Update README with monitor usage
+
+**Key Files:**
+
+```
+services/pbx/
+├── test/
+│   └── monitor_web/
+│       └── sip-monitor.css       # MODIFY: VVP theme
+├── config/
+│   ├── vvp-mock-sip.service      # MODIFY: Add deps
+│   ├── nginx-sip-monitor.conf    # NEW: Reverse proxy config
+│   └── users.json.template       # NEW: User store template
+└── README.md                     # UPDATE: Monitor documentation
+```
+
+**nginx Configuration:**
+
+```nginx
+location /sip-monitor/ {
+    proxy_pass http://127.0.0.1:8090/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+**Exit Criteria:**
+
+- [ ] Dashboard accessible at https://pbx.rcnx.io/sip-monitor/
+- [ ] Login page appears, admin can authenticate
+- [ ] WebSocket uses wss:// (secure)
+- [ ] VVP-themed styling applied
+- [ ] Test call (71006) captured and visualized
+- [ ] Documentation complete
