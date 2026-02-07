@@ -1,0 +1,15 @@
+[Unit]
+Description=VVP SIP Verification Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/vvp/sip-verify.env
+WorkingDirectory=/opt/vvp/sip-verify/current
+ExecStart=/usr/bin/python3 -m app.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
