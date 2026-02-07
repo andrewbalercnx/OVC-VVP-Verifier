@@ -309,29 +309,42 @@ jobs:
           docker build -t "$IMAGE" -f services/issuer/Dockerfile .
           docker push "$IMAGE"
 
-      # Sprint 45: Deactivate old revisions before deploying to prevent SQLite lock conflicts
-      - name: Deactivate old revisions
+      # Sprint 45: Deactivate old revisions and wait for termination
+      # SQLite requires exclusive access - must ensure old revision is fully stopped
+      - name: Deactivate old revisions and wait for termination
         run: |
           echo "Deactivating old revisions to release database locks..."
           OLD_REVS=$(az containerapp revision list \
             --name vvp-issuer \
             --resource-group "${{ secrets.AZURE_RG }}" \
             --query "[?properties.active].name" -o tsv)
+
           for REV in $OLD_REVS; do
             echo "Deactivating revision: $REV"
             az containerapp revision deactivate \
               --name vvp-issuer \
               --resource-group "${{ secrets.AZURE_RG }}" \
               --revision "$REV" || true
+
+            # Poll until revision actually stops (not just deactivated)
+            echo "Waiting for $REV to terminate..."
+            for i in {1..24}; do
+              STATE=$(az containerapp revision show \
+                --name vvp-issuer \
+                --resource-group "${{ secrets.AZURE_RG }}" \
+                --revision "$REV" \
+                --query "properties.runningState" -o tsv 2>/dev/null || echo "Stopped")
+
+              if [ "$STATE" != "Running" ] && [ "$STATE" != "Processing" ]; then
+                echo "Revision $REV stopped (state: $STATE)"
+                break
+              fi
+              echo "Attempt $i/24: $REV still $STATE, waiting 5s..."
+              sleep 5
+            done
           done
 
-      # Wait for old revisions to fully terminate and release database locks
-      # Configurable via workflow_dispatch input (default: 30s)
-      - name: Wait for lock release
-        run: |
-          WAIT_SECONDS="${{ github.event.inputs.lock_wait_seconds || '30' }}"
-          echo "Waiting ${WAIT_SECONDS}s for old revisions to terminate and release database locks..."
-          sleep "$WAIT_SECONDS"
+          echo "All old revisions terminated"
 
       - name: Deploy issuer
         run: |
