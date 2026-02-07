@@ -89,6 +89,7 @@
       </div>
     </div>
 
+    <script src="/static/shared.js"></script>
     <script>
       let credentials = [];
       let selectedSaid = null;
@@ -98,7 +99,7 @@
 
       async function loadCredentials() {
         try {
-          const response = await fetch('/credential');
+          const response = await authFetch('/credential');
           if (!response.ok) throw new Error('Failed to fetch credentials');
 
           const data = await response.json();
@@ -175,7 +176,7 @@
 
         try {
           // Get info first
-          const infoResponse = await fetch('/dossier/build/info', {
+          const infoResponse = await authFetch('/dossier/build/info', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -209,7 +210,7 @@
           document.getElementById('previewStats').innerHTML = statsHtml;
 
           // Get actual content
-          const contentResponse = await fetch('/dossier/build', {
+          const contentResponse = await authFetch('/dossier/build', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -257,7 +258,7 @@
         document.getElementById('buildResult').innerHTML = '<p>Building dossier...</p>';
 
         try {
-          const response = await fetch('/dossier/build', {
+          const response = await authFetch('/dossier/build', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -312,7 +313,7 @@
         list.innerHTML = '<em>Loading...</em>';
 
         try {
-          const response = await fetch('/credential');
+          const response = await authFetch('/credential');
           if (!response.ok) throw new Error('Failed to fetch credentials');
 
           const data = await response.json();
@@ -375,7 +376,7 @@
         document.body.appendChild(modal);
 
         try {
-          const res = await fetch(`/credential/${said}/revoke`, {
+          const res = await authFetch(`/credential/${said}/revoke`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -430,7 +431,7 @@
         document.body.appendChild(modal);
 
         try {
-          const res = await fetch(`/credential/${said}`, {
+          const res = await authFetch(`/credential/${said}`, {
             method: 'DELETE',
             headers: {
               'Content-Type': 'application/json',
@@ -479,6 +480,5 @@
       // Load all credentials on page load
       loadAllCredentials();
     </script>
-    <script src="/static/shared.js"></script>
   </body>
 </html>

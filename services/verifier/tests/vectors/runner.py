@@ -86,7 +86,7 @@ class VectorRunner:
         mock_client.get = mock_get
 
         stack.enter_context(
-            patch("app.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client)
+            patch("common.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client)
         )
 
         # 3. Mock TEL client to return ACTIVE for all credentials by default

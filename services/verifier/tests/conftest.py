@@ -2,6 +2,10 @@
 
 import os
 
+# Disable GLEIF witness discovery in tests to prevent real HTTP calls
+# from common.vvp.keri.witness_pool (must be set before module import)
+os.environ.setdefault("VVP_GLEIF_WITNESS_DISCOVERY", "false")
+
 import pytest
 
 
@@ -44,6 +48,7 @@ def reset_caches():
     """Reset all caches before each test to ensure isolation.
 
     This prevents cache hits from previous tests affecting subsequent tests.
+    Only resets dossier cache (not TEL/witness singletons) to match original behavior.
     """
     from app.vvp.dossier.cache import reset_dossier_cache
 

@@ -112,27 +112,13 @@
         </section>
     </main>
 
+    <script src="/static/shared.js"></script>
     <script>
         async function loadBenchmarks() {
             try {
-                const response = await fetch('/admin/benchmarks', {
-                    headers: {
-                        'X-API-Key': localStorage.getItem('vvp_api_key') || ''
-                    }
-                });
+                const response = await authFetch('/admin/benchmarks');
 
                 if (!response.ok) {
-                    if (response.status === 401) {
-                        document.getElementById('loading').innerHTML = `
-                            <div class="no-data">
-                                <h3>Authentication Required</h3>
-                                <p>Enter your API key to view benchmark results.</p>
-                                <input type="password" id="api-key-input" placeholder="API Key">
-                                <button onclick="saveApiKey()">Save</button>
-                            </div>
-                        `;
-                        return;
-                    }
                     throw new Error(`HTTP ${response.status}`);
                 }
 
@@ -226,14 +212,6 @@
             return name.split('_').map(word =>
                 word.charAt(0).toUpperCase() + word.slice(1)
             ).join(' ');
-        }
-
-        function saveApiKey() {
-            const key = document.getElementById('api-key-input').value;
-            if (key) {
-                localStorage.setItem('vvp_api_key', key);
-                loadBenchmarks();
-            }
         }
 
         loadBenchmarks();

@@ -813,7 +813,7 @@
     // Load deployment test results
     async function loadDeploymentTests() {
       try {
-        const resp = await fetch('/admin/deployment-tests');
+        const resp = await authFetch('/admin/deployment-tests');
         if (!resp.ok) {
           if (resp.status === 401) {
             document.getElementById('deployment-badge').textContent = 'Auth Required';
@@ -914,7 +914,7 @@
         }
 
         // Fetch admin config (may require auth)
-        const configResp = await fetch('/admin/config');
+        const configResp = await authFetch('/admin/config');
         if (!configResp.ok) {
           if (configResp.status === 401) {
             showToast('Admin access requires authentication', 'warning');
@@ -968,7 +968,7 @@
         logSelect.value = config.environment.log_level_name;
 
         // Fetch stats
-        const statsResp = await fetch('/admin/stats');
+        const statsResp = await authFetch('/admin/stats');
         if (statsResp.ok) {
           const stats = await statsResp.json();
           document.getElementById('stat-identities').textContent = stats.identities;
@@ -989,7 +989,7 @@
     async function setLogLevel() {
       const level = document.getElementById('log-level-select').value;
       try {
-        const resp = await fetch('/admin/log-level', {
+        const resp = await authFetch('/admin/log-level', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1010,7 +1010,7 @@
 
     async function reloadAuth() {
       try {
-        const resp = await fetch('/admin/auth/reload', {
+        const resp = await authFetch('/admin/auth/reload', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1031,7 +1031,7 @@
 
     async function reloadWitnesses() {
       try {
-        const resp = await fetch('/admin/witnesses/reload', {
+        const resp = await authFetch('/admin/witnesses/reload', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

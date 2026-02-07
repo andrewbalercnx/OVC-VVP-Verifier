@@ -630,7 +630,7 @@ class TestFetchDossier:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
+        with patch("common.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
             content = await fetch_dossier("http://example.com/dossier")
 
         assert content == json.dumps(VALID_ACDC).encode()
@@ -650,7 +650,7 @@ class TestFetchDossier:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
+        with patch("common.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
             content = await fetch_dossier("http://example.com/dossier")
 
         assert content == json.dumps(VALID_ACDC).encode()
@@ -670,7 +670,7 @@ class TestFetchDossier:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
+        with patch("common.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(FetchError) as exc:
                 await fetch_dossier("http://example.com/dossier")
             assert "content-type" in str(exc.value).lower()
@@ -685,7 +685,7 @@ class TestFetchDossier:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
+        with patch("common.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(FetchError) as exc:
                 await fetch_dossier("http://example.com/dossier")
             assert "Timeout" in str(exc.value)
@@ -700,7 +700,7 @@ class TestFetchDossier:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
+        with patch("common.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(FetchError) as exc:
                 await fetch_dossier("http://example.com/dossier")
             assert "redirect" in str(exc.value).lower()
@@ -726,7 +726,7 @@ class TestFetchDossier:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
+        with patch("common.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(FetchError) as exc:
                 await fetch_dossier("http://example.com/dossier")
             assert "404" in str(exc.value)
@@ -748,7 +748,7 @@ class TestFetchDossier:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
+        with patch("common.vvp.dossier.fetch.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(FetchError) as exc:
                 await fetch_dossier("http://example.com/dossier")
             assert "exceeds" in str(exc.value).lower()

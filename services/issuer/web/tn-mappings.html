@@ -210,7 +210,7 @@
 
     async function loadDossiers() {
       try {
-        const response = await fetch('/dossier', {
+        const response = await authFetch('/dossier', {
           headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });
         if (response.ok) {
@@ -224,7 +224,7 @@
 
     async function loadIdentities() {
       try {
-        const response = await fetch('/identities', {
+        const response = await authFetch('/identities', {
           headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });
         if (response.ok) {
@@ -240,7 +240,7 @@
       const container = document.getElementById('mappings-container');
 
       try {
-        const response = await fetch('/tn/mappings', {
+        const response = await authFetch('/tn/mappings', {
           headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });
 
@@ -380,7 +380,7 @@
       const identity_name = document.getElementById('mapping-identity').value;
 
       try {
-        const response = await fetch('/tn/mappings', {
+        const response = await authFetch('/tn/mappings', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -405,7 +405,7 @@
     async function showEditMappingModal(mappingId) {
       // Fetch the mapping details
       try {
-        const response = await fetch(`/tn/mappings/${mappingId}`, {
+        const response = await authFetch(`/tn/mappings/${mappingId}`, {
           headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });
 
@@ -474,7 +474,7 @@
       const enabled = document.getElementById('edit-enabled').checked;
 
       try {
-        const response = await fetch(`/tn/mappings/${mappingId}`, {
+        const response = await authFetch(`/tn/mappings/${mappingId}`, {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
@@ -502,7 +502,7 @@
       }
 
       try {
-        const response = await fetch(`/tn/mappings/${mappingId}`, {
+        const response = await authFetch(`/tn/mappings/${mappingId}`, {
           method: 'DELETE',
           headers: { 'X-Requested-With': 'XMLHttpRequest' },
         });
@@ -521,7 +521,7 @@
 
     async function testTNLookup(mappingId, tn) {
       try {
-        const response = await fetch(`/tn/test-lookup/${mappingId}`, {
+        const response = await authFetch(`/tn/test-lookup/${mappingId}`, {
           method: 'POST',
           headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });

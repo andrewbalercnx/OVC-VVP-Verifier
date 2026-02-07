@@ -108,6 +108,7 @@
       </div>
     </div>
 
+    <script src="/static/shared.js"></script>
     <script>
       const createForm = document.getElementById('createForm');
       const createBtn = document.getElementById('createBtn');
@@ -120,7 +121,7 @@
       // Load identities for dropdown
       async function loadIdentities() {
         try {
-          const res = await fetch('/identity');
+          const res = await authFetch('/identity');
           // Clear existing options except placeholder
           identitySelect.innerHTML = '<option value="">Select an identity...</option>';
 
@@ -170,18 +171,11 @@
         const publishToWitnesses = document.getElementById('publishToWitnesses').checked;
 
         try {
-          const apiKey = localStorage.getItem('vvp_api_key') || '';
-          if (!apiKey) {
-            createResult.innerHTML = '<div class="error">Error: API key required. Please set your API key in <a href="/ui/admin">Admin</a> settings.</div>';
-            return;
-          }
-
-          const res = await fetch('/registry', {
+          const res = await authFetch('/registry', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest',
-              'X-API-Key': apiKey
+              'X-Requested-With': 'XMLHttpRequest'
             },
             body: JSON.stringify({
               name: registryName,
@@ -250,7 +244,7 @@
         registryList.innerHTML = '<em>Loading...</em>';
 
         try {
-          const res = await fetch('/registry');
+          const res = await authFetch('/registry');
 
           if (!res.ok) {
             registryList.innerHTML = '<em>Unable to load registries. Please try refreshing the page.</em>';
@@ -306,21 +300,11 @@
         document.body.appendChild(modal);
 
         try {
-          const apiKey = localStorage.getItem('vvp_api_key') || '';
-          if (!apiKey) {
-            modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
-              <div class="error">API key required. Please set your API key in <a href="/ui/admin">Admin</a> settings.</div>
-              <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
-            </div>`;
-            return;
-          }
-
-          const res = await fetch(`/registry/${registryKey}`, {
+          const res = await authFetch(`/registry/${registryKey}`, {
             method: 'DELETE',
             headers: {
               'Content-Type': 'application/json',
               'X-Requested-With': 'XMLHttpRequest',
-              'X-API-Key': apiKey
             }
           });
 
@@ -366,6 +350,5 @@
       loadIdentities();
       loadRegistries();
     </script>
-    <script src="/static/shared.js"></script>
   </body>
 </html>

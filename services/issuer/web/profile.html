@@ -148,7 +148,7 @@
   <script>
     async function loadProfile() {
       try {
-        const response = await fetch('/users/me', {
+        const response = await authFetch('/users/me', {
           headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });
 
@@ -277,7 +277,7 @@
       submitBtn.textContent = 'Changing...';
 
       try {
-        const response = await fetch('/users/me/password', {
+        const response = await authFetch('/users/me/password', {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',

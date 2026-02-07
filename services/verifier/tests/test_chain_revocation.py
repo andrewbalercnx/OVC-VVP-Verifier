@@ -493,7 +493,7 @@ class TestDossierCacheBackgroundRevocation:
         )
 
         # Mock the TEL client (patch where it's imported in the method)
-        with patch('app.vvp.keri.tel_client.get_tel_client') as mock_get_client:
+        with patch('common.vvp.keri.tel_client.get_tel_client') as mock_get_client:
             mock_client = MagicMock()
             mock_client.check_chain_revocation = AsyncMock(
                 return_value=ChainRevocationResult(
@@ -562,7 +562,7 @@ class TestDossierCacheBackgroundRevocation:
                 checked_at=datetime.now(timezone.utc).isoformat(),
             )
 
-        with patch('app.vvp.keri.tel_client.get_tel_client') as mock_get_client:
+        with patch('common.vvp.keri.tel_client.get_tel_client') as mock_get_client:
             mock_client = MagicMock()
             mock_client.check_chain_revocation = slow_check
             mock_get_client.return_value = mock_client

@@ -220,6 +220,7 @@
     </div>
   </main>
 
+  <script src="/static/shared.js"></script>
   <script>
     // E.164 country codes with names
     const E164_CODES = [
@@ -421,7 +422,7 @@
     async function loadRegistries() {
       const select = document.getElementById('registry');
       try {
-        const res = await fetch('/registry');
+        const res = await authFetch('/registry');
         if (!res.ok) throw new Error('Failed to load');
         const data = await res.json();
 
@@ -441,7 +442,7 @@
     async function loadCertifications() {
       const container = document.getElementById('certList');
       try {
-        const res = await fetch('/credential');
+        const res = await authFetch('/credential');
         if (!res.ok) throw new Error('Failed to load');
         const data = await res.json();
 
@@ -457,7 +458,7 @@
         for (const cert of certs) {
           // Fetch full details to get attributes
           try {
-            const detailRes = await fetch(`/credential/${cert.said}`);
+            const detailRes = await authFetch(`/credential/${cert.said}`);
             if (detailRes.ok) {
               const detail = await detailRes.json();
               const attrs = detail.attributes || {};
@@ -533,7 +534,7 @@
           publish_to_witnesses: document.getElementById('publishWitnesses').checked,
         };
 
-        const res = await fetch('/credential/issue', {
+        const res = await authFetch('/credential/issue', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -576,6 +577,5 @@
     loadRegistries();
     loadCertifications();
   </script>
-  <script src="/static/shared.js"></script>
 </body>
 </html>

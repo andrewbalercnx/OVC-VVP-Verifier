@@ -232,7 +232,7 @@
       const container = document.getElementById('orgs-container');
 
       try {
-        const response = await fetch('/organizations', {
+        const response = await authFetch('/organizations', {
           headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });
 
@@ -304,7 +304,7 @@
       const container = document.getElementById(`api-keys-${orgId}`);
 
       try {
-        const response = await fetch(`/organizations/${orgId}/api-keys`, {
+        const response = await authFetch(`/organizations/${orgId}/api-keys`, {
           headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });
 
@@ -364,7 +364,7 @@
       const name = document.getElementById('org-name').value;
 
       try {
-        const response = await fetch('/organizations', {
+        const response = await authFetch('/organizations', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -388,7 +388,7 @@
 
     async function toggleOrg(orgId, enable) {
       try {
-        const response = await fetch(`/organizations/${orgId}`, {
+        const response = await authFetch(`/organizations/${orgId}`, {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
@@ -453,7 +453,7 @@
       }
 
       try {
-        const response = await fetch(`/organizations/${orgId}/api-keys`, {
+        const response = await authFetch(`/organizations/${orgId}/api-keys`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -499,7 +499,7 @@
       }
 
       try {
-        const response = await fetch(`/organizations/${orgId}/api-keys/${keyId}`, {
+        const response = await authFetch(`/organizations/${orgId}/api-keys/${keyId}`, {
           method: 'DELETE',
           headers: { 'X-Requested-With': 'XMLHttpRequest' },
         });
