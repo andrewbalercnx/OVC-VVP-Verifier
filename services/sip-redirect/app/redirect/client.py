@@ -1,15 +1,17 @@
 """Issuer API client.
 
 Sprint 42: httpx-based async client for issuer service.
+Sprint 50: Added TN lookup cache to reduce latency on repeat calls.
 """
 
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
 
-from app.config import ISSUER_URL, ISSUER_TIMEOUT
+from app.config import ISSUER_URL, ISSUER_TIMEOUT, TN_CACHE_TTL, TN_CACHE_MAX_ENTRIES
 
 log = logging.getLogger(__name__)
 
@@ -39,10 +41,64 @@ class VVPCreateResult:
     error: Optional[str] = None
 
 
+@dataclass
+class _CachedTN:
+    """Cached TN lookup result with expiry."""
+
+    result: TNLookupResult
+    expires_at: float
+
+
+class TNLookupCache:
+    """Cache for TN lookup results to avoid repeated issuer API calls.
+
+    TN-to-dossier mappings change infrequently, so caching them for
+    a few minutes dramatically reduces call setup latency.
+    """
+
+    def __init__(self, ttl: int = TN_CACHE_TTL, max_entries: int = TN_CACHE_MAX_ENTRIES):
+        self._ttl = ttl
+        self._max_entries = max_entries
+        self._cache: dict[str, _CachedTN] = {}
+
+    def get(self, tn: str) -> Optional[TNLookupResult]:
+        """Get cached lookup result. Returns None if expired or missing."""
+        entry = self._cache.get(tn)
+        if entry is None:
+            return None
+        if time.monotonic() > entry.expires_at:
+            del self._cache[tn]
+            return None
+        return entry.result
+
+    def put(self, tn: str, result: TNLookupResult) -> None:
+        """Cache a successful lookup result."""
+        if not result.found:
+            return  # Don't cache failures
+        # Evict oldest if full
+        if len(self._cache) >= self._max_entries:
+            oldest_key = next(iter(self._cache))
+            del self._cache[oldest_key]
+        self._cache[tn] = _CachedTN(
+            result=result,
+            expires_at=time.monotonic() + self._ttl,
+        )
+        log.debug(f"Cached TN lookup for {tn} (TTL={self._ttl}s, entries={len(self._cache)})")
+
+    def invalidate(self, tn: str) -> None:
+        """Remove a specific TN from cache."""
+        self._cache.pop(tn, None)
+
+    @property
+    def size(self) -> int:
+        return len(self._cache)
+
+
 class IssuerClient:
     """Async HTTP client for VVP Issuer API.
 
     Provides methods for TN lookup and VVP header creation.
+    TN lookups are cached to reduce call setup latency.
     """
 
     def __init__(self, base_url: str = ISSUER_URL, timeout: float = ISSUER_TIMEOUT):
@@ -55,6 +111,7 @@ class IssuerClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None
+        self._tn_cache = TNLookupCache()
 
     async def __aenter__(self) -> "IssuerClient":
         """Async context manager entry."""
@@ -73,6 +130,9 @@ class IssuerClient:
     async def lookup_tn(self, tn: str, api_key: str) -> TNLookupResult:
         """Look up TN mapping from issuer.
 
+        Results are cached for TN_CACHE_TTL seconds to reduce call setup
+        latency on repeated calls for the same number.
+
         Args:
             tn: E.164 telephone number
             api_key: VVP API key for authentication
@@ -80,6 +140,12 @@ class IssuerClient:
         Returns:
             TNLookupResult with mapping data or error
         """
+        # Check cache first
+        cached = self._tn_cache.get(tn)
+        if cached is not None:
+            log.info(f"TN cache hit for {tn} (cache size={self._tn_cache.size})")
+            return cached
+
         if not self._client:
             return TNLookupResult(found=False, error="Client not initialized")
 
@@ -91,7 +157,7 @@ class IssuerClient:
 
             if response.status_code == 200:
                 data = response.json()
-                return TNLookupResult(
+                result = TNLookupResult(
                     found=data.get("found", False),
                     tn=data.get("tn"),
                     organization_id=data.get("organization_id"),
@@ -102,6 +168,9 @@ class IssuerClient:
                     brand_logo_url=data.get("brand_logo_url"),
                     error=data.get("error"),
                 )
+                # Cache successful lookups
+                self._tn_cache.put(tn, result)
+                return result
             else:
                 log.warning(f"TN lookup failed: {response.status_code}")
                 try:

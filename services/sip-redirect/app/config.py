@@ -31,6 +31,10 @@ RATE_LIMIT_BURST = int(os.getenv("VVP_RATE_LIMIT_BURST", "50"))
 # API Key Cache
 API_KEY_CACHE_TTL = int(os.getenv("VVP_API_KEY_CACHE_TTL", "60"))
 
+# TN Lookup Cache - caches TN→dossier mappings to avoid repeated issuer API calls
+TN_CACHE_TTL = int(os.getenv("VVP_TN_CACHE_TTL", "300"))  # 5 minutes
+TN_CACHE_MAX_ENTRIES = int(os.getenv("VVP_TN_CACHE_MAX_ENTRIES", "1000"))
+
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 

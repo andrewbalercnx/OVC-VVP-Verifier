@@ -36,7 +36,8 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 47 | SIP Monitor - Core Infrastructure | COMPLETE | Sprint 43 |
 | 48 | SIP Monitor - Real-Time & VVP Viz | COMPLETE | Sprint 47 |
 | 49 | Shared Dossier Cache & Revocation | COMPLETE | Sprint 32 |
-| 50 | Verification Result Caching | PLANNED | Sprint 49 |
+| 50 | SIP Call Latency & Brand Logo | COMPLETE | Sprint 44 |
+| 51 | Verification Result Caching | PLANNED | Sprint 50 |
 
 ---
 
@@ -2025,7 +2026,7 @@ Before first PostgreSQL deployment:
 
 ---
 
-## Sprint 50: Verification Result Caching (PLANNED)
+## Sprint 51: Verification Result Caching (PLANNED)
 
 **Goal:** Cache complete verification results so that second and subsequent reads of a dossier return in sub-100ms, with revocation status checked asynchronously in the background.
 
@@ -2180,7 +2181,7 @@ Check VerificationResultCache by dossier URL
 
 ### Measurable Success Criteria
 
-| Metric | Before (Current) | Target (Sprint 50) |
+| Metric | Before (Current) | Target (Sprint 51) |
 |--------|-------------------|---------------------|
 | Second read latency (same dossier) | 1-5s (full re-verification) | <100ms (cache hit) |
 | Cache hit rate (repeated dossiers) | ~0% effective (only saves fetch) | >90% (full result cached) |
@@ -2281,7 +2282,7 @@ To start a sprint, say:
 - "Sprint 47" - SIP monitor core infrastructure + authentication
 - "Sprint 48" - SIP monitor real-time and VVP visualization
 - "Sprint 49" - SIP monitor polish and deployment
-- "Sprint 50" - Verification result caching (sub-100ms second reads)
+- "Sprint 51" - Verification result caching (sub-100ms second reads)
 
 Each sprint follows the pair programming workflow:
 1. Plan phase (design, review, approval)
@@ -2462,3 +2463,45 @@ services/pbx/
 - [x] VVP-themed styling applied
 - [ ] Test call (71006) captured and visualized
 - [x] Documentation complete
+
+---
+
+## Sprint 50: SIP Call Latency & Brand Logo (COMPLETE)
+
+**Goal:** Reduce call setup latency with caching, add persistent HTTP sessions, and deliver brand logo end-to-end.
+
+**Prerequisites:** Sprint 44 (SIP Verification Service) COMPLETE.
+
+**Deliverables:**
+
+- [x] **TN lookup cache** (sip-redirect) - 5-minute TTL cache for TN→dossier mappings
+- [x] **Persistent HTTP session** (sip-verify) - aiohttp connection pool with keepalive
+- [x] **Brand cache** (sip-verify) - Cache brand info by dossier URL for timeout fallback
+- [x] **Brand logo delivery** - Updated TN mapping with working `brand_logo_url`, verified end-to-end
+- [x] **End-to-end test** - Dial 71006, ACME Inc brand name + logo + VERIFIED status displayed
+
+**Implementation Notes:**
+
+- First call was taking ~9s due to uncached TN lookups (~2.7s each to issuer API) and new TCP/TLS per verifier call
+- TN cache (`TNLookupCache`) uses monotonic clock with TTL-based expiry and LRU eviction (max 1000 entries)
+- Verifier client now uses `aiohttp.TCPConnector(limit=10, keepalive_timeout=60)` for connection reuse
+- Brand logo URL updated from broken `/static/vvp-logo.svg` (404) to working `/static/static/acme-logo.svg`
+- Status HTTP port changed from 8080 to 8085 to avoid conflict with PHP/FusionPBX
+
+**Key Files:**
+
+```
+services/sip-redirect/app/
+├── config.py                     # MODIFIED: TN_CACHE_TTL, TN_CACHE_MAX_ENTRIES
+└── redirect/client.py            # MODIFIED: TNLookupCache, _CachedTN
+
+services/sip-verify/app/
+└── verify/client.py              # MODIFIED: Persistent session, _CachedBrand, brand cache
+```
+
+**Exit Criteria:**
+
+- [x] TN lookup cache reduces repeat call latency
+- [x] Persistent HTTP session avoids TCP/TLS handshake per verification
+- [x] Brand logo displayed in WebRTC phone (ACME Inc logo)
+- [x] Full VVP flow: brand name + logo + VERIFIED status
