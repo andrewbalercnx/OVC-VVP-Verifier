@@ -36,6 +36,7 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 47 | SIP Monitor - Core Infrastructure | COMPLETE | Sprint 43 |
 | 48 | SIP Monitor - Real-Time & VVP Viz | COMPLETE | Sprint 47 |
 | 49 | Shared Dossier Cache & Revocation | COMPLETE | Sprint 32 |
+| 50 | Verification Result Caching | PLANNED | Sprint 49 |
 
 ---
 
@@ -2024,6 +2025,236 @@ Before first PostgreSQL deployment:
 
 ---
 
+## Sprint 50: Verification Result Caching (PLANNED)
+
+**Goal:** Cache complete verification results so that second and subsequent reads of a dossier return in sub-100ms, with revocation status checked asynchronously in the background.
+
+**Prerequisites:** Sprint 49 (Shared Dossier Cache & Revocation) COMPLETE.
+
+**Problem Statement:**
+
+The current dossier cache (`DossierCache`) only caches the parsed DAG and raw bytes, saving the HTTP fetch + parse on cache hit (~500-2000ms). However, every verification request still performs all expensive downstream operations regardless of cache status:
+
+| Operation | Typical Latency | Immutable? | Currently Cached? |
+|-----------|-----------------|------------|-------------------|
+| HTTP fetch + CESR parse | 500-2000ms | N/A | Yes (dossier cache) |
+| ACDC chain validation (schema resolution, trust root walk) | 500-3000ms | Yes (SAID-addressed) | No |
+| ACDC signature verification (KEL fetch, key state resolution) | 200-1000ms | Yes (SAID-addressed) | No |
+| Revocation checking (TEL queries) | 200-2000ms | **No** (mutable) | No (synchronous!) |
+| Authorization validation | 5-20ms | Yes (per-request) | No |
+
+**Result:** A dossier cache hit saves ~1-2s of fetch time but still incurs ~1-5s of chain/signature/revocation work. Second reads are barely faster than first reads.
+
+**Key Insight:** All KERI ACDCs are formally non-repudiable. The entire credential tree structure is immutable once resolved. Only revocation status can change. Therefore the complete resolved data structure can be cached indefinitely, with only revocation status requiring periodic re-checking.
+
+**Additional Finding:** The existing `DossierCache.put()` background revocation check is never triggered because `verify.py` line 902 calls `put()` without passing `chain_info`, making the fire-and-forget revocation task dead code in the verification path.
+
+**Proposed Solution:**
+
+### Approach: Verification Result Cache
+
+Introduce a `VerificationResultCache` that caches the **complete verification output** (not just the raw dossier) keyed by dossier SAID. On cache hit, the full result is served immediately. Revocation status is decoupled from the synchronous path and checked asynchronously.
+
+### Alternatives Considered
+
+| Alternative | Pros | Cons | Why Rejected |
+|-------------|------|------|--------------|
+| Increase dossier cache TTL | Simple | Doesn't address downstream re-verification | Saves only fetch time |
+| Cache individual component results | Granular TTL control | Still re-orchestrates per request; many cache lookups | Complexity without solving the core problem |
+| External cache (Redis) | Survives restarts, shared across instances | Infrastructure dependency, serialization overhead | Over-engineered for single-instance verifier |
+
+### Detailed Design
+
+#### Component 1: RevocationStatus Enum
+
+- **Purpose**: Three-state revocation status for each credential
+- **Location**: `common/common/vvp/dossier/cache.py`
+- **Values**: `UNDEFINED` (not yet checked), `UNREVOKED` (confirmed active), `REVOKED` (confirmed revoked)
+
+#### Component 2: CachedVerificationResult
+
+- **Purpose**: Stores complete verification output with per-credential revocation state
+- **Location**: `services/verifier/app/vvp/verification_cache.py`
+- **Fields**:
+  - `dossier_said: str` — Primary key (content-addressed, immutable)
+  - `dossier_url: str` — URL used to fetch (secondary index)
+  - `dag: DossierDAG` — Parsed credential graph
+  - `raw_content: bytes` — Raw dossier bytes
+  - `chain_result: ChainValidationResult` — Immutable chain validation output
+  - `schema_results: Dict[str, SchemaValidationResult]` — Per-credential schema validation
+  - `signature_results: Dict[str, SignatureResult]` — Per-credential signature status
+  - `authorization_result: AuthorizationResult` — Party + TN rights result
+  - `brand_info: Optional[BrandInfo]` — Extracted brand data
+  - `credential_revocation_status: Dict[str, RevocationStatus]` — Per-credential, starts UNDEFINED
+  - `revocation_last_checked: Optional[float]` — Unix timestamp
+  - `created_at: float` — When first cached
+  - `issuer_identities: Dict` — Resolved issuer identity map
+
+#### Component 3: VerificationResultCache
+
+- **Purpose**: In-memory LRU cache of complete verification results
+- **Location**: `services/verifier/app/vvp/verification_cache.py`
+- **Interface**:
+  - `get(dossier_url: str) -> Optional[CachedVerificationResult]`
+  - `put(dossier_url: str, result: CachedVerificationResult)`
+  - `update_revocation(dossier_url: str, credential_said: str, status: RevocationStatus)`
+  - `invalidate(dossier_url: str)`
+  - `metrics() -> CacheMetrics`
+- **TTL**: No expiry for immutable data. Revocation status has separate refresh interval.
+- **Size**: Max 200 entries (configurable via `VVP_VERIFICATION_CACHE_MAX_ENTRIES`)
+- **Eviction**: LRU when at capacity
+- **Thread safety**: `asyncio.Lock`
+
+#### Component 4: Background Revocation Checker
+
+- **Purpose**: Single background task that checks revocation for cached results
+- **Location**: `services/verifier/app/vvp/revocation_checker.py`
+- **Behaviour**:
+  - Only ONE checker task runs at a time (enforced by semaphore)
+  - On cache put: enqueue dossier URL for revocation checking
+  - Checker dequeues items and checks each credential's TEL status
+  - Updates `credential_revocation_status` in cache as results arrive
+  - Re-checks periodically (configurable interval, default 300s)
+  - On revocation detected: marks credential REVOKED in cache, logs, optionally invalidates
+- **Queue**: `asyncio.Queue` with deduplication (set of pending URLs)
+
+#### Component 5: Modified verify_vvp() Flow
+
+- **Location**: `services/verifier/app/vvp/verify.py`
+- **New flow on cache hit**:
+  1. Check `VerificationResultCache` by dossier URL
+  2. If hit: reconstruct `VerifyResponse` from cached result immediately
+     - Revocation claim uses cached `credential_revocation_status`
+     - If any credential is UNDEFINED → revocation_clear = INDETERMINATE with evidence "revocation_check_pending"
+     - If all UNREVOKED → revocation_clear = VALID
+     - If any REVOKED → revocation_clear = INVALID
+  3. Enqueue background revocation re-check (if last check > refresh interval)
+  4. Return response (sub-100ms target)
+- **New flow on cache miss**:
+  1. Full verification as today (fetch, parse, chain, signature, revocation, auth)
+  2. Store complete result in `VerificationResultCache`
+  3. Revocation results from the synchronous check populate `credential_revocation_status`
+  4. Return response
+
+### Data Flow
+
+```
+Request arrives
+    │
+    ▼
+Check VerificationResultCache by dossier URL
+    ├─ HIT: Build response from cached immutable results
+    │       + current revocation status (UNDEFINED/UNREVOKED/REVOKED)
+    │       + enqueue revocation re-check if stale
+    │       → Return in <100ms
+    │
+    └─ MISS: Full verification pipeline
+            │
+            ├─ Fetch dossier (HTTP)
+            ├─ Parse CESR → DAG
+            ├─ Validate chain (schema + trust root)
+            ├─ Verify signatures (KEL resolution)
+            ├─ Check revocation (TEL queries) — synchronous on first call
+            ├─ Validate authorization
+            ├─ Extract brand info
+            │
+            ▼
+            Store in VerificationResultCache
+            → Return full result
+```
+
+### Error Handling
+
+- Cache corruption (e.g., stale chain result after code update): version field in cached result; invalidate on version mismatch
+- Background revocation check failure: keep credential as UNDEFINED, retry on next interval
+- Memory pressure: LRU eviction ensures bounded memory usage
+
+### Test Strategy
+
+1. **Unit tests**: VerificationResultCache get/put/eviction/metrics
+2. **Unit tests**: RevocationStatus transitions (UNDEFINED → UNREVOKED, UNDEFINED → REVOKED)
+3. **Unit tests**: Background revocation checker queue/dedup/single-task enforcement
+4. **Integration test**: First call populates cache; second call returns <100ms
+5. **Integration test**: Revocation status transitions from UNDEFINED to UNREVOKED after background check
+6. **Benchmark**: Measure p50/p95 response time for first vs. second dossier reads
+
+### Measurable Success Criteria
+
+| Metric | Before (Current) | Target (Sprint 50) |
+|--------|-------------------|---------------------|
+| Second read latency (same dossier) | 1-5s (full re-verification) | <100ms (cache hit) |
+| Cache hit rate (repeated dossiers) | ~0% effective (only saves fetch) | >90% (full result cached) |
+| Revocation freshness | Synchronous per-request | Background, <300s staleness |
+| Memory overhead | ~5MB (dossier DAGs only) | ~25MB (full results) |
+
+**Deliverables:**
+
+- [ ] `RevocationStatus` enum (`UNDEFINED`, `UNREVOKED`, `REVOKED`)
+- [ ] `CachedVerificationResult` dataclass with immutable + mutable fields
+- [ ] `VerificationResultCache` class with LRU, metrics, per-credential revocation updates
+- [ ] `BackgroundRevocationChecker` with single-task enforcement and async queue
+- [ ] Modified `verify_vvp()` to check result cache first and return immediately on hit
+- [ ] `VerifyResponse` enrichment: indicate when revocation status is pending
+- [ ] Configuration: `VVP_VERIFICATION_CACHE_MAX_ENTRIES`, `VVP_REVOCATION_RECHECK_INTERVAL`
+- [ ] Unit tests for all new components
+- [ ] Integration test: measurable second-read improvement
+- [ ] Benchmark script for before/after comparison
+
+**Key Files:**
+
+```
+services/verifier/app/vvp/
+├── verification_cache.py          # NEW: VerificationResultCache + CachedVerificationResult
+├── revocation_checker.py          # NEW: BackgroundRevocationChecker
+├── verify.py                      # MODIFY: Cache-first verification flow
+└── api_models.py                  # MODIFY: Add revocation_pending indicator
+
+common/common/vvp/dossier/
+└── cache.py                       # MODIFY: Add RevocationStatus enum
+
+services/verifier/app/core/
+└── config.py                      # MODIFY: Add cache configuration
+
+services/verifier/tests/
+├── test_verification_cache.py     # NEW: Cache unit tests
+├── test_revocation_checker.py     # NEW: Background checker tests
+└── test_verify_caching.py         # NEW: Integration tests for cached flow
+
+services/verifier/benchmarks/
+└── test_cache_performance.py      # NEW: Before/after benchmark
+```
+
+**Configuration:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VVP_VERIFICATION_CACHE_MAX_ENTRIES` | `200` | Max cached verification results |
+| `VVP_REVOCATION_RECHECK_INTERVAL` | `300` | Seconds between revocation re-checks |
+| `VVP_VERIFICATION_CACHE_ENABLED` | `true` | Feature flag to enable/disable |
+| `VVP_REVOCATION_CHECK_CONCURRENCY` | `1` | Max concurrent revocation check tasks |
+
+**Risks and Mitigations:**
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| Stale revocation status served | Medium | High | Background checker + configurable refresh interval; UNDEFINED status clearly indicated to caller |
+| Memory growth from cached results | Low | Medium | LRU eviction + configurable max entries; monitor with metrics endpoint |
+| Code upgrade invalidates cached chain results | Low | Low | Version field in cached result; cache cleared on service restart |
+| Race between cache read and background revocation update | Low | Low | asyncio.Lock; atomic status transitions |
+
+**Exit Criteria:**
+
+- [ ] Second read of same dossier completes in <100ms (vs 1-5s before)
+- [ ] Revocation status starts as UNDEFINED, transitions to UNREVOKED/REVOKED after background check
+- [ ] Only one background revocation task runs at a time
+- [ ] Cache metrics exposed (hits, misses, evictions, revocation check counts)
+- [ ] Feature flag allows disabling cache without code change
+- [ ] All existing tests continue to pass
+- [ ] New unit + integration tests for all cache components
+- [ ] Benchmark demonstrates measurable improvement
+
+---
+
 ## Quick Reference
 
 To start a sprint, say:
@@ -2050,6 +2281,7 @@ To start a sprint, say:
 - "Sprint 47" - SIP monitor core infrastructure + authentication
 - "Sprint 48" - SIP monitor real-time and VVP visualization
 - "Sprint 49" - SIP monitor polish and deployment
+- "Sprint 50" - Verification result caching (sub-100ms second reads)
 
 Each sprint follows the pair programming workflow:
 1. Plan phase (design, review, approval)
