@@ -245,11 +245,11 @@ When the user says "Sprint N" (e.g., "Sprint 27"), begin pair programming on tha
 
 4. **Follow pair programming workflow** - As defined in the "Pair Programming Workflow" section:
    - Draft plan in `PLAN.md` with sufficient detail for review
-   - Request plan review from user (they may copy to a Reviewer agent)
-   - Iterate until APPROVED
+   - Request plan review: `./scripts/request-review.sh plan <N> "<title>"`
+   - Read `REVIEW.md` for verdict; iterate until APPROVED
    - Implement according to plan
-   - Request code review
-   - Archive completed plan using `scripts/archive-plan.sh`
+   - Request code review: `./scripts/request-review.sh code <N> "<title>"`
+   - Archive completed plan using `./scripts/archive-plan.sh`
 
 **Sprint Definitions:** See `SPRINTS.md` for the full sprint roadmap (Sprints 1-25 were verifier implementation, Sprints 26+ are issuer implementation).
 
@@ -258,8 +258,12 @@ When the user says "Sprint N" (e.g., "Sprint 27"), begin pair programming on tha
 User: Sprint 27
 Agent: [Reads SPRINTS.md for Sprint 27 details]
 Agent: [Writes PLAN.md with implementation plan for Local Witness Infrastructure]
-Agent: [Requests plan review]
-... pair programming cycle continues ...
+Agent: [Runs ./scripts/request-review.sh plan 27 "Local Witness Infrastructure"]
+Agent: [Reads REVIEW.md — Codex verdict: APPROVED]
+Agent: [Implements according to plan]
+Agent: [Runs ./scripts/request-review.sh code 27 "Local Witness Infrastructure"]
+Agent: [Reads REVIEW.md — Codex verdict: APPROVED]
+Agent: [Runs ./scripts/archive-plan.sh 27 "Local Witness Infrastructure"]
 ```
 
 ## Running Tests
@@ -290,7 +294,25 @@ The test script sets `DYLD_LIBRARY_PATH="/opt/homebrew/lib"` automatically. If l
 
 ## Pair Programming Workflow
 
-This project uses a formal two-agent workflow with an **Editor** (implementing agent) and **Reviewer** (reviewing agent). The user facilitates by copying prompts between sessions.
+This project uses a **heterogeneous two-agent workflow**: Claude (Editor/Implementor) and OpenAI Codex (Reviewer). Using different AI platforms for each role provides genuine independence — the Reviewer catches different classes of issues than the Editor's own model would.
+
+### Reviewer Setup
+
+| Role | Platform | Invocation |
+|------|----------|------------|
+| Editor / Implementor | Claude Code | Interactive session (this agent) |
+| Reviewer | OpenAI Codex | `./scripts/request-review.sh` (automated) |
+
+**Prerequisites:**
+```bash
+npm install -g @openai/codex   # Install Codex CLI
+codex                           # Authenticate (follow prompts)
+```
+
+**Custom reviewer:** Set `VVP_REVIEWER` to override the default Codex invocation:
+```bash
+VVP_REVIEWER="claude -p" ./scripts/request-review.sh plan 35 "Title"  # Use Claude instead
+```
 
 ### Guiding Principles
 
@@ -381,73 +403,26 @@ What tests will be written and what they verify.
 
 #### Step 1.2: Request Plan Review
 
-The Editor provides a **copyable prompt** for the Reviewer **directly in the conversation** (not just in PLAN.md). The prompt should be in a fenced code block so the user can easily copy it to the Reviewer agent:
+Run the review script to invoke the Reviewer (Codex) automatically:
 
-```text
-## Plan Review Request: Phase N - [Title]
-
-You are the Reviewer in a pair programming workflow. Please review the plan in PLAN.md and provide your assessment in REVIEW.md.
-
-PRE-CONTEXT (read before reviewing):
-1. Read CHANGES.md — understand what has been built so far and recent decisions
-2. Read Documentation/PLAN_history.md — understand prior architectural choices
-3. These files establish the baseline the plan builds upon
-
-PRIOR DECISIONS RELEVANT TO THIS REVIEW:
-- [Decision 1 from earlier sprint and its rationale]
-- [Decision 2 that constrains this plan]
-- [Any relevant context the Reviewer needs]
-
-YOUR TASK:
-1. Read the pre-context files above for project history
-2. Read PLAN.md thoroughly
-3. Evaluate against the spec references cited
-4. Assess the rationale for design decisions
-5. Check consistency with prior architectural decisions
-6. Answer any open questions
-7. Provide verdict and feedback in REVIEW.md
-
-EVALUATION CRITERIA:
-- Does the plan correctly interpret the spec requirements?
-- Is the proposed approach sound and well-justified?
-- Is the plan consistent with prior decisions (or does it justify departures)?
-- Are there gaps, ambiguities, or risks not addressed?
-- Is the test strategy adequate?
-
-RESPONSE FORMAT - Write to REVIEW.md with this structure:
-
-    ## Plan Review: Phase N - [Title]
-
-    **Verdict:** APPROVED | CHANGES_REQUESTED
-
-    ### Spec Compliance
-    [Assessment of how well the plan addresses spec requirements]
-
-    ### Design Assessment
-    [Evaluation of the proposed approach and alternatives]
-
-    ### Findings
-    - [High]: Critical issue that blocks approval
-    - [Medium]: Important issue that should be addressed
-    - [Low]: Suggestion for improvement (optional)
-
-    ### Answers to Open Questions
-    1. [Answer to question 1]
-    2. [Answer to question 2]
-
-    ### Required Changes (if CHANGES_REQUESTED)
-    1. [Specific change required]
-    2. [Another required change]
-
-    ### Recommendations
-    - [Optional improvements or future considerations]
+```bash
+./scripts/request-review.sh plan <sprint-number> "<title>"
+# Example: ./scripts/request-review.sh plan 35 "Credential Issuance"
 ```
+
+The script:
+1. Assembles a prompt instructing the Reviewer to read `CHANGES.md`, `Documentation/PLAN_history.md`, and `PLAN.md`
+2. Invokes Codex (or the configured `VVP_REVIEWER`) with the prompt
+3. Codex writes its verdict and findings to `REVIEW.md`
+4. Reports the verdict and next steps
+
+After the script completes, read `REVIEW.md` to see the verdict.
 
 #### Step 1.3: Iterate Until Approved
 
 If Reviewer returns `CHANGES_REQUESTED`:
 1. Editor revises `PLAN.md` addressing all required changes
-2. Editor provides new review prompt
+2. Re-run `./scripts/request-review.sh plan <N> "<title>"`
 3. Repeat until `APPROVED`
 
 ---
@@ -492,72 +467,24 @@ The Editor updates `PLAN.md` with an implementation appendix:
 
 #### Step 2.3: Request Code Review
 
-The Editor provides a **copyable prompt** for code review:
+Run the review script to invoke the Reviewer (Codex) automatically:
 
-```text
-## Code Review Request: Phase N - [Title]
-
-You are the Reviewer in a pair programming workflow. Please review the implementation and provide your assessment in REVIEW.md.
-
-PRE-CONTEXT (read before reviewing):
-1. Read CHANGES.md — understand what has been built so far
-2. Read PLAN.md — the approved plan this code implements
-
-CONTEXT: [Brief description of what was implemented]
-
-SPEC REFERENCES:
-- §X.Y: [Section name]
-
-FILES TO REVIEW:
-- path/to/file.py (created) - [purpose]
-- tests/test_file.py (created) - [what it tests]
-
-VERIFICATION: Run python3 -m pytest tests/test_xxx.py -v
-
-KEY DESIGN DECISIONS:
-1. [Decision and rationale]
-2. [Another decision and rationale]
-
-TEST RESULTS: [N passed in X.XXs]
-
-YOUR TASK:
-1. Read CHANGES.md and PLAN.md for context
-2. Review all listed files for correctness and style
-3. Verify implementation matches approved plan
-4. Check test coverage and edge cases
-5. Provide verdict and feedback in REVIEW.md
-
-RESPONSE FORMAT - Write to REVIEW.md with this structure:
-
-    ## Code Review: Phase N - [Title]
-
-    **Verdict:** APPROVED | CHANGES_REQUESTED | PLAN_REVISION_REQUIRED
-
-    ### Implementation Assessment
-    [Does the code correctly implement the approved plan?]
-
-    ### Code Quality
-    [Assessment of code clarity, documentation, error handling]
-
-    ### Test Coverage
-    [Assessment of test adequacy]
-
-    ### Findings
-    - [High]: Critical issue that blocks approval
-    - [Medium]: Important issue that should be fixed
-    - [Low]: Minor suggestion (optional)
-
-    ### Required Changes (if not APPROVED)
-    1. [Specific change required]
-    2. [Another required change]
-
-    ### Plan Revisions (if PLAN_REVISION_REQUIRED)
-    [What needs to change in the plan before re-implementation]
+```bash
+./scripts/request-review.sh code <sprint-number> "<title>"
+# Example: ./scripts/request-review.sh code 35 "Credential Issuance"
 ```
+
+The script:
+1. Detects changed files from git history
+2. Assembles a prompt instructing the Reviewer to read `CHANGES.md`, `PLAN.md`, and the changed files
+3. Invokes Codex, which writes its verdict to `REVIEW.md`
+4. Reports the verdict and next steps
+
+After the script completes, read `REVIEW.md` to see the verdict.
 
 #### Step 2.4: Iterate Until Approved
 
-- If `CHANGES_REQUESTED`: Fix issues, provide new review prompt
+- If `CHANGES_REQUESTED`: Fix issues, re-run `./scripts/request-review.sh code ...`
 - If `PLAN_REVISION_REQUIRED`: Return to Phase 1 with revised plan
 - If `APPROVED`: Proceed to Phase 3
 
