@@ -1,12 +1,14 @@
 """Verifier API client for VVP SIP Verify Service.
 
 Sprint 44: HTTP client for calling the VVP Verifier /verify-callee endpoint.
+Sprint 50: Persistent session for connection reuse (avoids TCP/TLS per call).
 """
 
 import asyncio
 import base64
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -41,8 +43,21 @@ class VerifyResult:
     request_id: Optional[str] = None
 
 
+@dataclass
+class _CachedBrand:
+    """Cached brand info from a recent verification."""
+
+    brand_name: Optional[str]
+    brand_logo_url: Optional[str]
+    expires_at: float
+
+
 class VerifierClient:
-    """HTTP client for VVP Verifier API."""
+    """HTTP client for VVP Verifier API.
+
+    Uses a persistent aiohttp session for connection reuse,
+    avoiding TCP/TLS handshake overhead on each verification call.
+    """
 
     def __init__(
         self,
@@ -60,6 +75,47 @@ class VerifierClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.api_key = api_key
+        self._session: Optional[aiohttp.ClientSession] = None
+        # Cache brand info by evd URL (dossier doesn't change frequently)
+        self._brand_cache: dict[str, _CachedBrand] = {}
+        self._brand_cache_ttl = 300  # 5 minutes
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create the persistent HTTP session."""
+        if self._session is None or self._session.closed:
+            connector = aiohttp.TCPConnector(
+                limit=10,  # Max connections
+                keepalive_timeout=60,  # Keep alive for 60s
+            )
+            self._session = aiohttp.ClientSession(
+                timeout=self.timeout,
+                connector=connector,
+            )
+        return self._session
+
+    async def close(self) -> None:
+        """Close the persistent session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+
+    def _get_cached_brand(self, evd: str) -> Optional[_CachedBrand]:
+        """Get cached brand info for a dossier URL."""
+        entry = self._brand_cache.get(evd)
+        if entry and time.monotonic() < entry.expires_at:
+            return entry
+        if entry:
+            del self._brand_cache[evd]
+        return None
+
+    def _cache_brand(self, evd: str, brand_name: Optional[str], brand_logo_url: Optional[str]) -> None:
+        """Cache brand info from a successful verification."""
+        if brand_name:
+            self._brand_cache[evd] = _CachedBrand(
+                brand_name=brand_name,
+                brand_logo_url=brand_logo_url,
+                expires_at=time.monotonic() + self._brand_cache_ttl,
+            )
 
     def _build_vvp_identity_header(
         self,
@@ -156,21 +212,47 @@ class VerifierClient:
         log.debug(f"Calling {url} for call_id={call_id}")
 
         try:
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.post(url, json=request_body, headers=headers) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return self._parse_response(data)
-                    else:
-                        text = await resp.text()
-                        log.warning(f"Verifier returned {resp.status}: {text[:200]}")
+            session = await self._get_session()
+            async with session.post(url, json=request_body, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    result = self._parse_response(data)
+                    # Cache brand info from successful verifications
+                    if result.status == "VALID" and evd:
+                        self._cache_brand(evd, result.brand_name, result.brand_logo_url)
+                    return result
+                else:
+                    text = await resp.text()
+                    log.warning(f"Verifier returned {resp.status}: {text[:200]}")
+                    # On timeout/error, use cached brand if available
+                    cached_brand = self._get_cached_brand(evd) if evd else None
+                    if cached_brand:
+                        log.info(f"Using cached brand for {evd[:50]}... (verifier returned {resp.status})")
                         return VerifyResult(
                             status="INDETERMINATE",
+                            brand_name=cached_brand.brand_name,
+                            brand_logo_url=cached_brand.brand_logo_url,
                             error_code="VERIFIER_ERROR",
                             error_message=f"Verifier returned HTTP {resp.status}",
                         )
+                    return VerifyResult(
+                        status="INDETERMINATE",
+                        error_code="VERIFIER_ERROR",
+                        error_message=f"Verifier returned HTTP {resp.status}",
+                    )
         except asyncio.TimeoutError:
             log.warning(f"Verifier timeout for call_id={call_id}")
+            # Use cached brand on timeout
+            cached_brand = self._get_cached_brand(evd) if evd else None
+            if cached_brand:
+                log.info(f"Using cached brand for {evd[:50]}... (timeout)")
+                return VerifyResult(
+                    status="INDETERMINATE",
+                    brand_name=cached_brand.brand_name,
+                    brand_logo_url=cached_brand.brand_logo_url,
+                    error_code="VERIFIER_TIMEOUT",
+                    error_message="Verifier request timed out",
+                )
             return VerifyResult(
                 status="INDETERMINATE",
                 error_code="VERIFIER_TIMEOUT",

@@ -262,10 +262,9 @@ az vm run-command invoke --resource-group VVP --name vvp-pbx --command-id RunShe
 When the user says "Complete", immediately perform all of the following without asking for permission:
 
 1. **Update sprint status** - Update `SPRINTS.md` to reflect any work completed in the current sprint before committing.
-2. **Archive sprint plan** - If this sprint had a plan (from Claude's plan mode or a PLAN_*.md file):
-   - Append the complete implementation plan to `Documentation/PLAN_history.md` with a section header like `# Sprint N: [Title]`
-   - Include the plan content, implementation notes, files changed, and test results
-   - If a separate PLAN_*.md file was created, move it to `Documentation/archive/` after appending
+2. **Archive sprint plan** - If this sprint had a plan file, run the archival script:
+   - `./scripts/archive-plan.sh <sprint-number> "<title>"`
+   - This appends `PLAN_Sprint<N>.md` to `Documentation/PLAN_history.md`, archives it, and removes `REVIEW_Sprint<N>.md`
 3. **Commit all changes** - Stage all modified/new files and create a descriptive commit
 4. **Push to main** - Push the commit to the main branch
 5. **Monitor Azure deployment** - Use `gh run watch` to monitor the GitHub Actions workflow for successful deployment
@@ -287,18 +286,18 @@ When the user says "Sprint N" (e.g., "Sprint 27"), begin pair programming on tha
    - Phase breakdown with detailed designs
    - Risk assessment and mitigations
 
-3. **Enter plan mode** - Use Claude's built-in plan mode to:
-   - Draft a detailed implementation plan based on sprint deliverables
-   - Include specific file paths, code structure, and test strategy
-   - Address any dependencies from previous sprints
+3. **Draft the plan** - Write `PLAN_Sprint<N>.md` in the repo root with:
+   - Detailed implementation plan based on sprint deliverables
+   - Specific file paths, code structure, and test strategy
+   - Dependencies from previous sprints
 
 4. **Follow pair programming workflow** - As defined in the "Pair Programming Workflow" section:
-   - Draft plan with sufficient detail for review
-   - Request plan review from user (they may copy to a Reviewer agent)
-   - Iterate until APPROVED
+   - Draft plan in `PLAN_Sprint<N>.md` with sufficient detail for review
+   - Request plan review: `./scripts/request-review.sh plan <N> "<title>"`
+   - Read `REVIEW_Sprint<N>.md` for verdict; iterate until APPROVED
    - Implement according to plan
-   - Request code review
-   - Archive completed plan
+   - Request code review: `./scripts/request-review.sh code <N> "<title>"`
+   - Archive completed plan using `./scripts/archive-plan.sh <N> "<title>"`
 
 **Sprint Definitions:** See `SPRINTS.md` for the full sprint roadmap (Sprints 1-25 were verifier implementation, Sprints 26+ are issuer implementation).
 
@@ -306,10 +305,13 @@ When the user says "Sprint N" (e.g., "Sprint 27"), begin pair programming on tha
 ```
 User: Sprint 27
 Agent: [Reads SPRINTS.md for Sprint 27 details]
-Agent: [Enters plan mode]
-Agent: [Drafts implementation plan for Local Witness Infrastructure]
-Agent: [Requests plan review]
-... pair programming cycle continues ...
+Agent: [Writes PLAN_Sprint27.md with implementation plan]
+Agent: [Runs ./scripts/request-review.sh plan 27 "Local Witness Infrastructure"]
+Agent: [Reads REVIEW_Sprint27.md — Codex verdict: APPROVED]
+Agent: [Implements according to plan]
+Agent: [Runs ./scripts/request-review.sh code 27 "Local Witness Infrastructure"]
+Agent: [Reads REVIEW_Sprint27.md — Codex verdict: APPROVED]
+Agent: [Runs ./scripts/archive-plan.sh 27 "Local Witness Infrastructure"]
 ```
 
 ## Running Tests
@@ -340,7 +342,25 @@ The test script sets `DYLD_LIBRARY_PATH="/opt/homebrew/lib"` automatically. If l
 
 ## Pair Programming Workflow
 
-This project uses a formal two-agent workflow with an **Editor** (implementing agent) and **Reviewer** (reviewing agent). The user facilitates by copying prompts between sessions.
+This project uses a **heterogeneous two-agent workflow**: Claude (Editor/Implementor) and OpenAI Codex (Reviewer). Using different AI platforms for each role provides genuine independence — the Reviewer catches different classes of issues than the Editor's own model would.
+
+### Reviewer Setup
+
+| Role | Platform | Invocation |
+|------|----------|------------|
+| Editor / Implementor | Claude Code | Interactive session (this agent) |
+| Reviewer | OpenAI Codex | `./scripts/request-review.sh` (automated) |
+
+**Prerequisites:**
+```bash
+npm install -g @openai/codex   # Install Codex CLI
+codex                           # Authenticate (follow prompts)
+```
+
+**Custom reviewer:** Set `VVP_REVIEWER` to override the default Codex invocation:
+```bash
+VVP_REVIEWER="claude -p" ./scripts/request-review.sh plan 35 "Title"  # Use Claude instead
+```
 
 ### Guiding Principles
 
@@ -348,17 +368,20 @@ This project uses a formal two-agent workflow with an **Editor** (implementing a
 2. **Sufficient detail for understanding** - Plans must explain not only WHAT is proposed but WHY
 3. **Formal acceptance gates** - Each phase has explicit approval checkpoints
 4. **Documented for posterity** - Accepted plans are archived in `/Documentation`
+5. **Reviewer reads prior context** - The Reviewer MUST read `CHANGES.md` and `Documentation/PLAN_history.md` before reviewing, so decisions are evaluated against the full project history, not in isolation
 
 ### Working Files
 
+Files are **namespaced by sprint number** so multiple sprints can run concurrently without conflicts:
+
 | File | Purpose | Owner |
 |------|---------|-------|
-| Claude plan mode file | Current phase design with rationale | Editor |
-| `REVIEW.md` | Reviewer feedback on plans and code | Reviewer |
-| `Documentation/PLAN_PhaseN.md` | Archive of accepted plans | Both |
+| `PLAN_Sprint<N>.md` | Current phase design with rationale | Editor |
+| `REVIEW_Sprint<N>.md` | Reviewer feedback on plans and code | Reviewer (Codex) |
+| `Documentation/archive/PLAN_Sprint<N>.md` | Archive of accepted plans | Both |
 | `CHANGES.md` | Change log with commit SHAs | Both |
 
-**Note:** Plans are now written using Claude Code's built-in plan mode rather than a separate `PLAN.md` file. The plan content is stored at `~/.claude/plans/` and archived to `Documentation/` after approval.
+**Concurrency:** Sprint 35 uses `PLAN_Sprint35.md` / `REVIEW_Sprint35.md`, Sprint 36 uses `PLAN_Sprint36.md` / `REVIEW_Sprint36.md`, etc. Two sprints can be in-flight simultaneously without clobbering each other's files. The scripts derive filenames from the sprint number argument automatically.
 
 ---
 
@@ -366,7 +389,7 @@ This project uses a formal two-agent workflow with an **Editor** (implementing a
 
 #### Step 1.1: Draft the Plan
 
-The Editor writes `PLAN.md` with sufficient detail for the Reviewer to understand:
+The Editor writes `PLAN_Sprint<N>.md` with sufficient detail for the Reviewer to understand:
 
 ```markdown
 # Phase N: [Title]
@@ -430,60 +453,26 @@ What tests will be written and what they verify.
 
 #### Step 1.2: Request Plan Review
 
-The Editor provides a **copyable prompt** for the Reviewer **directly in the conversation** (not just in PLAN.md). The prompt should be in a fenced code block so the user can easily copy it to the Reviewer agent:
+Run the review script to invoke the Reviewer (Codex) automatically:
 
-```text
-## Plan Review Request: Phase N - [Title]
-
-You are the Reviewer in a pair programming workflow. Please review the plan in PLAN.md and provide your assessment in REVIEW.md.
-
-YOUR TASK:
-1. Read PLAN.md thoroughly
-2. Evaluate against the spec references cited
-3. Assess the rationale for design decisions
-4. Answer any open questions
-5. Provide verdict and feedback in REVIEW.md
-
-EVALUATION CRITERIA:
-- Does the plan correctly interpret the spec requirements?
-- Is the proposed approach sound and well-justified?
-- Are there gaps, ambiguities, or risks not addressed?
-- Is the test strategy adequate?
-
-RESPONSE FORMAT - Write to REVIEW.md with this structure:
-
-    ## Plan Review: Phase N - [Title]
-
-    **Verdict:** APPROVED | CHANGES_REQUESTED
-
-    ### Spec Compliance
-    [Assessment of how well the plan addresses spec requirements]
-
-    ### Design Assessment
-    [Evaluation of the proposed approach and alternatives]
-
-    ### Findings
-    - [High]: Critical issue that blocks approval
-    - [Medium]: Important issue that should be addressed
-    - [Low]: Suggestion for improvement (optional)
-
-    ### Answers to Open Questions
-    1. [Answer to question 1]
-    2. [Answer to question 2]
-
-    ### Required Changes (if CHANGES_REQUESTED)
-    1. [Specific change required]
-    2. [Another required change]
-
-    ### Recommendations
-    - [Optional improvements or future considerations]
+```bash
+./scripts/request-review.sh plan <sprint-number> "<title>"
+# Example: ./scripts/request-review.sh plan 35 "Credential Issuance"
 ```
+
+The script:
+1. Assembles a prompt instructing the Reviewer to read `CHANGES.md`, `Documentation/PLAN_history.md`, and `PLAN_Sprint<N>.md`
+2. Invokes Codex (or the configured `VVP_REVIEWER`) with the prompt
+3. Codex writes its verdict and findings to `REVIEW_Sprint<N>.md`
+4. Reports the verdict and next steps
+
+After the script completes, read `REVIEW_Sprint<N>.md` to see the verdict.
 
 #### Step 1.3: Iterate Until Approved
 
 If Reviewer returns `CHANGES_REQUESTED`:
-1. Editor revises `PLAN.md` addressing all required changes
-2. Editor provides new review prompt
+1. Editor revises `PLAN_Sprint<N>.md` addressing all required changes
+2. Re-run `./scripts/request-review.sh plan <N> "<title>"`
 3. Repeat until `APPROVED`
 
 ---
@@ -503,7 +492,7 @@ After receiving `APPROVED` verdict:
 
 #### Step 2.2: Document Implementation
 
-The Editor updates `PLAN.md` with an implementation appendix:
+The Editor updates `PLAN_Sprint<N>.md` with an implementation appendix:
 
 ```text
 ---
@@ -528,67 +517,24 @@ The Editor updates `PLAN.md` with an implementation appendix:
 
 #### Step 2.3: Request Code Review
 
-The Editor provides a **copyable prompt** for code review:
+Run the review script to invoke the Reviewer (Codex) automatically:
 
-```text
-## Code Review Request: Phase N - [Title]
-
-You are the Reviewer in a pair programming workflow. Please review the implementation and provide your assessment in REVIEW.md.
-
-CONTEXT: [Brief description of what was implemented]
-
-SPEC REFERENCES:
-- §X.Y: [Section name]
-
-FILES TO REVIEW:
-- path/to/file.py (created) - [purpose]
-- tests/test_file.py (created) - [what it tests]
-
-VERIFICATION: Run python3 -m pytest tests/test_xxx.py -v
-
-KEY DESIGN DECISIONS:
-1. [Decision and rationale]
-2. [Another decision and rationale]
-
-TEST RESULTS: [N passed in X.XXs]
-
-YOUR TASK:
-1. Review all listed files for correctness and style
-2. Verify implementation matches approved plan
-3. Check test coverage and edge cases
-4. Provide verdict and feedback in REVIEW.md
-
-RESPONSE FORMAT - Write to REVIEW.md with this structure:
-
-    ## Code Review: Phase N - [Title]
-
-    **Verdict:** APPROVED | CHANGES_REQUESTED | PLAN_REVISION_REQUIRED
-
-    ### Implementation Assessment
-    [Does the code correctly implement the approved plan?]
-
-    ### Code Quality
-    [Assessment of code clarity, documentation, error handling]
-
-    ### Test Coverage
-    [Assessment of test adequacy]
-
-    ### Findings
-    - [High]: Critical issue that blocks approval
-    - [Medium]: Important issue that should be fixed
-    - [Low]: Minor suggestion (optional)
-
-    ### Required Changes (if not APPROVED)
-    1. [Specific change required]
-    2. [Another required change]
-
-    ### Plan Revisions (if PLAN_REVISION_REQUIRED)
-    [What needs to change in the plan before re-implementation]
+```bash
+./scripts/request-review.sh code <sprint-number> "<title>"
+# Example: ./scripts/request-review.sh code 35 "Credential Issuance"
 ```
+
+The script:
+1. Detects changed files from git history
+2. Assembles a prompt instructing the Reviewer to read `CHANGES.md`, `PLAN_Sprint<N>.md`, and the changed files
+3. Invokes Codex, which writes its verdict to `REVIEW_Sprint<N>.md`
+4. Reports the verdict and next steps
+
+After the script completes, read `REVIEW_Sprint<N>.md` to see the verdict.
 
 #### Step 2.4: Iterate Until Approved
 
-- If `CHANGES_REQUESTED`: Fix issues, provide new review prompt
+- If `CHANGES_REQUESTED`: Fix issues, re-run `./scripts/request-review.sh code ...`
 - If `PLAN_REVISION_REQUIRED`: Return to Phase 1 with revised plan
 - If `APPROVED`: Proceed to Phase 3
 
@@ -598,15 +544,22 @@ RESPONSE FORMAT - Write to REVIEW.md with this structure:
 
 #### Step 3.1: Archive the Plan
 
-Consolidate the plan into the plan history:
-1. Append plan content to `Documentation/PLAN_history.md` with a section header (e.g., `# Sprint N: [Title]`)
-2. Include implementation notes, files changed, and review history
-3. If a separate `PLAN_*.md` file exists, move it to `Documentation/archive/`
-4. Update `CHANGES.md` with phase summary
+Run the archival script to automate the mechanical steps:
 
-#### Step 3.2: Clean Up
+```bash
+./scripts/archive-plan.sh <sprint-number> "<title>"
+# Example: ./scripts/archive-plan.sh 35 "Credential Issuance"
+```
 
-1. Clear `REVIEW.md` for next phase
+This script automatically:
+1. Appends `PLAN_Sprint<N>.md` content to `Documentation/PLAN_history.md` under a sprint header
+2. Moves `PLAN_Sprint<N>.md` to `Documentation/archive/PLAN_Sprint<N>.md`
+3. Removes `REVIEW_Sprint<N>.md`
+
+#### Step 3.2: Update CHANGES.md and Commit
+
+After running the script, manually:
+1. Update `CHANGES.md` with the sprint summary, files changed, and commit SHA
 2. Commit all documentation updates
 
 ---
@@ -725,7 +678,8 @@ VVP/
 ├── pyproject.toml                   # Workspace definition
 ├── SPRINTS.md                       # Sprint roadmap (say "Sprint N" to start)
 ├── CHANGES.md                       # Change log with commit SHAs
-├── REVIEW.md                        # Reviewer feedback during pair programming
+├── PLAN_Sprint<N>.md                # Active plan (per-sprint, transient)
+├── REVIEW_Sprint<N>.md              # Reviewer feedback (per-sprint, transient)
 ├── SYSTEM_OVERVIEW.md                # Architecture diagram (legacy - see knowledge/)
 ├── SYSTEM.md                        # Technical reference (legacy - see knowledge/)
 └── .github/workflows/deploy.yml     # CI/CD pipeline
