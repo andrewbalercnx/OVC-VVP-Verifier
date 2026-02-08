@@ -1,9 +1,11 @@
 """Session authentication for SIP Monitor Dashboard.
 
-Sprint 47: Provides session-based authentication for the monitoring dashboard.
+Sprint 47: Username/password authentication with bcrypt hashing.
+Sprint 50: Added API key authentication and auth_method tracking.
 
 Features:
 - Username/password authentication with bcrypt hashing
+- API key authentication with file-backed store
 - HttpOnly, Secure, SameSite=Strict session cookies
 - Login rate limiting (5 attempts per 15 minutes per IP)
 - CSRF protection via X-Requested-With header requirement
@@ -21,6 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.config import (
+    MONITOR_API_KEYS_FILE,
     MONITOR_SESSION_TTL,
     MONITOR_RATE_LIMIT_MAX,
     MONITOR_RATE_LIMIT_WINDOW,
@@ -203,6 +206,117 @@ class UserStore:
 
 
 # =============================================================================
+# API KEY STORE
+# =============================================================================
+
+
+@dataclass
+class APIKeyConfig:
+    """API key record."""
+
+    id: str
+    name: str
+    key_hash: str  # bcrypt hash
+    revoked: bool = False
+
+
+class MonitorAPIKeyStore:
+    """File-backed API key store with bcrypt verification.
+
+    JSON format:
+        {"keys": [{"id": "...", "name": "...", "hash": "$2b$12$...", "revoked": false}]}
+
+    Reloads from disk when file mtime changes (checked every 60s).
+    """
+
+    RELOAD_INTERVAL = 60  # seconds
+
+    def __init__(self, keys_file: Path):
+        self._keys_file = keys_file
+        self._keys: list[APIKeyConfig] = []
+        self._last_mtime: float = 0.0
+        self._last_check: float = 0.0
+        self._load()
+
+    def _load(self) -> None:
+        """Load API keys from JSON file."""
+        if not self._keys_file.exists():
+            log.warning(f"API keys file not found: {self._keys_file}")
+            return
+
+        try:
+            self._last_mtime = self._keys_file.stat().st_mtime
+
+            with open(self._keys_file) as f:
+                data = json.load(f)
+
+            self._keys = [
+                APIKeyConfig(
+                    id=k["id"],
+                    name=k.get("name", k["id"]),
+                    key_hash=k["hash"],
+                    revoked=k.get("revoked", False),
+                )
+                for k in data.get("keys", [])
+            ]
+
+            log.info(f"Loaded {len(self._keys)} API keys from {self._keys_file}")
+
+        except Exception as e:
+            log.error(f"Failed to load API keys file: {e}")
+
+    def _maybe_reload(self) -> None:
+        """Reload from disk if file has changed (checked periodically)."""
+        now = time.time()
+        if now - self._last_check < self.RELOAD_INTERVAL:
+            return
+        self._last_check = now
+
+        try:
+            if not self._keys_file.exists():
+                return
+            mtime = self._keys_file.stat().st_mtime
+            if mtime != self._last_mtime:
+                log.info("API keys file changed on disk, reloading")
+                self._load()
+        except Exception as e:
+            log.error(f"Failed to check API keys file: {e}")
+
+    def verify(self, raw_key: str) -> Optional[tuple[str, str]]:
+        """Verify a raw API key against stored hashes.
+
+        Args:
+            raw_key: The plain-text API key to verify
+
+        Returns:
+            Tuple of (key_id, key_name) if valid, None otherwise
+        """
+        if bcrypt is None:
+            log.error("bcrypt not installed - API key auth disabled")
+            return None
+
+        self._maybe_reload()
+
+        for key_cfg in self._keys:
+            if key_cfg.revoked:
+                continue
+            try:
+                if bcrypt.checkpw(
+                    raw_key.encode("utf-8"), key_cfg.key_hash.encode("utf-8")
+                ):
+                    return (key_cfg.id, key_cfg.name)
+            except Exception as e:
+                log.error(f"API key check failed for {key_cfg.id}: {e}")
+
+        return None
+
+    @property
+    def key_count(self) -> int:
+        """Number of active (non-revoked) keys."""
+        return sum(1 for k in self._keys if not k.revoked)
+
+
+# =============================================================================
 # SESSION STORE
 # =============================================================================
 
@@ -215,6 +329,7 @@ class Session:
     username: str
     created_at: datetime
     expires_at: datetime
+    auth_method: str = "password"  # "password", "api_key", "oauth"
     last_accessed: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
@@ -230,7 +345,9 @@ class SessionStore:
         self._sessions: dict[str, Session] = {}
         self._lock = asyncio.Lock()
 
-    async def create(self, username: str, ttl_seconds: int = None) -> Session:
+    async def create(
+        self, username: str, ttl_seconds: int = None, auth_method: str = "password"
+    ) -> Session:
         """Create a new session."""
         if ttl_seconds is None:
             ttl_seconds = MONITOR_SESSION_TTL
@@ -243,6 +360,7 @@ class SessionStore:
             username=username,
             created_at=now,
             expires_at=now + timedelta(seconds=ttl_seconds),
+            auth_method=auth_method,
             last_accessed=now,
         )
 
@@ -398,6 +516,7 @@ class LoginRateLimiter:
 _user_store: Optional[UserStore] = None
 _session_store: Optional[SessionStore] = None
 _rate_limiter: Optional[LoginRateLimiter] = None
+_api_key_store: Optional[MonitorAPIKeyStore] = None
 
 
 def get_user_store() -> UserStore:
@@ -427,6 +546,14 @@ def get_rate_limiter() -> LoginRateLimiter:
             f"max {MONITOR_RATE_LIMIT_MAX} attempts per {MONITOR_RATE_LIMIT_WINDOW}s"
         )
     return _rate_limiter
+
+
+def get_api_key_store() -> MonitorAPIKeyStore:
+    """Get global API key store instance."""
+    global _api_key_store
+    if _api_key_store is None:
+        _api_key_store = MonitorAPIKeyStore(Path(MONITOR_API_KEYS_FILE))
+    return _api_key_store
 
 
 # =============================================================================

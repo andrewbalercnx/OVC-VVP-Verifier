@@ -14,36 +14,80 @@
             <p>Sign in to access the monitoring dashboard</p>
         </div>
 
-        <form id="login-form" class="login-form">
-            <div class="form-group">
-                <label for="username">Username</label>
-                <input
-                    type="text"
-                    id="username"
-                    name="username"
-                    required
-                    autocomplete="username"
-                    autofocus
-                >
-            </div>
-
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input
-                    type="password"
-                    id="password"
-                    name="password"
-                    required
-                    autocomplete="current-password"
-                >
-            </div>
-
-            <div id="error-message" class="error-message" style="display: none;"></div>
-
-            <button type="submit" class="btn btn-primary" id="login-btn">
-                Sign In
+        <!-- OAuth Section (hidden by default, shown if enabled) -->
+        <div class="oauth-section" id="oauth-section" style="display: none;">
+            <button class="oauth-btn" id="microsoft-btn" type="button">
+                <svg class="oauth-icon" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+                    <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+                    <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+                    <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+                </svg>
+                Sign in with Microsoft
             </button>
-        </form>
+            <div class="oauth-divider"><span>or use credentials</span></div>
+        </div>
+
+        <!-- Login Tabs -->
+        <div class="login-tabs">
+            <button class="login-tab active" data-tab="password">Username/Password</button>
+            <button class="login-tab" data-tab="apikey">API Key</button>
+        </div>
+
+        <div id="error-message" class="error-message" style="display: none;"></div>
+
+        <!-- Password Tab -->
+        <div class="tab-content active" id="tab-password">
+            <form id="password-form" class="login-form">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input
+                        type="text"
+                        id="username"
+                        name="username"
+                        required
+                        autocomplete="username"
+                        autofocus
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input
+                        type="password"
+                        id="password"
+                        name="password"
+                        required
+                        autocomplete="current-password"
+                    >
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="password-btn">
+                    Sign In
+                </button>
+            </form>
+        </div>
+
+        <!-- API Key Tab -->
+        <div class="tab-content" id="tab-apikey">
+            <form id="apikey-form" class="login-form">
+                <div class="form-group">
+                    <label for="apikey">API Key</label>
+                    <input
+                        type="password"
+                        id="apikey"
+                        name="apikey"
+                        required
+                        autocomplete="off"
+                        placeholder="Enter your API key"
+                    >
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="apikey-btn">
+                    Authenticate
+                </button>
+            </form>
+        </div>
 
         <div class="login-footer">
             <p>VVP Monitoring Dashboard</p>
@@ -51,25 +95,63 @@
     </div>
 
     <script>
-        const form = document.getElementById('login-form');
         const errorDiv = document.getElementById('error-message');
-        const loginBtn = document.getElementById('login-btn');
+        const params = new URLSearchParams(window.location.search);
 
-        form.addEventListener('submit', async (e) => {
+        // --- Tab switching ---
+        document.querySelectorAll('.login-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+                hideError();
+            });
+        });
+
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function hideError() {
+            errorDiv.style.display = 'none';
+        }
+
+        // --- OAuth status check ---
+        async function initOAuth() {
+            try {
+                const response = await fetch('api/auth/oauth/status');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.m365 && data.m365.enabled) {
+                        document.getElementById('oauth-section').style.display = 'block';
+                        document.getElementById('microsoft-btn').addEventListener('click', () => {
+                            window.location.href = 'auth/oauth/m365/start';
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to check OAuth status:', err);
+            }
+        }
+
+        // --- Password login ---
+        document.getElementById('password-form').addEventListener('submit', async (e) => {
             e.preventDefault();
+            hideError();
 
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value;
+            const btn = document.getElementById('password-btn');
 
             if (!username || !password) {
                 showError('Please enter username and password');
                 return;
             }
 
-            // Disable button during request
-            loginBtn.disabled = true;
-            loginBtn.textContent = 'Signing in...';
-            errorDiv.style.display = 'none';
+            btn.disabled = true;
+            btn.textContent = 'Signing in...';
 
             try {
                 const response = await fetch('api/login', {
@@ -84,32 +166,74 @@
                 const data = await response.json();
 
                 if (response.ok && data.success) {
-                    // Check if password change required
-                    if (data.force_password_change) {
-                        // For now, redirect to dashboard - password change can be added later
-                        window.location.href = '.';
-                    } else {
-                        window.location.href = '.';
-                    }
+                    window.location.href = '.';
                 } else {
                     showError(data.error || 'Login failed');
-                    loginBtn.disabled = false;
-                    loginBtn.textContent = 'Sign In';
                 }
             } catch (error) {
                 console.error('Login error:', error);
                 showError('Connection error. Please try again.');
-                loginBtn.disabled = false;
-                loginBtn.textContent = 'Sign In';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Sign In';
             }
         });
 
-        function showError(message) {
-            errorDiv.textContent = message;
-            errorDiv.style.display = 'block';
+        // --- API Key login ---
+        document.getElementById('apikey-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideError();
+
+            const apiKey = document.getElementById('apikey').value;
+            const btn = document.getElementById('apikey-btn');
+
+            if (!apiKey) {
+                showError('Please enter an API key');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Authenticating...';
+
+            try {
+                const response = await fetch('api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    body: JSON.stringify({ api_key: apiKey }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    window.location.href = '.';
+                } else {
+                    showError(data.error || 'Authentication failed');
+                }
+            } catch (error) {
+                console.error('API key error:', error);
+                showError('Connection error. Please try again.');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Authenticate';
+            }
+        });
+
+        // --- Handle OAuth error in URL params ---
+        const error = params.get('error');
+        const message = params.get('message');
+        if (error) {
+            showError(message || 'Authentication failed');
+            // Clean URL
+            const url = new URL(window.location);
+            url.searchParams.delete('error');
+            url.searchParams.delete('message');
+            window.history.replaceState({}, '', url);
         }
 
-        // Check if already authenticated
+        // --- Check if already authenticated ---
         fetch('api/auth/status')
             .then(r => r.json())
             .then(data => {
@@ -118,6 +242,9 @@
                 }
             })
             .catch(() => {});
+
+        // --- Initialize OAuth ---
+        initOAuth();
     </script>
 </body>
 </html>

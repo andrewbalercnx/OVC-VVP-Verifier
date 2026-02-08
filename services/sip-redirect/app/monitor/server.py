@@ -4,6 +4,7 @@ Sprint 47: Provides web-based monitoring dashboard with session authentication
 and real-time SIP event visualization.
 
 Sprint 48: Added WebSocket endpoint for real-time event streaming.
+Sprint 50: Added OAuth (Microsoft SSO) and API key authentication.
 """
 
 import asyncio
@@ -15,6 +16,14 @@ from typing import Optional
 
 from app.config import (
     MONITOR_COOKIE_PATH,
+    MONITOR_OAUTH_ALLOWED_DOMAINS,
+    MONITOR_OAUTH_AUTO_PROVISION,
+    MONITOR_OAUTH_CLIENT_ID,
+    MONITOR_OAUTH_CLIENT_SECRET,
+    MONITOR_OAUTH_ENABLED,
+    MONITOR_OAUTH_REDIRECT_URI,
+    MONITOR_OAUTH_STATE_TTL,
+    MONITOR_OAUTH_TENANT_ID,
     MONITOR_PORT,
     MONITOR_SESSION_TTL,
     MONITOR_WS_HEARTBEAT,
@@ -25,6 +34,7 @@ from app.config import (
 from app.monitor.auth import (
     COOKIE_NAME,
     Session,
+    get_api_key_store,
     get_rate_limiter,
     get_session_store,
     get_user_store,
@@ -99,7 +109,7 @@ async def handle_login_page(request):
 
 
 async def handle_login(request):
-    """POST /api/login - Authenticate and create session."""
+    """POST /api/login - Authenticate via username/password or API key."""
     client_ip = get_client_ip(request)
     rate_limiter = get_rate_limiter()
 
@@ -116,12 +126,52 @@ async def handle_login(request):
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
 
+    # --- API Key authentication ---
+    api_key = data.get("api_key", "").strip()
+    if api_key:
+        api_key_store = get_api_key_store()
+        result = api_key_store.verify(api_key)
+
+        if result is None:
+            await rate_limiter.record_attempt(client_ip, success=False)
+            return web.json_response({"error": "Invalid API key"}, status=401)
+
+        key_id, key_name = result
+        await rate_limiter.record_attempt(client_ip, success=True)
+
+        session_store = get_session_store()
+        session = await session_store.create(
+            key_name, MONITOR_SESSION_TTL, auth_method="api_key"
+        )
+
+        response = web.json_response({
+            "success": True,
+            "username": key_name,
+            "auth_method": "api_key",
+        })
+
+        response.set_cookie(
+            COOKIE_NAME,
+            session.session_id,
+            httponly=True,
+            secure=True,
+            samesite="Strict",
+            max_age=MONITOR_SESSION_TTL,
+            path=MONITOR_COOKIE_PATH,
+        )
+
+        log.info(f"API key '{key_id}' logged in from {client_ip}")
+        return response
+
+    # --- Username/password authentication ---
     username = data.get("username", "").strip()
     password = data.get("password", "")
 
     if not username or not password:
         await rate_limiter.record_attempt(client_ip, success=False)
-        return web.json_response({"error": "Username and password required"}, status=400)
+        return web.json_response(
+            {"error": "Username and password required"}, status=400
+        )
 
     user_store = get_user_store()
     user = user_store.authenticate(username, password)
@@ -134,11 +184,14 @@ async def handle_login(request):
     await rate_limiter.record_attempt(client_ip, success=True)
 
     session_store = get_session_store()
-    session = await session_store.create(username, MONITOR_SESSION_TTL)
+    session = await session_store.create(
+        username, MONITOR_SESSION_TTL, auth_method="password"
+    )
 
     response = web.json_response({
         "success": True,
         "username": username,
+        "auth_method": "password",
         "force_password_change": user.force_password_change,
     })
 
@@ -241,6 +294,7 @@ async def handle_auth_status(request):
     return web.json_response({
         "authenticated": True,
         "username": session.username,
+        "auth_method": session.auth_method,
         "expires_at": session.expires_at.isoformat(),
     })
 
@@ -258,6 +312,199 @@ async def handle_index(request):
         return web.Response(text="Dashboard not found", status=404)
 
     return web.FileResponse(index_file)
+
+
+# =============================================================================
+# OAUTH ENDPOINTS (Sprint 50)
+# =============================================================================
+
+OAUTH_STATE_COOKIE = "vvp_sip_oauth_state"
+
+
+async def handle_oauth_status(request):
+    """GET /api/auth/oauth/status - Report available OAuth providers."""
+    return web.json_response({
+        "m365": {"enabled": MONITOR_OAUTH_ENABLED},
+    })
+
+
+async def handle_oauth_start(request):
+    """GET /auth/oauth/m365/start - Initiate Microsoft OAuth flow."""
+    if not MONITOR_OAUTH_ENABLED:
+        return web.json_response({"error": "OAuth not enabled"}, status=400)
+
+    if not all([MONITOR_OAUTH_TENANT_ID, MONITOR_OAUTH_CLIENT_ID, MONITOR_OAUTH_CLIENT_SECRET]):
+        log.error("OAuth configuration incomplete")
+        return web.json_response({"error": "OAuth not configured"}, status=500)
+
+    from app.monitor.oauth import (
+        OAuthState,
+        build_authorization_url,
+        generate_nonce,
+        generate_pkce_pair,
+        generate_state,
+        get_oauth_state_store,
+    )
+    from datetime import datetime, timezone
+
+    # Generate PKCE pair, state, nonce
+    code_verifier, code_challenge = generate_pkce_pair()
+    state = generate_state()
+    nonce = generate_nonce()
+
+    redirect_after = request.query.get("redirect_after", ".")
+
+    # Store server-side
+    oauth_state = OAuthState(
+        state=state,
+        nonce=nonce,
+        code_verifier=code_verifier,
+        created_at=datetime.now(timezone.utc),
+        redirect_after=redirect_after,
+    )
+
+    state_store = get_oauth_state_store()
+    state_id = await state_store.create(oauth_state)
+
+    # Build authorization URL
+    auth_url = build_authorization_url(
+        tenant_id=MONITOR_OAUTH_TENANT_ID,
+        client_id=MONITOR_OAUTH_CLIENT_ID,
+        redirect_uri=MONITOR_OAUTH_REDIRECT_URI,
+        state=state,
+        nonce=nonce,
+        code_challenge=code_challenge,
+    )
+
+    # Set state cookie (SameSite=Lax required for OAuth redirect)
+    response = web.HTTPFound(auth_url)
+    response.set_cookie(
+        OAUTH_STATE_COOKIE,
+        state_id,
+        httponly=True,
+        secure=True,
+        samesite="Lax",
+        max_age=MONITOR_OAUTH_STATE_TTL,
+        path=MONITOR_COOKIE_PATH,
+    )
+
+    log.info("OAuth flow started, redirecting to Microsoft")
+    return response
+
+
+async def handle_oauth_callback(request):
+    """GET /auth/oauth/m365/callback - Handle Microsoft OAuth callback."""
+    from urllib.parse import urlencode
+
+    from app.monitor.oauth import (
+        OAuthError,
+        exchange_code_for_tokens,
+        get_oauth_state_store,
+        is_email_domain_allowed,
+        validate_id_token,
+    )
+
+    login_base = "login"
+
+    def error_redirect(message: str) -> web.HTTPFound:
+        params = urlencode({"error": "oauth_failed", "message": message})
+        return web.HTTPFound(f"{login_base}?{params}")
+
+    # Get state cookie
+    state_id = request.cookies.get(OAUTH_STATE_COOKIE)
+    if not state_id:
+        log.warning("OAuth callback: missing state cookie")
+        return error_redirect("Missing OAuth state")
+
+    # Get and delete server-side state (one-time use)
+    state_store = get_oauth_state_store()
+    oauth_state = await state_store.get_and_delete(state_id)
+
+    if oauth_state is None:
+        log.warning("OAuth callback: invalid/expired state")
+        return error_redirect("OAuth session expired. Please try again.")
+
+    # Validate state parameter matches
+    callback_state = request.query.get("state")
+    if callback_state != oauth_state.state:
+        log.warning("OAuth callback: state mismatch")
+        return error_redirect("OAuth state mismatch")
+
+    # Check for error from Microsoft
+    error = request.query.get("error")
+    if error:
+        error_desc = request.query.get("error_description", error)
+        log.warning(f"OAuth callback error from Microsoft: {error_desc}")
+        return error_redirect(error_desc)
+
+    # Get authorization code
+    code = request.query.get("code")
+    if not code:
+        log.warning("OAuth callback: missing code")
+        return error_redirect("Missing authorization code")
+
+    try:
+        # Exchange code for tokens
+        token_response = await exchange_code_for_tokens(
+            tenant_id=MONITOR_OAUTH_TENANT_ID,
+            client_id=MONITOR_OAUTH_CLIENT_ID,
+            client_secret=MONITOR_OAUTH_CLIENT_SECRET,
+            redirect_uri=MONITOR_OAUTH_REDIRECT_URI,
+            code=code,
+            code_verifier=oauth_state.code_verifier,
+        )
+
+        # Validate ID token
+        user_info = await validate_id_token(
+            id_token=token_response.id_token,
+            tenant_id=MONITOR_OAUTH_TENANT_ID,
+            client_id=MONITOR_OAUTH_CLIENT_ID,
+            nonce=oauth_state.nonce,
+        )
+
+    except OAuthError as e:
+        log.error(f"OAuth token exchange/validation failed: {e}")
+        return error_redirect(str(e))
+
+    # Check domain restriction
+    if not is_email_domain_allowed(user_info.email, MONITOR_OAUTH_ALLOWED_DOMAINS):
+        log.warning(f"OAuth domain rejected: {user_info.email}")
+        return error_redirect("Email domain not allowed")
+
+    # Auto-provision: create session directly with email as username
+    if not MONITOR_OAUTH_AUTO_PROVISION:
+        # Check if user exists in local store
+        user_store = get_user_store()
+        if user_store.get_user(user_info.email) is None:
+            log.warning(f"OAuth user not provisioned: {user_info.email}")
+            return error_redirect("User not provisioned. Contact an administrator.")
+
+    # Create session
+    session_store = get_session_store()
+    session = await session_store.create(
+        user_info.email, MONITOR_SESSION_TTL, auth_method="oauth"
+    )
+
+    # Redirect to dashboard with session cookie
+    redirect_target = oauth_state.redirect_after or "."
+    response = web.HTTPFound(redirect_target)
+
+    # Session cookie (SameSite=Strict for security)
+    response.set_cookie(
+        COOKIE_NAME,
+        session.session_id,
+        httponly=True,
+        secure=True,
+        samesite="Strict",
+        max_age=MONITOR_SESSION_TTL,
+        path=MONITOR_COOKIE_PATH,
+    )
+
+    # Clear OAuth state cookie
+    response.del_cookie(OAUTH_STATE_COOKIE, path=MONITOR_COOKIE_PATH)
+
+    log.info(f"OAuth login successful: {user_info.email} ({user_info.name})")
+    return response
 
 
 # =============================================================================
@@ -450,11 +697,16 @@ def create_web_app() -> "web.Application":
     # API routes
     app.router.add_get("/api/status", handle_status)
     app.router.add_get("/api/auth/status", handle_auth_status)
+    app.router.add_get("/api/auth/oauth/status", handle_oauth_status)
     app.router.add_post("/api/login", handle_login)
     app.router.add_post("/api/logout", handle_logout)
     app.router.add_get("/api/events", handle_events)
     app.router.add_get("/api/events/since/{id}", handle_events_since)
     app.router.add_post("/api/clear", handle_clear)
+
+    # OAuth routes (Sprint 50)
+    app.router.add_get("/auth/oauth/m365/start", handle_oauth_start)
+    app.router.add_get("/auth/oauth/m365/callback", handle_oauth_callback)
 
     # WebSocket route (Sprint 48)
     app.router.add_get("/ws", handle_websocket)

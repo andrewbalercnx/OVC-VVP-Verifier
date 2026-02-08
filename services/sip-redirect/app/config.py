@@ -63,6 +63,30 @@ MONITOR_WS_IDLE_TIMEOUT = int(os.getenv("VVP_MONITOR_WS_IDLE_TIMEOUT", "30"))  #
 MONITOR_WS_MAX_PER_IP = int(os.getenv("VVP_MONITOR_WS_MAX_PER_IP", "10"))
 MONITOR_WS_MAX_GLOBAL = int(os.getenv("VVP_MONITOR_WS_MAX_GLOBAL", "50"))
 
+# Monitor OAuth M365 Configuration
+MONITOR_OAUTH_ENABLED = os.getenv("VVP_MONITOR_OAUTH_ENABLED", "false").lower() == "true"
+MONITOR_OAUTH_TENANT_ID = os.getenv("VVP_MONITOR_OAUTH_TENANT_ID")
+MONITOR_OAUTH_CLIENT_ID = os.getenv("VVP_MONITOR_OAUTH_CLIENT_ID")
+MONITOR_OAUTH_CLIENT_SECRET = os.getenv("VVP_MONITOR_OAUTH_CLIENT_SECRET")
+MONITOR_OAUTH_REDIRECT_URI = os.getenv(
+    "VVP_MONITOR_OAUTH_REDIRECT_URI",
+    "https://pbx.rcnx.io/sip-monitor/auth/oauth/m365/callback",
+)
+MONITOR_OAUTH_AUTO_PROVISION = (
+    os.getenv("VVP_MONITOR_OAUTH_AUTO_PROVISION", "true").lower() == "true"
+)
+MONITOR_OAUTH_ALLOWED_DOMAINS = [
+    d.strip().lower()
+    for d in os.getenv("VVP_MONITOR_OAUTH_ALLOWED_DOMAINS", "").split(",")
+    if d.strip()
+]
+MONITOR_OAUTH_STATE_TTL = int(os.getenv("VVP_MONITOR_OAUTH_STATE_TTL", "600"))
+
+# Monitor API Key Store
+MONITOR_API_KEYS_FILE = os.getenv(
+    "VVP_MONITOR_API_KEYS_FILE", "/opt/vvp/sip-redirect/api_keys.json"
+)
+
 
 def validate_config() -> list[str]:
     """Validate configuration and return list of issues."""

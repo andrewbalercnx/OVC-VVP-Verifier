@@ -8518,3 +8518,45 @@ Finalize VVP-branded styling, configure nginx TLS termination for the monitoring
    - Recommendation: Make cookie path configurable
    - Recommendation: Document password exposure in az output
 2. **Plan Review (Round 2)** — APPROVED
+
+---
+
+# Sprint 50b: SIP Monitor Multi-Auth (Microsoft SSO + API Key + Password)
+
+## Context
+
+The SIP Monitor Dashboard at `https://pbx.rcnx.io/sip-monitor/` supported only username/password auth. This sprint added Microsoft SSO, API key authentication, and a tabbed login page matching the VVP Issuer sign-in flow.
+
+The monitor runs on aiohttp (not FastAPI), so the issuer's FastAPI endpoints couldn't be reused directly. However, the issuer's `oauth.py` module is framework-agnostic (pure Python + httpx + PyJWT) and was copied with minimal changes.
+
+## Design Decisions
+
+1. **Copied issuer's oauth.py** rather than moving to common/ — deployment simplicity for PBX service
+2. **OAuth state cookie uses SameSite=Lax** (required for cross-origin redirect); session cookie stays Strict
+3. **Auto-provision OAuth users** — sessions created directly with email (no local user record needed since monitor is read-only)
+4. **File-backed API key store** — JSON with bcrypt hashing, mtime-based reload (60s)
+5. **Session.auth_method** — enriched with "password", "api_key", "oauth" tracking
+
+## Files Changed
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `services/sip-redirect/pyproject.toml` | Modified | Added `PyJWT[crypto]>=2.8.0` to monitor deps |
+| `services/sip-redirect/app/config.py` | Modified | 10 OAuth + API key config vars |
+| `services/sip-redirect/app/monitor/oauth.py` | Created | OAuth 2.0 with PKCE, state store, ID token validation |
+| `services/sip-redirect/app/monitor/auth.py` | Modified | MonitorAPIKeyStore, APIKeyConfig, Session.auth_method |
+| `services/sip-redirect/app/monitor/server.py` | Modified | OAuth endpoints, API key login, route registration |
+| `services/sip-redirect/app/monitor_web/login.html` | Rewritten | Microsoft SSO button + Username/Password + API Key tabs |
+| `services/sip-redirect/app/monitor_web/sip-monitor.css` | Modified | Tab/OAuth/divider styles |
+| `services/sip-redirect/tests/test_monitor_auth.py` | Created | 11 tests (API key store, session auth_method) |
+| `services/sip-redirect/tests/test_monitor_oauth.py` | Created | 17 tests (state store, PKCE, domain validation) |
+
+## Test Results
+
+102 passed in 4.33s (28 new + 74 existing)
+
+## Review History
+
+1. **Plan Review** — APPROVED
+2. **Code Review** — APPROVED
+   - [Low] OAuth state cookie max_age hard-coded to 600 instead of MONITOR_OAUTH_STATE_TTL (fixed)
