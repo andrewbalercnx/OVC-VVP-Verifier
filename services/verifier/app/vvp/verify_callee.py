@@ -616,13 +616,53 @@ async def verify_callee_vvp(
         signature_claim.fail(ClaimStatus.INDETERMINATE, "Cannot verify: passport failed")
 
     # -------------------------------------------------------------------------
-    # Dossier Fetch and Validation (§5B Steps 7-8)
+    # Sprint 51: Verification Result Cache Check
     # -------------------------------------------------------------------------
+    # Same pattern as verify_vvp(): check cache BEFORE dossier fetch.
+    # On hit, skip dossier fetch/parse, chain validation, and revocation.
+    # Always re-run callee-specific phases (dialog, issuer, TN rights, brand, goal).
+    from app.core.config import VVP_VERIFICATION_CACHE_ENABLED
+
+    _verification_cache_hit = False
+    _cached_verification = None
+    _revocation_pending = False
+
     import time as _time
     raw_dossier: Optional[bytes] = None
     dag: Optional[DossierDAG] = None
     acdc_signatures: Dict[str, bytes] = {}
     dossier_acdcs: Dict[str, "ACDC"] = {}
+
+    if VVP_VERIFICATION_CACHE_ENABLED and vvp_identity and not passport_fatal and passport:
+        _passport_kid = passport.header.kid
+        if _passport_kid:
+            from app.vvp.verification_cache import get_verification_cache
+            _ver_cache = get_verification_cache()
+            _cached_verification = await _ver_cache.get(vvp_identity.evd, _passport_kid)
+            if _cached_verification is not None:
+                _verification_cache_hit = True
+                log.info(
+                    f"Verification cache hit (callee): {vvp_identity.evd[:50]}... "
+                    f"kid={_passport_kid[:30]}..."
+                )
+
+                # --- Dossier artifacts from cache ---
+                dag = _cached_verification.dag
+                raw_dossier = _cached_verification.raw_dossier
+                dossier_acdcs = _cached_verification.dossier_acdcs  # deep-copied by get()
+
+                # --- Phase 9: Build revocation from cached status ---
+                from app.vvp.verification_cache import RevocationStatus
+                from app.vvp.revocation_checker import get_revocation_checker
+
+                _rev_checker = get_revocation_checker()
+                _revocation_fresh = not _rev_checker.needs_recheck(
+                    _cached_verification.revocation_last_checked
+                )
+
+    # -------------------------------------------------------------------------
+    # Dossier Fetch and Validation (§5B Steps 7-8)
+    # -------------------------------------------------------------------------
     dossier_cache = get_dossier_cache()
     cache_hit = False
 
@@ -630,7 +670,7 @@ async def verify_callee_vvp(
     structure_claim = ClaimBuilder("structure_valid")
     acdc_sigs_claim = ClaimBuilder("acdc_signatures_valid")
 
-    if vvp_identity and not passport_fatal:
+    if vvp_identity and not passport_fatal and not _verification_cache_hit:
         evd_url = vvp_identity.evd
 
         # §5.1.1-2.7: Check cache first (URL available pre-fetch)
@@ -708,7 +748,16 @@ async def verify_callee_vvp(
     # -------------------------------------------------------------------------
     chain_claim = ClaimBuilder("chain_verified")
 
-    if dag is not None:
+    if _verification_cache_hit and _cached_verification is not None:
+        # Use cached chain_claim (deep-copied by get())
+        chain_node = _cached_verification.chain_claim
+        # Append cached chain errors
+        for _ce in _cached_verification.chain_errors:
+            errors.append(_ce)
+        dossier_claim.add_evidence("cache_hit:dossier_verification")
+        for _ev in _cached_verification.dossier_claim_evidence:
+            dossier_claim.add_evidence(_ev)
+    elif dag is not None and not _verification_cache_hit:
         from app.core.config import TRUSTED_ROOT_AIDS, SCHEMA_VALIDATION_STRICT
         from app.vvp.acdc import validate_credential_chain, ACDCChainInvalid
         from app.vvp.verify import _find_leaf_credentials
@@ -752,7 +801,7 @@ async def verify_callee_vvp(
                 )
             )
             chain_claim.fail(ClaimStatus.INVALID, error_msg)
-    else:
+    elif not _verification_cache_hit:
         chain_claim.fail(
             ClaimStatus.INDETERMINATE,
             "Cannot validate chain: dossier validation failed",
@@ -761,12 +810,54 @@ async def verify_callee_vvp(
     # -------------------------------------------------------------------------
     # Revocation Checking (§5B Step 8 - reuse from verify.py)
     # -------------------------------------------------------------------------
-    from .verify import check_dossier_revocations
-
     revocation_claim = ClaimBuilder("revocation_clear")
     revoked_saids: List[str] = []
 
-    if dag is not None:
+    if _verification_cache_hit and _cached_verification is not None:
+        # Build revocation from cached status with §5C.2 freshness enforcement
+        if not _revocation_fresh:
+            # Stale data → INDETERMINATE per §5C.2
+            revocation_claim.fail(
+                ClaimStatus.INDETERMINATE,
+                "Revocation data stale — background re-check pending"
+            )
+            revocation_claim.add_evidence("revocation_data_stale")
+            from app.vvp.revocation_checker import get_revocation_checker
+            _rev_checker_enqueue = get_revocation_checker()
+            await _rev_checker_enqueue.enqueue(vvp_identity.evd)
+        else:
+            from app.vvp.verification_cache import RevocationStatus as _RevStat
+            _has_undefined = False
+            _has_revoked = False
+            for _said, _status in _cached_verification.credential_revocation_status.items():
+                if _status == _RevStat.REVOKED:
+                    _has_revoked = True
+                    revoked_saids.append(_said)
+                elif _status == _RevStat.UNDEFINED:
+                    _has_undefined = True
+
+            if _has_revoked:
+                revocation_claim.fail(ClaimStatus.INVALID, "Credential(s) revoked")
+                for _rs in revoked_saids:
+                    errors.append(ErrorDetail(
+                        code=ErrorCode.CREDENTIAL_REVOKED,
+                        message=f"Credential {_rs[:20]}... is revoked",
+                        recoverable=ERROR_RECOVERABILITY.get(
+                            ErrorCode.CREDENTIAL_REVOKED, False
+                        ),
+                    ))
+            elif _has_undefined:
+                revocation_claim.fail(
+                    ClaimStatus.INDETERMINATE,
+                    "Revocation check pending for one or more credentials"
+                )
+                revocation_claim.add_evidence("revocation_check_pending")
+                _revocation_pending = True
+            else:
+                # All UNREVOKED — fresh data confirms no revocations
+                revocation_claim.add_evidence("all_credentials_unrevoked")
+    elif dag is not None and not _verification_cache_hit:
+        from .verify import check_dossier_revocations
         revocation_claim, revoked_saids = await check_dossier_revocations(
             dag,
             raw_dossier=raw_dossier,
@@ -780,10 +871,66 @@ async def verify_callee_vvp(
                     recoverable=False,
                 )
             )
-    else:
+    elif not _verification_cache_hit:
         revocation_claim.fail(
             ClaimStatus.INDETERMINATE,
             "Cannot check revocation: dossier validation failed",
+        )
+
+    # -------------------------------------------------------------------------
+    # Sprint 51: Store in verification cache on miss (VALID-only policy)
+    # -------------------------------------------------------------------------
+    if (not _verification_cache_hit
+            and VVP_VERIFICATION_CACHE_ENABLED
+            and passport and passport.header.kid
+            and dag is not None
+            and chain_claim.status == ClaimStatus.VALID):
+        from app.vvp.verification_cache import (
+            CachedDossierVerification,
+            RevocationStatus as _RevocationStatus,
+            get_verification_cache as _get_ver_cache,
+            compute_config_fingerprint,
+            CACHE_VERSION,
+        )
+        from app.vvp.revocation_checker import get_revocation_checker as _get_rev_checker
+
+        _contained = frozenset(dag.nodes.keys())
+        _rev_status: Dict[str, _RevocationStatus] = {}
+        for _s in _contained:
+            if _s in revoked_saids:
+                _rev_status[_s] = _RevocationStatus.REVOKED
+            elif revocation_claim.status == ClaimStatus.VALID:
+                _rev_status[_s] = _RevocationStatus.UNREVOKED
+            else:
+                _rev_status[_s] = _RevocationStatus.UNDEFINED
+
+        _chain_node_for_cache = chain_claim.build()
+
+        _cached_entry = CachedDossierVerification(
+            dossier_url=vvp_identity.evd,
+            passport_kid=passport.header.kid,
+            dag=dag,
+            raw_dossier=raw_dossier or b"",
+            dossier_acdcs=dossier_acdcs,
+            chain_claim=_chain_node_for_cache,
+            chain_errors=[],
+            acdc_signatures_verified=bool(acdc_signatures),
+            has_variant_limitations=False,
+            dossier_claim_evidence=list(dossier_claim.evidence),
+            contained_saids=_contained,
+            credential_revocation_status=_rev_status,
+            revocation_last_checked=_time.time(),
+        )
+
+        _ver_cache_inst = _get_ver_cache()
+        await _ver_cache_inst.put(_cached_entry)
+
+        _rev_checker_inst = _get_rev_checker()
+        await _rev_checker_inst.enqueue(vvp_identity.evd)
+
+        log.info(
+            f"Stored verification cache (callee): {vvp_identity.evd[:50]}... "
+            f"kid={passport.header.kid[:30]}... saids={len(_contained)}"
         )
 
     # -------------------------------------------------------------------------
@@ -922,7 +1069,9 @@ async def verify_callee_vvp(
     # Build dossier_verified with structure_valid, acdc_signatures_valid, chain, revocation, and issuer as REQUIRED children
     structure_node = structure_claim.build()
     acdc_sigs_node = acdc_sigs_claim.build()
-    chain_node = chain_claim.build()
+    # On cache hit, chain_node is already a ClaimNode from the cache
+    if not _verification_cache_hit:
+        chain_node = chain_claim.build()
     revocation_node = revocation_claim.build()
     issuer_node = issuer_claim.build()
 
@@ -1010,4 +1159,6 @@ async def verify_callee_vvp(
         errors=errors if errors else None,
         brand_name=response_brand_name,
         brand_logo_url=response_brand_logo_url,
+        revocation_pending=_revocation_pending,
+        cache_hit=_verification_cache_hit,
     )

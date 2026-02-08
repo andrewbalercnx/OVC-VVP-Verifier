@@ -1,8 +1,10 @@
 """Tests for /admin endpoint.
 
 Phase 9.3: Configuration visibility for operators.
+Sprint 51: Verification cache metrics and cache-clear endpoint.
 """
 
+import importlib
 import os
 import pytest
 from fastapi.testclient import TestClient
@@ -239,3 +241,129 @@ class TestLogLevelEndpoint:
 
         # Reset to INFO
         client.post("/admin/log-level", json={"level": "INFO"})
+
+
+class TestVerificationCacheMetrics:
+    """Sprint 51: Verification cache metrics in /admin response."""
+
+    def test_admin_includes_verification_cache_metrics(self):
+        """GET /admin includes verification cache section with all expected fields."""
+        from app.main import app
+        client = TestClient(app)
+
+        response = client.get("/admin")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert "cache_metrics" in data
+        assert "verification" in data["cache_metrics"]
+
+        ver = data["cache_metrics"]["verification"]
+        expected_fields = [
+            "hits", "misses", "hit_rate", "entries", "evictions",
+            "version_mismatches", "config_mismatches",
+            "revocation_checks", "revocations_found",
+        ]
+        for field in expected_fields:
+            assert field in ver, f"Missing verification cache metric: {field}"
+
+    def test_verification_cache_metrics_types(self):
+        """Verification cache metrics have correct types."""
+        from app.main import app
+        client = TestClient(app)
+
+        response = client.get("/admin")
+        ver = response.json()["cache_metrics"]["verification"]
+
+        assert isinstance(ver["hits"], int)
+        assert isinstance(ver["misses"], int)
+        assert isinstance(ver["hit_rate"], (int, float))
+        assert isinstance(ver["entries"], int)
+        assert isinstance(ver["evictions"], int)
+        assert isinstance(ver["version_mismatches"], int)
+        assert isinstance(ver["config_mismatches"], int)
+        assert isinstance(ver["revocation_checks"], int)
+        assert isinstance(ver["revocations_found"], int)
+
+    def test_verification_cache_metrics_initial_values(self):
+        """Fresh verification cache starts with zero counters."""
+        from app.main import app
+        client = TestClient(app)
+
+        response = client.get("/admin")
+        ver = response.json()["cache_metrics"]["verification"]
+
+        assert ver["hits"] == 0
+        assert ver["misses"] == 0
+        assert ver["hit_rate"] == 0.0
+        assert ver["entries"] == 0
+
+
+class TestCacheClearEndpoint:
+    """Sprint 51: POST /admin/cache/clear for verification cache."""
+
+    def test_clear_verification_cache_succeeds(self):
+        """POST /admin/cache/clear with cache_type=verification returns success."""
+        from app.main import app
+        client = TestClient(app)
+
+        response = client.post(
+            "/admin/cache/clear",
+            json={"cache_type": "verification"},
+        )
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["success"] is True
+        assert data["cache_type"] == "verification"
+        assert "cleared" in data["message"].lower()
+
+    def test_clear_invalid_cache_type_returns_400(self):
+        """POST /admin/cache/clear with invalid type returns 400."""
+        from app.main import app
+        client = TestClient(app)
+
+        response = client.post(
+            "/admin/cache/clear",
+            json={"cache_type": "nonexistent"},
+        )
+        assert response.status_code == 400
+        assert "Invalid cache type" in response.json()["detail"]
+
+    def test_clear_cache_disabled_returns_404(self, monkeypatch):
+        """POST /admin/cache/clear returns 404 when admin endpoint disabled."""
+        monkeypatch.setenv("ADMIN_ENDPOINT_ENABLED", "false")
+
+        import app.core.config
+        importlib.reload(app.core.config)
+        import app.main
+        importlib.reload(app.main)
+
+        client = TestClient(app.main.app)
+        response = client.post(
+            "/admin/cache/clear",
+            json={"cache_type": "verification"},
+        )
+        assert response.status_code == 404
+
+        # Restore
+        monkeypatch.setenv("ADMIN_ENDPOINT_ENABLED", "true")
+        importlib.reload(app.core.config)
+        importlib.reload(app.main)
+
+    def test_clear_verification_cache_empties_entries(self):
+        """Clearing verification cache sets entries count to 0."""
+        from app.main import app
+        client = TestClient(app)
+
+        # Clear
+        resp = client.post(
+            "/admin/cache/clear",
+            json={"cache_type": "verification"},
+        )
+        assert resp.status_code == 200
+
+        # Verify entries is 0
+        admin_resp = client.get("/admin")
+        ver = admin_resp.json()["cache_metrics"]["verification"]
+        assert ver["entries"] == 0

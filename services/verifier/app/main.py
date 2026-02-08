@@ -300,7 +300,27 @@ def admin():
         "cache_metrics": {
             "dossier": get_dossier_cache().metrics().to_dict(),
             "revocation": get_tel_client().cache_metrics(),
+            "verification": _get_verification_cache_metrics(),
         }
+    }
+
+
+def _get_verification_cache_metrics() -> dict:
+    """Get verification cache metrics for admin endpoint."""
+    from app.vvp.verification_cache import get_verification_cache
+    ver_cache = get_verification_cache()
+    m = ver_cache.metrics()
+    total = m.hits + m.misses
+    return {
+        "hits": m.hits,
+        "misses": m.misses,
+        "hit_rate": round(m.hits / total, 4) if total > 0 else 0.0,
+        "entries": ver_cache.size,
+        "evictions": m.evictions,
+        "version_mismatches": m.version_mismatches,
+        "config_mismatches": m.config_mismatches,
+        "revocation_checks": m.revocation_checks,
+        "revocations_found": m.revocations_found,
     }
 
 
@@ -366,7 +386,7 @@ async def admin_cache_clear(req: CacheClearRequest):
             content={"detail": "Admin endpoint disabled"}
         )
 
-    valid_types = ["dossier", "revocation", "schema"]
+    valid_types = ["dossier", "revocation", "schema", "verification"]
     cache_type = req.cache_type.lower()
 
     if cache_type not in valid_types:
@@ -385,6 +405,11 @@ async def admin_cache_clear(req: CacheClearRequest):
             client = get_tel_client()
             client.clear_cache()
             log.info("Revocation cache cleared via admin endpoint")
+        elif cache_type == "verification":
+            from app.vvp.verification_cache import get_verification_cache
+            ver_cache = get_verification_cache()
+            await ver_cache.clear()
+            log.info("Verification cache cleared via admin endpoint")
         # Schema cache clear would go here if implemented
 
         return {"success": True, "cache_type": cache_type, "message": f"{cache_type} cache cleared"}

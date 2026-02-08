@@ -15,7 +15,7 @@
 #   Namespaced by sprint number so multiple sprints can run concurrently.
 #
 # Environment:
-#   VVP_REVIEWER       - Reviewer command (default: "codex exec --auto-edit")
+#   VVP_REVIEWER       - Reviewer command (default: "codex exec --full-auto")
 #   VVP_REVIEWER_MODEL - Model flag if supported (default: unset)
 #
 # Prerequisites:
@@ -75,7 +75,7 @@ fi
 
 # ---------- reviewer command ----------
 
-REVIEWER="${VVP_REVIEWER:-codex exec --auto-edit}"
+REVIEWER="${VVP_REVIEWER:-codex exec --full-auto}"
 
 # ---------- build prompt ----------
 

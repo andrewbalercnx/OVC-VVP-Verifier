@@ -1863,4 +1863,5 @@ async def verify_vvp(
         brand_name=response_brand_name,
         brand_logo_url=response_brand_logo_url,
         revocation_pending=_revocation_pending,
+        cache_hit=_verification_cache_hit,
     )

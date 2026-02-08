@@ -262,12 +262,14 @@ az vm run-command invoke --resource-group VVP --name vvp-pbx --command-id RunShe
 When the user says "Complete", immediately perform all of the following without asking for permission:
 
 1. **Update sprint status** - Update `SPRINTS.md` to reflect any work completed in the current sprint before committing.
-2. **Archive sprint plan** - If this sprint had a plan file, run the archival script:
+2. **Ensure all knowledge is up to date - 
+Update all knowledge files that have been affected by changes made in this Sprint
+3. **Archive sprint plan** - If this sprint had a plan file, run the archival script:
    - `./scripts/archive-plan.sh <sprint-number> "<title>"`
    - This appends `PLAN_Sprint<N>.md` to `Documentation/PLAN_history.md`, archives it, and removes `REVIEW_Sprint<N>.md`
-3. **Commit all changes** - Stage all modified/new files and create a descriptive commit
-4. **Push to main** - Push the commit to the main branch
-5. **Monitor Azure deployment** - Use `gh run watch` to monitor the GitHub Actions workflow for successful deployment
+4. **Commit all changes** - Stage all modified/new files and create a descriptive commit
+5. **Push to main** - Push the commit to the main branch
+6. **Monitor Azure deployment** - Use `gh run watch` to monitor the GitHub Actions workflow for successful deployment
 
 Do not ask for confirmation - execute all steps automatically.
 

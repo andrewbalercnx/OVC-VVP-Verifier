@@ -320,6 +320,11 @@ class VerificationResultCache:
     def metrics(self) -> VerificationCacheMetrics:
         return self._metrics
 
+    @property
+    def size(self) -> int:
+        """Current number of entries in cache."""
+        return len(self._cache)
+
     async def clear(self) -> None:
         """Clear entire cache."""
         async with self._lock:

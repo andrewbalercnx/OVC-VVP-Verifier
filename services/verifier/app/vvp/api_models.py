@@ -366,6 +366,7 @@ class VerifyResponse(BaseModel):
     brand_name: Optional[str] = None
     brand_logo_url: Optional[str] = None
     revocation_pending: bool = False
+    cache_hit: bool = False
 
 
 # =============================================================================

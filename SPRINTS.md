@@ -37,7 +37,7 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 48 | SIP Monitor - Real-Time & VVP Viz | COMPLETE | Sprint 47 |
 | 49 | Shared Dossier Cache & Revocation | COMPLETE | Sprint 32 |
 | 50 | SIP Call Latency & Brand Logo | COMPLETE | Sprint 44 |
-| 51 | Verification Result Caching | PLANNED | Sprint 50 |
+| 51 | Verification Result Caching | IN PROGRESS | Sprint 50 |
 | 52 | Central Service Dashboard | PENDING | Sprint 49 |
 
 ---

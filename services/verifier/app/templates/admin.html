@@ -153,6 +153,45 @@
         <div class="admin-controls" style="margin-top: 1rem;">
             <button onclick="clearCache('dossier')" class="secondary small">Clear Dossier Cache</button>
         </div>
+
+        <h4 style="margin-top: 1.5rem;">Verification Cache</h4>
+        <div class="config-grid">
+            <div class="config-item">
+                <span class="config-key">Hits / Misses</span>
+                <span class="config-value" id="ver-cache-stats">Loading...</span>
+            </div>
+            <div class="config-item">
+                <span class="config-key">Hit Rate</span>
+                <span class="config-value" id="ver-cache-rate">Loading...</span>
+            </div>
+            <div class="config-item">
+                <span class="config-key">Entries</span>
+                <span class="config-value" id="ver-cache-entries">Loading...</span>
+            </div>
+            <div class="config-item">
+                <span class="config-key">Evictions</span>
+                <span class="config-value" id="ver-cache-evictions">Loading...</span>
+            </div>
+            <div class="config-item">
+                <span class="config-key">Version Mismatches</span>
+                <span class="config-value" id="ver-cache-version">Loading...</span>
+            </div>
+            <div class="config-item">
+                <span class="config-key">Config Mismatches</span>
+                <span class="config-value" id="ver-cache-config">Loading...</span>
+            </div>
+            <div class="config-item">
+                <span class="config-key">Revocation Checks</span>
+                <span class="config-value" id="ver-cache-revocations">Loading...</span>
+            </div>
+            <div class="config-item">
+                <span class="config-key">Revocations Found</span>
+                <span class="config-value" id="ver-cache-revoked">Loading...</span>
+            </div>
+        </div>
+        <div class="admin-controls" style="margin-top: 1rem;">
+            <button onclick="clearCache('verification')" class="secondary small">Clear Verification Cache</button>
+        </div>
     </div>
 </details>
 
@@ -266,6 +305,20 @@ async function loadAdminData() {
             : 0;
         document.getElementById('dossier-cache-rate').textContent = hitRate + '%';
         document.getElementById('cache-hit-rate').textContent = hitRate + '% hit rate';
+
+        // Verification cache metrics
+        const verCache = admin.cache_metrics.verification;
+        document.getElementById('ver-cache-stats').textContent = `${verCache.hits} / ${verCache.misses}`;
+        const verHitRate = verCache.hits + verCache.misses > 0
+            ? ((verCache.hits / (verCache.hits + verCache.misses)) * 100).toFixed(1)
+            : 0;
+        document.getElementById('ver-cache-rate').textContent = verHitRate + '%';
+        document.getElementById('ver-cache-entries').textContent = verCache.entries;
+        document.getElementById('ver-cache-evictions').textContent = verCache.evictions;
+        document.getElementById('ver-cache-version').textContent = verCache.version_mismatches;
+        document.getElementById('ver-cache-config').textContent = verCache.config_mismatches;
+        document.getElementById('ver-cache-revocations').textContent = verCache.revocation_checks;
+        document.getElementById('ver-cache-revoked').textContent = verCache.revocations_found;
 
         // Witness pool
         const pool = admin.witnesses.witness_pool;
