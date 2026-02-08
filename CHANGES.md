@@ -1,5 +1,49 @@
 # VVP Verifier Change Log
 
+## Sprint 51: Verification Result Caching
+
+**Date:** 2026-02-08
+**Status:** APPROVED (Pair Review — 11 plan revisions, 2 code review rounds)
+
+### Summary
+
+Cache dossier-derived verification artifacts (chain validation, ACDC signatures, revocation status) keyed by `(dossier_url, passport_kid)`. On cache hit, skip expensive Phases 5, 5.5, and 9 while always re-running per-request phases (PASSporT validation, authorization, SIP context, brand, vetter constraints). VALID-only caching policy prevents sticky failures from transient conditions.
+
+Background revocation checker re-checks credential status asynchronously via TEL, updating all kid variants atomically. Stale revocation data produces INDETERMINATE per §5C.2.
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `services/verifier/app/vvp/verification_cache.py` | VerificationResultCache, CachedDossierVerification, RevocationStatus, config fingerprint, metrics |
+| `services/verifier/app/vvp/revocation_checker.py` | BackgroundRevocationChecker with URL-deduped async queue |
+| `services/verifier/tests/test_verification_cache.py` | 28 unit tests for cache operations |
+| `services/verifier/tests/test_background_revocation_checker.py` | 7 unit tests for revocation worker |
+| `services/verifier/tests/test_verify_caching.py` | 16 integration tests for cache-first verify_vvp() flow |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `services/verifier/app/vvp/verify.py` | Cache-first flow after Phase 4; conditional guards on Phases 5, 5.5, 9; cache storage on VALID chain result |
+| `services/verifier/app/vvp/api_models.py` | Added `revocation_pending` field to VerifyResponse |
+| `services/verifier/app/core/config.py` | 5 config constants: CACHE_ENABLED, MAX_ENTRIES, TTL, RECHECK_INTERVAL, CHECK_CONCURRENCY |
+| `services/verifier/app/main.py` | Lifespan context manager for background revocation worker |
+| `services/verifier/tests/conftest.py` | Reset verification cache + revocation checker singletons |
+| `services/verifier/tests/vectors/conftest.py` | Same reset additions |
+
+### Test Results
+
+1803 tests passed, 0 failures, 9 skipped (51 new tests).
+
+### Commits
+
+- `45c34b2` — Sprint 51: Verification result cache with background revocation
+- `2188561` — Sprint 51: Fix code review findings — TEL API + concurrency config
+- `609a8b0` — Sprint 51: Archive plan, update CHANGES.md and SPRINTS.md
+
+---
+
 ## Sprint 52: Central Service Dashboard
 
 **Date:** 2026-02-08

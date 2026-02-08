@@ -2027,7 +2027,7 @@ Before first PostgreSQL deployment:
 
 ---
 
-## Sprint 51: Verification Result Caching (PLANNED)
+## Sprint 51: Verification Result Caching (COMPLETE)
 
 **Goal:** Cache complete verification results so that second and subsequent reads of a dossier return in sub-100ms, with revocation status checked asynchronously in the background.
 
@@ -2540,7 +2540,7 @@ services/sip-redirect/
 ```
 
 
-## Sprint 51: Verification Result Caching (PLANNED)
+## Sprint 51: Verification Result Caching (COMPLETE)
 
 **Goal:** Cache complete verification results so that second and subsequent reads of a dossier return in sub-100ms, with revocation status checked asynchronously in the background.
 
