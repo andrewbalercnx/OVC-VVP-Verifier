@@ -343,6 +343,27 @@ jobs:
           docker build -t "$IMAGE" -f services/issuer/Dockerfile .
           docker push "$IMAGE"
 
+      - name: Stop old revision (release LMDB lock on shared volume)
+        run: |
+          # The issuer uses LMDB (via keripy) on an Azure Files volume mount.
+          # LMDB file locks prevent two revisions from running simultaneously.
+          # Deactivate the current revision before deploying the new one.
+          CURRENT_REV=$(az containerapp revision list \
+            --name vvp-issuer \
+            --resource-group "${{ secrets.AZURE_RG }}" \
+            --query "[?properties.trafficWeight > \`0\`].name" -o tsv)
+          if [ -n "$CURRENT_REV" ]; then
+            echo "Deactivating current revision: $CURRENT_REV"
+            az containerapp revision deactivate \
+              --name vvp-issuer \
+              --resource-group "${{ secrets.AZURE_RG }}" \
+              --revision "$CURRENT_REV"
+            echo "Waiting for old containers to stop..."
+            sleep ${{ inputs.lock_wait_seconds || '30' }}
+          else
+            echo "No active revision to deactivate"
+          fi
+
       - name: Deploy issuer
         run: |
           az containerapp update \
@@ -363,17 +384,28 @@ jobs:
       - name: Verify deployed version
         run: |
           EXPECTED="${{ github.sha }}"
-          for i in {1..12}; do
+          for i in {1..18}; do
             RESPONSE=$(curl -sf --max-time 10 https://vvp-issuer.rcnx.io/version || echo '{}')
             DEPLOYED=$(echo "$RESPONSE" | jq -r '.git_sha // empty')
             if [ "$DEPLOYED" = "$EXPECTED" ]; then
               echo "Version verified: ${DEPLOYED:0:7}"
               exit 0
             fi
-            echo "Attempt $i/12: expected ${EXPECTED:0:7}, got ${DEPLOYED:-unknown}"
+            # Check revision health — fail fast if unhealthy
+            HEALTH=$(az containerapp revision list \
+              --name vvp-issuer \
+              --resource-group "${{ secrets.AZURE_RG }}" \
+              --query "[?properties.trafficWeight > \`0\`].properties.healthState" -o tsv 2>/dev/null)
+            if [ "$HEALTH" = "Unhealthy" ]; then
+              echo "::error::New revision is unhealthy — check container logs"
+              az containerapp logs show --name vvp-issuer \
+                --resource-group "${{ secrets.AZURE_RG }}" --tail 30 2>/dev/null || true
+              exit 1
+            fi
+            echo "Attempt $i/18: expected ${EXPECTED:0:7}, got ${DEPLOYED:-unknown} (health: ${HEALTH:-unknown})"
             sleep 10
           done
-          echo "::error::Issuer version mismatch after 2 minutes"
+          echo "::error::Issuer version mismatch after 3 minutes"
           exit 1
 
   # =========================================================================
