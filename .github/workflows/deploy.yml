@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       lock_wait_seconds:
-        description: 'Seconds to wait for DB lock release (default: 30)'
+        description: 'Max seconds to poll for LMDB lock release (default: 60)'
         required: false
-        default: '30'
+        default: '60'
 
 permissions:
   contents: read
@@ -347,7 +347,7 @@ jobs:
         run: |
           # The issuer uses LMDB (via keripy) on an Azure Files volume mount.
           # LMDB file locks prevent two revisions from running simultaneously.
-          # Deactivate the current revision before deploying the new one.
+          # Deactivate the current revision and poll until it stops (typically 5-15s).
           CURRENT_REV=$(az containerapp revision list \
             --name vvp-issuer \
             --resource-group "${{ secrets.AZURE_RG }}" \
@@ -358,8 +358,27 @@ jobs:
               --name vvp-issuer \
               --resource-group "${{ secrets.AZURE_RG }}" \
               --revision "$CURRENT_REV"
-            echo "Waiting for old containers to stop..."
-            sleep ${{ inputs.lock_wait_seconds || '30' }}
+            # Poll until revision is actually stopped instead of fixed sleep
+            MAX_WAIT=${{ inputs.lock_wait_seconds || '60' }}
+            ELAPSED=0
+            INTERVAL=5
+            while [ $ELAPSED -lt $MAX_WAIT ]; do
+              STATUS=$(az containerapp revision show \
+                --name vvp-issuer \
+                --resource-group "${{ secrets.AZURE_RG }}" \
+                --revision "$CURRENT_REV" \
+                --query "properties.runningStatus" -o tsv 2>/dev/null || echo "unknown")
+              if [ "$STATUS" = "Stopped" ] || [ "$STATUS" = "Degraded" ] || [ "$STATUS" = "Failed" ]; then
+                echo "Old revision stopped (${STATUS}) after ${ELAPSED}s"
+                break
+              fi
+              echo "Waiting for LMDB lock release... (${ELAPSED}s elapsed, status: ${STATUS})"
+              sleep $INTERVAL
+              ELAPSED=$((ELAPSED + INTERVAL))
+            done
+            if [ $ELAPSED -ge $MAX_WAIT ]; then
+              echo "::warning::Old revision did not stop within ${MAX_WAIT}s — proceeding anyway"
+            fi
           else
             echo "No active revision to deactivate"
           fi
@@ -384,11 +403,16 @@ jobs:
       - name: Verify deployed version
         run: |
           EXPECTED="${{ github.sha }}"
-          for i in {1..18}; do
+          # Shorter intervals early (new revision typically ready in 15-30s),
+          # longer intervals later as fallback
+          INTERVALS=(5 5 5 5 10 10 10 10 10 10 10 10)
+          TOTAL=${#INTERVALS[@]}
+          for i in "${!INTERVALS[@]}"; do
+            ATTEMPT=$((i + 1))
             RESPONSE=$(curl -sf --max-time 10 https://vvp-issuer.rcnx.io/version || echo '{}')
             DEPLOYED=$(echo "$RESPONSE" | jq -r '.git_sha // empty')
             if [ "$DEPLOYED" = "$EXPECTED" ]; then
-              echo "Version verified: ${DEPLOYED:0:7}"
+              echo "Version verified: ${DEPLOYED:0:7} (attempt ${ATTEMPT}/${TOTAL})"
               exit 0
             fi
             # Check revision health — fail fast if unhealthy
@@ -402,10 +426,10 @@ jobs:
                 --resource-group "${{ secrets.AZURE_RG }}" --tail 30 2>/dev/null || true
               exit 1
             fi
-            echo "Attempt $i/18: expected ${EXPECTED:0:7}, got ${DEPLOYED:-unknown} (health: ${HEALTH:-unknown})"
-            sleep 10
+            echo "Attempt ${ATTEMPT}/${TOTAL}: expected ${EXPECTED:0:7}, got ${DEPLOYED:-unknown} (health: ${HEALTH:-unknown})"
+            sleep "${INTERVALS[$i]}"
           done
-          echo "::error::Issuer version mismatch after 3 minutes"
+          echo "::error::Issuer version mismatch after 2 minutes"
           exit 1
 
   # =========================================================================

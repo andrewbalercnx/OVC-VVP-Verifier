@@ -147,13 +147,19 @@ class IssuerClient:
             return cached
 
         if not self._client:
+            log.error(f"TN lookup for {tn}: client not initialized")
             return TNLookupResult(found=False, error="Client not initialized")
+
+        t0 = time.monotonic()
+        url = f"{self._base_url}/tn/lookup"
+        log.info(f"TN lookup START: tn={tn}, url={url}, timeout={self._timeout}s")
 
         try:
             response = await self._client.post(
                 "/tn/lookup",
                 json={"tn": tn, "api_key": api_key},
             )
+            elapsed = (time.monotonic() - t0) * 1000
 
             if response.status_code == 200:
                 data = response.json()
@@ -168,23 +174,30 @@ class IssuerClient:
                     brand_logo_url=data.get("brand_logo_url"),
                     error=data.get("error"),
                 )
+                log.info(f"TN lookup OK: tn={tn}, found={result.found}, brand={result.brand_name}, elapsed={elapsed:.0f}ms")
                 # Cache successful lookups
                 self._tn_cache.put(tn, result)
                 return result
             else:
-                log.warning(f"TN lookup failed: {response.status_code}")
                 try:
                     data = response.json()
                     error = data.get("error") or data.get("detail") or f"HTTP {response.status_code}"
                 except Exception:
                     error = f"HTTP {response.status_code}"
+                log.warning(f"TN lookup FAILED: tn={tn}, status={response.status_code}, error={error}, elapsed={elapsed:.0f}ms")
                 return TNLookupResult(found=False, error=error)
 
         except httpx.TimeoutException:
-            log.error("TN lookup timeout")
+            elapsed = (time.monotonic() - t0) * 1000
+            log.error(f"TN lookup TIMEOUT: tn={tn}, elapsed={elapsed:.0f}ms, timeout={self._timeout}s, url={url}")
             return TNLookupResult(found=False, error="Timeout")
+        except httpx.ConnectError as e:
+            elapsed = (time.monotonic() - t0) * 1000
+            log.error(f"TN lookup CONNECT_ERROR: tn={tn}, elapsed={elapsed:.0f}ms, url={url}, error={e}")
+            return TNLookupResult(found=False, error=f"Connect error: {e}")
         except Exception as e:
-            log.error(f"TN lookup error: {e}")
+            elapsed = (time.monotonic() - t0) * 1000
+            log.error(f"TN lookup ERROR: tn={tn}, elapsed={elapsed:.0f}ms, error={type(e).__name__}: {e}")
             return TNLookupResult(found=False, error=str(e))
 
     async def create_vvp(
@@ -208,11 +221,15 @@ class IssuerClient:
             VVPCreateResult with VVP headers or error
         """
         if not self._client:
+            log.error("VVP create: client not initialized")
             return VVPCreateResult(success=False, error="Client not initialized")
 
         if not api_key:
-            log.error("No API key provided")
+            log.error("VVP create: no API key provided")
             return VVPCreateResult(success=False, error="API key required")
+
+        t0 = time.monotonic()
+        log.info(f"VVP create START: identity={identity_name}, dossier={dossier_said[:16]}..., orig={orig_tn}, dest={dest_tn}")
 
         try:
             response = await self._client.post(
@@ -225,28 +242,36 @@ class IssuerClient:
                 },
                 headers={"X-API-Key": api_key},
             )
+            elapsed = (time.monotonic() - t0) * 1000
 
             if response.status_code == 200:
                 data = response.json()
+                log.info(f"VVP create OK: orig={orig_tn}, elapsed={elapsed:.0f}ms")
                 return VVPCreateResult(
                     success=True,
                     vvp_identity=data.get("vvp_identity"),
                     vvp_passport=data.get("passport"),
                 )
             else:
-                log.warning(f"VVP create failed: {response.status_code}")
                 try:
                     data = response.json()
                     error = data.get("error") or data.get("detail") or f"HTTP {response.status_code}"
                 except Exception:
                     error = f"HTTP {response.status_code}"
+                log.warning(f"VVP create FAILED: status={response.status_code}, error={error}, elapsed={elapsed:.0f}ms")
                 return VVPCreateResult(success=False, error=error)
 
         except httpx.TimeoutException:
-            log.error("VVP create timeout")
+            elapsed = (time.monotonic() - t0) * 1000
+            log.error(f"VVP create TIMEOUT: elapsed={elapsed:.0f}ms, timeout={self._timeout}s")
             return VVPCreateResult(success=False, error="Timeout")
+        except httpx.ConnectError as e:
+            elapsed = (time.monotonic() - t0) * 1000
+            log.error(f"VVP create CONNECT_ERROR: elapsed={elapsed:.0f}ms, error={e}")
+            return VVPCreateResult(success=False, error=f"Connect error: {e}")
         except Exception as e:
-            log.error(f"VVP create error: {e}")
+            elapsed = (time.monotonic() - t0) * 1000
+            log.error(f"VVP create ERROR: elapsed={elapsed:.0f}ms, error={type(e).__name__}: {e}")
             return VVPCreateResult(success=False, error=str(e))
 
 
