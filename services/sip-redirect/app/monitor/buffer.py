@@ -28,6 +28,7 @@ class SIPEvent:
 
     id: int  # Auto-incrementing event ID
     timestamp: str  # ISO 8601 timestamp
+    service: str  # Service name (SIGNING, VERIFICATION)
     source_addr: str  # IP:port of sender
     method: str  # SIP method (INVITE, etc.)
     request_uri: str  # SIP Request-URI

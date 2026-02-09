@@ -54,12 +54,15 @@ MONITOR_SESSION_TTL = int(os.getenv("VVP_MONITOR_SESSION_TTL", "3600"))  # 1 hou
 MONITOR_RATE_LIMIT_MAX = int(os.getenv("VVP_MONITOR_RATE_LIMIT_MAX", "5"))
 MONITOR_RATE_LIMIT_WINDOW = int(os.getenv("VVP_MONITOR_RATE_LIMIT_WINDOW", "900"))  # 15 min
 
-# Cookie path (Sprint 49) - "/" for local dev, "/sip-monitor/" behind nginx
+# Cookie path - "/" works behind nginx (browser matches before proxy strips prefix)
 MONITOR_COOKIE_PATH = os.getenv("VVP_MONITOR_COOKIE_PATH", "/")
+
+# External base path for redirects (nginx prefix, not cookie scope)
+MONITOR_BASE_PATH = os.getenv("VVP_MONITOR_BASE_PATH", "/sip-monitor/")
 
 # WebSocket Configuration (Sprint 48)
 MONITOR_WS_HEARTBEAT = int(os.getenv("VVP_MONITOR_WS_HEARTBEAT", "15"))  # seconds
-MONITOR_WS_IDLE_TIMEOUT = int(os.getenv("VVP_MONITOR_WS_IDLE_TIMEOUT", "30"))  # seconds
+MONITOR_WS_IDLE_TIMEOUT = int(os.getenv("VVP_MONITOR_WS_IDLE_TIMEOUT", "300"))  # seconds
 MONITOR_WS_MAX_PER_IP = int(os.getenv("VVP_MONITOR_WS_MAX_PER_IP", "10"))
 MONITOR_WS_MAX_GLOBAL = int(os.getenv("VVP_MONITOR_WS_MAX_GLOBAL", "50"))
 

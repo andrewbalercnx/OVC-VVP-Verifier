@@ -21,6 +21,7 @@ from app.monitor.server import WebSocketManager
 def _make_event_data(**overrides):
     """Create minimal event data dict for testing."""
     defaults = {
+        "service": "SIGNING",
         "source_addr": "10.0.0.1:5060",
         "method": "INVITE",
         "request_uri": "sip:1006@pbx.rcnx.io",

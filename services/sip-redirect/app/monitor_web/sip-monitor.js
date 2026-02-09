@@ -264,6 +264,14 @@ function connectWebSocket() {
             state.pollingInterval = null;
         }
 
+        // Send keepalive every 20s to reset server idle timer
+        if (state.wsKeepalive) clearInterval(state.wsKeepalive);
+        state.wsKeepalive = setInterval(() => {
+            if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+                state.ws.send(JSON.stringify({type: 'ping'}));
+            }
+        }, 20000);
+
         console.log('WebSocket connected');
     };
 
@@ -278,6 +286,10 @@ function connectWebSocket() {
 
     state.ws.onclose = (event) => {
         state.ws = null;
+        if (state.wsKeepalive) {
+            clearInterval(state.wsKeepalive);
+            state.wsKeepalive = null;
+        }
         onWsClose(event);
     };
 

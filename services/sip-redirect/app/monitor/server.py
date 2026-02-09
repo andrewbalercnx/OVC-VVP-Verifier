@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.config import (
+    MONITOR_BASE_PATH,
     MONITOR_COOKIE_PATH,
     MONITOR_OAUTH_ALLOWED_DOMAINS,
     MONITOR_OAUTH_AUTO_PROVISION,
@@ -352,7 +353,7 @@ async def handle_oauth_start(request):
     state = generate_state()
     nonce = generate_nonce()
 
-    redirect_after = request.query.get("redirect_after", MONITOR_COOKIE_PATH or "/")
+    redirect_after = request.query.get("redirect_after", MONITOR_BASE_PATH or "/")
 
     # Store server-side
     oauth_state = OAuthState(
@@ -485,17 +486,17 @@ async def handle_oauth_callback(request):
         user_info.email, MONITOR_SESSION_TTL, auth_method="oauth"
     )
 
-    # Redirect to dashboard with session cookie
-    redirect_target = oauth_state.redirect_after or MONITOR_COOKIE_PATH or "/"
+    # Redirect to dashboard (use external base path, not cookie path)
+    redirect_target = oauth_state.redirect_after or MONITOR_BASE_PATH or "/"
     response = web.HTTPFound(redirect_target)
 
-    # Session cookie (SameSite=Strict for security)
+    # Session cookie (SameSite=Lax required for OAuth cross-site redirect)
     response.set_cookie(
         COOKIE_NAME,
         session.session_id,
         httponly=True,
         secure=True,
-        samesite="Strict",
+        samesite="Lax",
         max_age=MONITOR_SESSION_TTL,
         path=MONITOR_COOKIE_PATH,
     )
