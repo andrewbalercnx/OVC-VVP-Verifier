@@ -84,9 +84,9 @@ async def _capture_event(
                 response_vvp_headers["X-VVP-Brand-Name"] = response.brand_name
             if response.brand_logo_url:
                 response_vvp_headers["X-VVP-Brand-Logo"] = response.brand_logo_url
-            if response.caller_id:
+            if getattr(response, "caller_id", None):
                 response_vvp_headers["X-VVP-Caller-ID"] = response.caller_id
-            if response.error_code:
+            if getattr(response, "error_code", None):
                 response_vvp_headers["X-VVP-Error"] = response.error_code
 
         buffer = get_event_buffer()
