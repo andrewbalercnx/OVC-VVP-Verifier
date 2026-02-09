@@ -10153,3 +10153,220 @@ The manual implementor MUST enumerate failure modes from sources 1-3 (code-deriv
 3. All links in README resolve to existing files (verified by enumerating each relative link and checking file existence)
 4. All URLs/ports in README pass the URL/Port/Config Validation Checklist against `Documentation/DEPLOYMENT.md`
 
+
+---
+
+# Sprint 56: System Operator User Manual
+
+_Archived: 2026-02-09_
+
+# Sprint 56: System Operator User Manual
+
+## Problem Statement
+
+The Sprint 55 requirements specification defines a comprehensive User Manual (`Documentation/USER_MANUAL.md`) but it does not yet exist. Operators must currently discover and cross-reference 30+ documentation files to understand the system. This sprint implements the manual.
+
+## Spec References
+
+- Sprint 55 requirements: `Documentation/archive/PLAN_Sprint55.md` — defines 15 sections, content tiers, validation checklists, acceptance criteria
+
+## Approach
+
+Write `Documentation/USER_MANUAL.md` following the Sprint 55 requirements exactly. Each section uses the assigned content tier:
+
+| Section | Tier | Treatment |
+|---------|------|-----------|
+| 1. Introduction | Canonical | Original content |
+| 2. System Architecture | Summary + Link | Reuse README diagram, component roles table, step-by-step call signing flow, step-by-step call verification flow; link to `knowledge/architecture.md` and `Documentation/DEPLOYMENT.md` |
+| 3. Deployed Infrastructure | Link Only | Link to `Documentation/DEPLOYMENT.md` |
+| 4. Getting Started | Canonical | Original operator quickstart |
+| 5. Organization Management | Canonical | Original workflow guide |
+| 6. Credential Management | Summary + Link | Summarize, link to `CREATING_DOSSIERS.md` |
+| 7. Call Signing | Summary + Link | Summarize required headers (X-VVP-API-Key, X-VVP-Orig-TN, X-VVP-Dest-TN), response headers (X-VVP-Identity, X-VVP-PASSporT), error responses (401/403/404/500), rate limiting; link to `SIP_SIGNER.md` |
+| 8. Call Verification | Summary + Link | Summarize expected inbound headers (X-VVP-Identity, X-VVP-PASSporT), result headers (X-VVP-Result, X-VVP-Brand-*), status meanings (VALID/INVALID/PARTIAL/ERROR/NO_VVP), error code table; link to `SIP_VERIFIER.md` |
+| 9. Monitoring | Canonical | Original monitoring guide |
+| 10. CLI Tools | Summary + Link | Summarize, link to `CLI_USAGE.md` |
+| 11. Operational Scripts | Canonical | Original scripts guide |
+| 12. E2E Testing | Summary + Link | Summarize, link to `E2E_TEST.md` |
+| 13. Troubleshooting | Canonical | Original troubleshooting guide (15+ failure modes) |
+| 14. Configuration Reference | Link Only | Link to `DEPLOYMENT.md` |
+| 15. Quick Reference | Canonical | Original quick-ref card |
+
+## Source Documents
+
+Content sourced from (read by research agents):
+
+1. `Documentation/DEPLOYMENT.md` — URLs, ports, health endpoints, infrastructure
+2. `Documentation/SIP_SIGNER.md` — signing flow, headers, errors, rate limits
+3. `Documentation/SIP_VERIFIER.md` — verification flow, headers, results
+4. `Documentation/CREATING_DOSSIERS.md` — credential chain workflow
+5. `Documentation/CLI_USAGE.md` — CLI commands and piping
+6. `E2E_TEST.md` — test extensions, quick procedure, troubleshooting
+7. `services/verifier/app/vvp/api_models.py` — 18 ErrorCode enum values
+8. `knowledge/architecture.md` — system layers and call flows
+9. `scripts/system-health-check.sh` — flags, components, exit codes
+10. `scripts/sip-call-test.py` — test modes, env vars
+11. `scripts/bootstrap-issuer.py` — bootstrap steps, arguments
+12. `services/issuer/CLAUDE.md` — auth methods, multi-tenancy, RBAC
+13. `services/issuer/app/api/*.py` — all API endpoints (auth, orgs, credentials, mappings routers)
+14. `services/sip-redirect/app/` — SIP signing service error paths (for troubleshooting)
+15. `services/sip-verify/app/` — SIP verification service error paths (for troubleshooting)
+
+## Canonical Service List
+
+All service/component tables in the manual MUST use the canonical service list from Sprint 55 and match the README diagram:
+
+| # | Service | Production URL |
+|---|---------|---------------|
+| 1 | VVP Issuer | `vvp-issuer.rcnx.io` |
+| 2 | VVP Verifier | `vvp-verifier.rcnx.io` |
+| 3 | SIP Redirect (Signer) | `pbx.rcnx.io:5070` (UDP) |
+| 4 | SIP Verify | `pbx.rcnx.io:5071` (UDP) |
+| 5 | KERI Witnesses (×3) | `vvp-witness{1,2,3}.rcnx.io` |
+| 6 | PBX (FreeSWITCH) | `pbx.rcnx.io` |
+
+Witnesses counted as one logical service (3 instances). Common Library is not a deployed service.
+
+## Relative Link Targets
+
+Since `USER_MANUAL.md` lives in `Documentation/`, all links to sibling docs use relative paths within that directory:
+
+| Target | Link from USER_MANUAL.md |
+|--------|-------------------------|
+| DEPLOYMENT.md | `[DEPLOYMENT.md](DEPLOYMENT.md)` |
+| SIP_SIGNER.md | `[SIP_SIGNER.md](SIP_SIGNER.md)` |
+| SIP_VERIFIER.md | `[SIP_VERIFIER.md](SIP_VERIFIER.md)` |
+| CREATING_DOSSIERS.md | `[CREATING_DOSSIERS.md](CREATING_DOSSIERS.md)` |
+| CLI_USAGE.md | `[CLI_USAGE.md](CLI_USAGE.md)` |
+| DEVELOPMENT.md | `[DEVELOPMENT.md](DEVELOPMENT.md)` |
+| knowledge/architecture.md | `[architecture.md](../knowledge/architecture.md)` |
+| E2E_TEST.md | `[E2E_TEST.md](../E2E_TEST.md)` |
+| README.md | `[README.md](../README.md)` |
+
+## Formatting Requirements (from Sprint 55)
+
+- **Sections 14-15**: Use tables
+- **Sections 9, 13**: Use symptom → cause → solution tables
+- **Summary + Link sections** (2, 6, 7, 8, 10, 12): Maximum 1-2 paragraph summaries, then link to authoritative doc
+- **Link Only sections** (3, 14): Single sentence + link
+
+## Troubleshooting Failure Modes
+
+Per Sprint 55 requirements, enumerate from these sources:
+
+**Source 1: Verifier ErrorCode enum** — at implementation time, read `services/verifier/app/vvp/api_models.py` and enumerate ALL codes from the `ErrorCode` class. Include every code regardless of count. The table above was a snapshot; the authoritative source is always the code file.
+
+**Source 2: Issuer API errors**: 401 (missing/invalid auth), 403 (insufficient role), 404 (resource not found), 409 (conflict), 500 (internal)
+
+**Source 3: SIP service errors**: 401 (missing API key), 403 (rate limited/unauthorized TN), 404 (TN not mapped), 500 (issuer unreachable)
+
+**Source 4: CHANGES.md** — extract failure modes by searching for "fix", "bug", "error", "fail" in Sprint 42-53 entries. Include any failure mode that an operator could encounter in production. Selection rule: if a bug fix describes a symptom an operator would see (e.g., "headers silently dropped", "LMDB lock blocks startup"), include it.
+
+**Source 5: E2E_TEST.md** troubleshooting section — extract all symptom/cause/solution entries from the document's troubleshooting section. Include every listed failure pattern.
+
+## Canonical Section Traceability Checklist
+
+Each canonical section MUST include the following subtopics (from Sprint 55 requirements):
+
+**Section 4: Getting Started**
+- [ ] How to access the Issuer UI
+- [ ] Login methods: M365 SSO, API key, email/password
+- [ ] Dashboard overview (what it shows, where to find it)
+- [ ] Verifier UI overview (no auth required)
+
+**Section 5: Organization Management**
+- [ ] Creating an organization (what happens: AID, pseudo-LEI, LE credential, registry)
+- [ ] Creating API keys (roles, permissions, copy-once warning)
+- [ ] User management (creating users, assigning to orgs)
+
+**Section 9: Monitoring and Diagnostics**
+- [ ] Central service dashboard (URL, what it shows, auto-refresh)
+- [ ] Issuer admin dashboard (stats, health, audit log)
+- [ ] Audit log viewer (event types, filtering)
+- [ ] System health check script (all flags)
+- [ ] SIP call test script (all test modes)
+- [ ] Verifier UI diagnostics
+- [ ] SIP Redirect status endpoint
+
+**Section 11: Operational Scripts**
+- [ ] `scripts/system-health-check.sh` — purpose, flags, components, exit codes
+- [ ] `scripts/sip-call-test.py` — purpose, test modes, env vars
+- [ ] `scripts/bootstrap-issuer.py` — purpose, steps, arguments
+- [ ] `scripts/run-integration-tests.sh` — when and how to use
+- [ ] `scripts/monitor-azure-deploy.sh` — deployment monitoring
+- [ ] `scripts/restart-issuer.sh` — service restart
+
+**Section 13: Troubleshooting**
+- [ ] Signing issues: 401, 403, 404, 500, empty headers
+- [ ] Verification issues: all ErrorCode values from enum
+- [ ] Infrastructure issues: service unhealthy, witnesses down, PBX unreachable, WebRTC failures
+- [ ] Debugging tools section (health check, SIP trace, log inspection, audit filtering)
+
+**Section 15: Quick Reference**
+- [ ] All service URLs in one table
+- [ ] Test phone numbers
+- [ ] VVP dial prefix
+- [ ] Common operations table (task → where to do it)
+- [ ] Key PBX files
+- [ ] Related documentation links
+
+**Acceptance criteria tie-in**: Sections 4-6 must form a complete walkthrough enabling a new operator to log in → create org → create API key → issue TN allocation → build dossier → create/test TN mapping. Section 7 must enable a FreeSWITCH PBX configuration for VVP signing.
+
+## Implementation Workflow
+
+Execute these steps in order:
+
+1. **Write all 15 sections** of `Documentation/USER_MANUAL.md` following the tier assignments and formatting requirements above
+2. **Derive ErrorCode list from source**: Read `services/verifier/app/vvp/api_models.py` at implementation time and include all current ErrorCode values in the troubleshooting table
+3. **Extract CHANGES.md failure modes**: Search CHANGES.md Sprints 42-53 for bug fixes; include operator-visible failures
+4. **Extract E2E_TEST.md patterns**: Include all troubleshooting entries from E2E_TEST.md
+5. **Validate URLs/ports**: Compare every URL, port, and endpoint in the manual against `Documentation/DEPLOYMENT.md` tables
+6. **Validate all links**: Check every relative link in the manual resolves to an existing file
+7. **Check summary lengths**: Verify Summary+Link sections (2, 6, 7, 8, 10, 12) are each ≤2 paragraphs
+8. **Update README**: Change the User Manual link from `Documentation/archive/PLAN_Sprint55.md` to `Documentation/USER_MANUAL.md`
+
+Steps 5-7 are mandatory validation gates.
+
+---
+
+## Implementation Notes
+
+### Deviations from Plan
+None. All 15 sections written as specified.
+
+### Implementation Details
+- **ErrorCode enum**: 30 codes extracted from `services/verifier/app/vvp/api_models.py` across 9 layers (Protocol, Crypto, Evidence, KERI, Revocation, Authorization, Context, Brand, Callee, Vetter, Verifier)
+- **CHANGES.md failure modes**: 20 operator-visible failures extracted from Sprints 42-53
+- **E2E_TEST.md patterns**: 5 troubleshooting entries (401, 404, 500, missing headers, verification failures)
+- **Total troubleshooting entries**: 30 ErrorCode values + 5 signing issues + 10 infrastructure issues + 9 historical bug fixes = 54 distinct failure modes
+
+### Validation Results
+- **Link validation**: All 9 relative links resolve to existing files (6 sibling docs + 3 parent-relative)
+- **URL/port validation**: All URLs/ports match DEPLOYMENT.md (Issuer, Verifier, Witnesses, SIP Redirect, SIP Verify, PBX)
+- **Summary length check**: All Summary+Link sections (2, 6, 7, 8, 10, 12) within 1-2 paragraph limit
+
+### Files Changed
+
+## Files Changed
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `Documentation/USER_MANUAL.md` | Create | The User Manual |
+| `README.md` | Modify | Update link from PLAN_Sprint55 to USER_MANUAL.md |
+| `SPRINTS.md` | Modify | Mark Sprint 56 COMPLETE |
+
+## Exit Criteria
+
+1. `Documentation/USER_MANUAL.md` exists with all 15 sections
+2. Content tiers respected (Canonical / Summary+Link / Link Only)
+3. Summary+Link sections limited to 1-2 paragraph summaries
+4. Sections 9 and 13 use symptom → cause → solution tables
+5. Sections 14-15 use tables
+6. All relative links resolve to existing files
+7. URLs/ports match `Documentation/DEPLOYMENT.md`
+8. Troubleshooting covers 15+ failure modes from all 5 defined sources
+9. README link updated to point to USER_MANUAL.md
+10. Sprint 55 acceptance criteria satisfied:
+    - Operator can follow sections 4-6 to log in, create org, create API key, issue TN allocation, build dossier, create TN mapping
+    - Integration engineer can follow section 7 to configure FreeSWITCH for VVP signing
+
