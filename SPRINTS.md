@@ -37,8 +37,9 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 48 | SIP Monitor - Real-Time & VVP Viz | COMPLETE | Sprint 47 |
 | 49 | Shared Dossier Cache & Revocation | COMPLETE | Sprint 32 |
 | 50 | SIP Call Latency & Brand Logo | COMPLETE | Sprint 44 |
-| 51 | Verification Result Caching | IN PROGRESS | Sprint 50 |
-| 52 | Central Service Dashboard | PENDING | Sprint 49 |
+| 51 | Verification Result Caching | COMPLETE | Sprint 50 |
+| 52 | Central Service Dashboard | COMPLETE | Sprint 49 |
+| 53 | E2E System Validation & Cache Timing | PENDING | Sprint 50, 52 |
 
 ---
 
@@ -2820,3 +2821,55 @@ The VVP ecosystem now spans 6+ services across Azure Container Apps and an Azure
 - [ ] "Dashboard" link appears in issuer nav bar
 - [ ] SIP monitor link prominently displayed on dashboard
 - [ ] All existing issuer tests continue to pass
+
+---
+
+## Sprint 53: E2E System Validation & Cache Timing (PENDING)
+
+**Goal:** Exercise the new system health check and SIP call test scripts against production, validate the full signing and verification call chains end-to-end, and extend the test tooling to measure first-call vs cached-call timing to prove dossier caching effectiveness.
+
+**Prerequisites:** Sprint 50 (SIP Call Latency & Brand Logo) COMPLETE, Sprint 52 (Central Service Dashboard) COMPLETE. Health check scripts merged from PR #4 (`scripts/system-health-check.sh`, `scripts/sip-call-test.py`).
+
+**Background:**
+
+Sprint 49 introduced shared dossier caching (5-minute TTL, LRU 1000 entries) and Sprint 50 optimized SIP call latency with persistent HTTP sessions and TN lookup caching. Sprint 51 added verification result caching. However, none of these cache improvements have been validated end-to-end with timing measurements through the actual SIP call chain. The health check scripts (PR #4) provide the test infrastructure but haven't been run against live services. This sprint validates everything works and adds timing instrumentation to prove caching delivers the expected latency reduction.
+
+**Deliverables:**
+
+- [ ] **Live validation of system-health-check.sh** — Run phases 1-3 against production, fix any issues encountered (macOS compatibility, endpoint changes, etc.)
+- [ ] **Live validation of sip-call-test.py** — Run E2E SIP signing test (INVITE → SIP Redirect → Issuer API → 302 + brand headers) and verification test (INVITE → SIP Verify → Verifier API → response) on the PBX VM
+- [ ] **FreeSWITCH loopback validation** — Originate a call through the VVP dialplan (71006) and verify signing flow triggers in FreeSWITCH logs
+- [ ] **Cache timing test mode** — Extend `scripts/sip-call-test.py` with a `--timing` flag that:
+  - Sends two consecutive signing INVITEs for the same TN pair with a short delay between them
+  - Reports individual elapsed times for each call (first = cold, second = cached)
+  - Computes and displays the speedup ratio (cold_ms / cached_ms)
+  - JSON output includes `first_call_ms`, `second_call_ms`, `speedup_ratio` fields
+- [ ] **Timing thresholds** — Add `--timing-threshold` flag (default: 2.0x) that fails the test if the cached call isn't at least N times faster than the first call, validating that dossier cache, TN lookup cache, and verification cache are all functioning
+- [ ] **Multi-call timing mode** — Add `--timing-count N` flag (default: 2) to run N consecutive calls and report min/max/avg/p95 latencies, useful for characterizing steady-state performance
+- [ ] **System health check integration** — Wire the timing test into `system-health-check.sh` Phase 4 as an optional `--timing` sub-phase that runs after basic E2E tests pass
+- [ ] **Timing results in JSON output** — Ensure `--json` mode includes full timing breakdown for CI integration and trend tracking
+
+**Expected Timing Behavior:**
+
+| Call | What happens | Expected latency |
+|------|-------------|-----------------|
+| First (cold) | TN lookup (HTTP) + dossier fetch + ACDC build + PASSporT sign | 2-8 seconds |
+| Second (cached) | TN lookup (cache hit) + dossier (cache hit) + PASSporT sign | 200-500ms |
+| Speedup | Cache hit avoids HTTP round-trips to Issuer API | 4-20x faster |
+
+**Key Files:**
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `scripts/sip-call-test.py` | Modify | Add `--timing`, `--timing-count`, `--timing-threshold` flags |
+| `scripts/system-health-check.sh` | Modify | Add Phase 4 timing sub-phase |
+| `services/sip-redirect/app/redirect/client.py` | Verify | Confirm timing logs are present (added in uncommitted changes) |
+
+**Exit Criteria:**
+
+- [ ] `./scripts/system-health-check.sh --verbose` passes all phases 1-3 against production
+- [ ] `./scripts/system-health-check.sh --e2e --verbose` passes Phase 4 (SIP signing returns 302 with brand headers, SIP verify responds)
+- [ ] FreeSWITCH loopback call (71006) triggers VVP signing flow (evidence in FS logs)
+- [ ] `sip-call-test.py --test sign --timing` shows measurable speedup on second call (≥2x)
+- [ ] `sip-call-test.py --test sign --timing --json` produces machine-readable timing data
+- [ ] All timing data is available in system health check JSON output for CI trend tracking
