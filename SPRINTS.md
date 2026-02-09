@@ -40,6 +40,8 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 51 | Verification Result Caching | COMPLETE | Sprint 50 |
 | 52 | Central Service Dashboard | COMPLETE | Sprint 49 |
 | 53 | E2E System Validation & Cache Timing | COMPLETE | Sprint 50, 52 |
+| 54 | Dossier Verification Performance | PLANNED | Sprint 51 |
+| 55 | README Update & User Manual Requirements | IN PROGRESS | Sprint 53 |
 
 ---
 
