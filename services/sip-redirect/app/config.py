@@ -87,7 +87,7 @@ MONITOR_API_KEYS_FILE = os.getenv(
     "VVP_MONITOR_API_KEYS_FILE", "/opt/vvp/sip-redirect/api_keys.json"
 )
 
-# Version tracking (injected by CI/CD)
+# Version tracking (injected by CI/CD via /etc/vvp/sip-redirect.env)
 GIT_SHA = os.getenv("GIT_SHA", "unknown")
 
 
