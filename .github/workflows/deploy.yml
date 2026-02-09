@@ -347,40 +347,42 @@ jobs:
         run: |
           # The issuer uses LMDB (via keripy) on an Azure Files volume mount.
           # LMDB file locks prevent two revisions from running simultaneously.
-          # Deactivate the current revision and poll until it stops (typically 5-15s).
-          CURRENT_REV=$(az containerapp revision list \
+          # Deactivate ALL active revisions (not just those with traffic — a stuck
+          # "Activating" revision from a previous failed deploy also holds the lock).
+          ACTIVE_REVS=$(az containerapp revision list \
             --name vvp-issuer \
             --resource-group "${{ secrets.AZURE_RG }}" \
-            --query "[?properties.trafficWeight > \`0\`].name" -o tsv)
-          if [ -n "$CURRENT_REV" ]; then
-            echo "Deactivating current revision: $CURRENT_REV"
-            az containerapp revision deactivate \
-              --name vvp-issuer \
-              --resource-group "${{ secrets.AZURE_RG }}" \
-              --revision "$CURRENT_REV"
-            # Poll until revision is actually stopped instead of fixed sleep
+            --query "[?properties.active].name" -o tsv)
+          if [ -n "$ACTIVE_REVS" ]; then
+            for REV in $ACTIVE_REVS; do
+              echo "Deactivating revision: $REV"
+              az containerapp revision deactivate \
+                --name vvp-issuer \
+                --resource-group "${{ secrets.AZURE_RG }}" \
+                --revision "$REV" || true
+            done
+            # Poll until all revisions are stopped
             MAX_WAIT=${{ inputs.lock_wait_seconds || '60' }}
             ELAPSED=0
             INTERVAL=5
             while [ $ELAPSED -lt $MAX_WAIT ]; do
-              STATUS=$(az containerapp revision show \
+              RUNNING=$(az containerapp revision list \
                 --name vvp-issuer \
                 --resource-group "${{ secrets.AZURE_RG }}" \
-                --revision "$CURRENT_REV" \
-                --query "properties.runningStatus" -o tsv 2>/dev/null || echo "unknown")
-              if [ "$STATUS" = "Stopped" ] || [ "$STATUS" = "Degraded" ] || [ "$STATUS" = "Failed" ]; then
-                echo "Old revision stopped (${STATUS}) after ${ELAPSED}s"
+                --query "[?properties.runningState=='Running' || properties.runningState=='Activating'].name" -o tsv 2>/dev/null)
+              if [ -z "$RUNNING" ]; then
+                echo "All revisions stopped after ${ELAPSED}s"
                 break
               fi
-              echo "Waiting for LMDB lock release... (${ELAPSED}s elapsed, status: ${STATUS})"
+              echo "Waiting for LMDB lock release... (${ELAPSED}s elapsed, still running: $RUNNING)"
               sleep $INTERVAL
               ELAPSED=$((ELAPSED + INTERVAL))
             done
             if [ $ELAPSED -ge $MAX_WAIT ]; then
-              echo "::warning::Old revision did not stop within ${MAX_WAIT}s — proceeding anyway"
+              echo "::warning::Revisions did not stop within ${MAX_WAIT}s — proceeding anyway"
             fi
           else
-            echo "No active revision to deactivate"
+            echo "No active revisions to deactivate"
           fi
 
       - name: Deploy issuer
