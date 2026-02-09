@@ -202,6 +202,41 @@ Administrators can manage users within their organization:
 
 Users are scoped to organizations — a user belongs to one organization and can only access that organization's resources.
 
+### Complete Operator Walkthrough
+
+After creating an organization and API key (above), complete these remaining steps to enable VVP call signing for the organization:
+
+**Step 1: Issue TN Allocation Credentials**
+
+1. Navigate to **Credentials** (`https://vvp-issuer.rcnx.io/ui/credentials`)
+2. Click **"Issue Credential"**
+3. Select **"TN Allocation"** as the credential type
+4. Enter the telephone number range the organization is authorized to use (e.g. `+44192331*` for UK range, `+1555*` for US range)
+5. Click **"Issue"** — the credential is anchored in the organization's registry
+
+TN Allocation credentials define which telephone numbers an organization can sign calls for. Without them, the SIP Redirect service will return 403 Forbidden.
+
+**Step 2: Build a Dossier**
+
+1. Navigate to **Dossiers** (`https://vvp-issuer.rcnx.io/ui/dossiers`)
+2. Click **"Build Dossier"**
+3. The system assembles the full credential chain (GLEIF Root → QVI → LE → TN Allocation) into a DAG
+4. Verify the dossier shows the expected credential count and size
+
+The dossier provides the cryptographic evidence backing each call's attestation.
+
+**Step 3: Create a TN Mapping**
+
+1. Navigate to **TN Mappings** (`https://vvp-issuer.rcnx.io/ui/tn-mappings`)
+2. Click **"Create Mapping"**
+3. Enter the telephone number in E.164 format (e.g. `+441923311000`)
+4. Select the dossier and signing identity for this number
+5. Enter the brand name and logo URL
+6. Click **"Create"**
+7. Click **"Test"** on the mapping to verify it works — this calls the same `/api/vvp/create` endpoint that SIP Redirect uses
+
+The TN mapping links a specific phone number to the dossier and brand information that will be attached to outbound calls from that number.
+
 ---
 
 ## 6. Credential Management
@@ -596,6 +631,15 @@ These issues have been fixed but may recur if configuration regresses:
 | Unauthorized TNs accepted for signing | Incomplete TN Allocation ownership validation | 42 | Added full TN Allocation credential chain validation |
 | WebRTC calls fail to ring | Dialplan used `verto_contact()` instead of `sofia_contact()` | 43 | Updated dialplan to use correct contact function |
 | SIP failures invisible in logs | Error scenarios logged at debug level | 53 | Upgraded to error level with tracebacks |
+| CI/CD deploy verification fails (404) | Deploy checked version on port 8080 (FusionPBX); actual status port is 8085, not exposed externally | 53 | Deploy workflow uses `az vm run-command` to check internal port |
+| Azure VM run-command Conflict | Multiple `az vm run-command` calls in parallel; only one allowed per VM | 53 | Serialized VM commands in deploy pipeline and health check |
+| Issuer revision probe failure | CI/CD only deactivated revisions with traffic>0; inactive revisions still held LMDB lock | 53 | Deactivate all old revisions before starting new one |
+| PostgreSQL pool exhaustion (503) | Connection pool not tuned after SQLite→PostgreSQL migration | 46 | Configured proper pool size for concurrent load |
+| WebRTC WSS connection refused | FreeSWITCH port 7443 not bound to SSL certificate | 43 | Bound Let's Encrypt certificate to WSS listener |
+| No recovery after DB wipe | No automated bootstrap procedure; manual setup required | 53 | Created `scripts/bootstrap-issuer.py` |
+| Dossier evd URL points to localhost | VVP-Identity `evd` field hardcoded to `localhost:8001` | 42+ | Configure issuer public URL in environment |
+| Cache metrics unavailable in production | Timing metrics only captured during test runs | 53 | Added `--timing` flag to health check and SIP test scripts |
+| SIP Timer B call dropout | 32s SIP timer too short for full verification chain | 53 | Extended Timer B to 35s in dialplan |
 
 ### Debugging Tools
 
