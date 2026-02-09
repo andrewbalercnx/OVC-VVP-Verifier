@@ -9812,3 +9812,344 @@ These tests use `unittest.mock.patch` to mock `send_sip_and_receive()` and `snap
 | `a142c61` | Add admin mock-vlei reinitialize endpoint and issuer bootstrap script |
 | `ca8e54f` | Fix SIP redirect VVP header extraction and enhance bootstrap script |
 
+
+---
+
+# Sprint 55: README Update & User Manual Requirements
+
+_Archived: 2026-02-09_
+
+# Sprint 55: README Update & User Manual Requirements
+
+## Problem Statement
+
+The project README.md has not been updated since early development. It references a flat `app/` directory structure, mentions `requirements.txt` (which doesn't exist), and omits the Issuer service, SIP services, PBX infrastructure, monitoring, CLI tools, operational scripts, and deployed environment.
+
+There is also no consolidated "User Manual" for system operators. Documentation is fragmented across 30+ files (DEPLOYMENT.md, SIP_SIGNER.md, SIP_VERIFIER.md, CLI_USAGE.md, E2E_TEST.md, etc.). A new operator would not know where to start or how the pieces fit together.
+
+## Goals
+
+1. **Update README.md** — Rewrite to accurately describe the current monorepo, all services, quickstart, and link to documentation.
+2. **Define User Manual requirements** — Specify the scope, audience, structure, and content requirements for a comprehensive system operator manual (`Documentation/USER_MANUAL.md`).
+
+## Deliverables
+
+### Deliverable 1: Updated README.md (implementation in this sprint)
+
+Complete rewrite of README.md to reflect the current system:
+
+- Title updated to "VVP — Verifiable Voice Protocol"
+- Architecture diagram (ASCII art) showing all services and their connections — derived from `knowledge/architecture.md` and `Documentation/DEPLOYMENT.md` infrastructure sections, then simplified to a system-level overview. This README diagram becomes the canonical system-level diagram, reused by the User Manual.
+- Services table with source directories and production URLs, using the following canonical service list (aligned with `Documentation/DEPLOYMENT.md` service inventory):
+
+**Canonical service list:**
+
+| # | Service | Source Directory | Deployment Target | Notes |
+|---|---------|-----------------|-------------------|-------|
+| 1 | VVP Issuer | `services/issuer/` | Azure Container App | Credential/identity management |
+| 2 | VVP Verifier | `services/verifier/` | Azure Container App | Call verification |
+| 3 | SIP Redirect (Signer) | `services/sip-redirect/` | PBX VM (UDP 5070) | Call signing |
+| 4 | SIP Verify | `services/sip-verify/` | PBX VM (UDP 5071) | Call verification at SIP level |
+| 5 | KERI Witnesses (×3) | `services/witness/` | Azure Container Apps (×3) | Key event receipting |
+| 6 | PBX (FreeSWITCH) | `services/pbx/` | PBX VM | Test infrastructure |
+| — | Common Library | `common/` | — (pip package) | Shared code, not a deployed service |
+
+This list counts witnesses as one logical service (3 instances) and PBX as a service. The README diagram, services table, and User Manual MUST use this exact list.
+- Monorepo installation instructions (pip install -e for each package)
+- Docker Compose local stack instructions
+- CLI tools section with example commands
+- Operational scripts section (health check, SIP test, bootstrap)
+- Testing instructions (per-service test scripts)
+- Deployment overview linking to DEPLOYMENT.md and CICD.md
+- Updated project structure tree
+- Complete documentation index with categorized links
+- **Link strategy for unimplemented docs**: README links to `PLAN_Sprint55.md` for User Manual requirements (the plan itself), NOT to a non-existent `Documentation/USER_MANUAL.md`. The User Manual will be created in a future sprint; only then will the README link be updated to point to it. All README links MUST resolve to files that exist in the repo at commit time.
+
+**README implementation steps** (execute in order):
+
+1. **Draft content**: Write all README sections (title, architecture diagram, services table, quickstart, CLI, scripts, testing, deployment, structure tree, docs index)
+2. **Cross-check URLs/ports against DEPLOYMENT.md**: Walk the URL/Port/Config Validation Checklist (below) — compare every URL, port, and endpoint in the README against `Documentation/DEPLOYMENT.md` tables. Fix any mismatches.
+3. **Verify procedural accuracy**: Walk the README Procedural Accuracy Validation checklist (below) — confirm every install command, Docker instruction, CLI example, and script path references an existing file with the correct module/package name.
+4. **Validate all links**: Enumerate every relative link in README (e.g., `[text](path)`) and confirm the target file exists in the repo. Fix or remove any broken links.
+5. **Final read-through**: Re-read the complete README to verify consistency with the canonical service list, architecture diagram, and content guidelines.
+
+Steps 2-4 are mandatory exit gates — the README update is not complete until all three pass.
+
+### Deliverable 2: User Manual Requirements Specification
+
+The remainder of this document defines what the User Manual must contain, its intended audience, and acceptance criteria.
+
+---
+
+## User Manual Requirements
+
+### Purpose
+
+Create `Documentation/USER_MANUAL.md` — a single comprehensive document that enables a system operator to understand, use, and troubleshoot the entire deployed VVP system without needing to discover and cross-reference dozens of separate documents.
+
+### Audience
+
+| Audience | Needs |
+|----------|-------|
+| **System Operators** | Day-to-day management of VVP infrastructure, health monitoring, troubleshooting |
+| **Integration Engineers** | Connecting PBX/SBC equipment to VVP signing and verification services |
+| **Test Engineers** | Validating VVP call flows end-to-end |
+| **Administrators** | Managing organizations, credentials, users, and API keys |
+
+### Relationship to Existing Documentation
+
+The User Manual should **consolidate and reference** existing docs, not duplicate them. It serves as:
+- The **entry point** for new operators
+- A **workflow guide** that walks through common tasks in sequence
+- A **table of contents** pointing to detailed technical docs for deep dives
+
+Cross-referencing strategy — each manual section falls into one of three tiers:
+
+| Tier | Content Type | Manual Treatment | Canonical Source |
+|------|-------------|-----------------|-----------------|
+| **Canonical** | Original procedural content not covered elsewhere | Written directly in the manual — the manual IS the authoritative source | `Documentation/USER_MANUAL.md` |
+| **Summary + Link** | Content that exists in another doc but needs operator context | 1-2 paragraph summary with explicit link to authoritative source | Linked doc (e.g., `SIP_SIGNER.md`) |
+| **Link Only** | Deep reference material operators rarely need | Single sentence + link | Linked doc |
+
+Section-by-section classification:
+
+| Section | Tier | Rationale |
+|---------|------|-----------|
+| 1. Introduction | Canonical | No existing intro doc for operators |
+| 2. System Architecture | Summary + Link | Summarize `knowledge/architecture.md`; diagrams reused from there |
+| 3. Deployed Infrastructure | Link Only | `Documentation/DEPLOYMENT.md` is authoritative — link to tables there |
+| 4. Getting Started | Canonical | No existing operator quickstart |
+| 5. Organization Management | Canonical | No existing operator workflow doc |
+| 6. Credential Management | Summary + Link | Summarize `CREATING_DOSSIERS.md` workflow, link for full details |
+| 7. Call Signing | Summary + Link | Summarize `SIP_SIGNER.md`, link for PBX config details |
+| 8. Call Verification | Summary + Link | Summarize `SIP_VERIFIER.md`, link for protocol details |
+| 9. Monitoring | Canonical | No consolidated monitoring doc exists |
+| 10. CLI Tools | Summary + Link | Summarize commands, link to `CLI_USAGE.md` for full reference |
+| 11. Operational Scripts | Canonical | No existing scripts guide |
+| 12. E2E Testing | Summary + Link | Summarize quick test, link to `E2E_TEST.md` for full walkthrough |
+| 13. Troubleshooting | Canonical | No existing troubleshooting guide |
+| 14. Configuration Reference | Link Only | `DEPLOYMENT.md` is authoritative for all config |
+| 15. Quick Reference | Canonical | No existing quick-ref card |
+
+This eliminates the duplication concern: "Canonical" sections contain original content, "Summary + Link" sections provide operator-oriented summaries without reproducing the source material, and "Link Only" sections simply point to the authoritative doc.
+
+### Required Sections
+
+#### 1. Introduction
+- What VVP is and what problem it solves (2-3 paragraphs)
+- High-level call flow: sign → attest → verify → display
+- Who this manual is for
+
+#### 2. System Architecture
+- Component diagram: **reuse the ASCII diagram from `README.md`** (canonical source for the system-level diagram). The README diagram was authored in Sprint 55 and shows all 6 services plus Azure/PBX topology. The manual MUST NOT create a second diagram — embed or reference the README version.
+- Component roles table (what each service does)
+- Call signing flow (step-by-step)
+- Call verification flow (step-by-step)
+- Reference: `knowledge/architecture.md` (detailed internals), `Documentation/DEPLOYMENT.md` (infrastructure)
+
+#### 3. Deployed Infrastructure
+- Service URLs table (production)
+- Health endpoints table
+- DNS records table
+- PBX service ports
+- Reference: `Documentation/DEPLOYMENT.md` (authoritative source for all infrastructure details)
+
+#### 4. Getting Started
+- How to access the Issuer UI (login methods: M365 SSO, API key, email/password)
+- Dashboard overview (what it shows, where to find it)
+- Verifier UI overview (no auth required)
+
+#### 5. Organization Management
+- Creating an organization (what happens automatically: AID, pseudo-LEI, LE credential, registry)
+- Creating API keys (roles, permissions, copy-once warning)
+- User management (creating users, assigning to orgs)
+- Reference: `services/issuer/CLAUDE.md` for implementation details
+
+#### 6. Credential Management
+- Credential chain diagram (GLEIF → QVI → LE → TN Allocation → Dossier)
+- Issuing a TN Allocation credential (step-by-step with E.164 format)
+- Building a dossier (selecting root credential, expected credential count)
+- Creating TN mappings (phone number → dossier → signing identity)
+- Testing TN mappings (pre-flight check)
+- Reference: `Documentation/CREATING_DOSSIERS.md`
+
+#### 7. Call Signing (SIP Redirect)
+- How signing works (flow diagram)
+- PBX/SBC configuration examples (FreeSWITCH, Kamailio, Asterisk)
+- Required header: `X-VVP-API-Key`
+- VVP response headers explained (P-VVP-Identity, P-VVP-Passport, X-VVP-Brand-Name, etc.)
+- Error responses and causes (401, 403, 404, 500)
+- Rate limiting details
+- Reference: `Documentation/SIP_SIGNER.md` (authoritative admin guide)
+
+#### 8. Call Verification (SIP Verify)
+- How verification works (flow diagram)
+- Expected inbound headers (Identity, P-VVP-Identity)
+- Result headers (X-VVP-Status, X-VVP-Brand-Name, etc.)
+- Verification status meanings (VALID, INVALID, INDETERMINATE)
+- Error codes table
+- Reference: `Documentation/SIP_VERIFIER.md` (authoritative admin guide)
+
+#### 9. Monitoring and Diagnostics
+- Central service dashboard (URL, what it shows, auto-refresh)
+- Issuer admin dashboard (stats, health, audit log)
+- Audit log viewer (event types, filtering, what to look for)
+- System health check script (all flags: --e2e, --timing, --local, --json, --verbose, --restart)
+- SIP call test script (--test sign/verify/chain/all, --timing, --json)
+- Verifier UI diagnostics (parse JWT, fetch dossier, run verification)
+- SIP Redirect status endpoint (admin-authenticated /status)
+
+#### 10. CLI Tools
+- Installation instructions
+- Command summary table (all `vvp` subcommands)
+- Example: full verification chain via piped commands
+- Reference: `Documentation/CLI_USAGE.md` (authoritative reference)
+
+#### 11. Operational Scripts
+- `scripts/system-health-check.sh` — purpose, flags, components checked, exit codes
+- `scripts/sip-call-test.py` — purpose, test modes, environment variables
+- `scripts/bootstrap-issuer.py` — purpose, steps performed, arguments
+- `scripts/run-integration-tests.sh` — when and how to use
+- `scripts/monitor-azure-deploy.sh` — deployment monitoring
+- `scripts/restart-issuer.sh` — service restart
+
+#### 12. End-to-End Testing
+- Quick test procedure (2 browser tabs, register, dial 71006)
+- Test phone numbers and extensions table
+- VVP routing prefix explanation
+- What to expect (brand display, verified badge)
+- Reference: `E2E_TEST.md` (full step-by-step walkthrough)
+
+#### 13. Troubleshooting
+- Organized by category:
+  - **Signing issues**: 401, 403, 404, 500, empty headers
+  - **Verification issues**: SIGNATURE_INVALID, CREDENTIAL_REVOKED, TN_NOT_AUTHORIZED, etc.
+  - **Infrastructure issues**: service unhealthy, witnesses down, PBX unreachable, WebRTC failures
+- Debugging tools section with specific commands:
+  - System health check
+  - SIP trace on PBX
+  - SIP Redirect log inspection
+  - Audit log filtering
+
+#### 14. Configuration Reference
+- Environment variables per service (Issuer, Verifier, SIP Signer, SIP Verifier)
+- Witness configuration JSON format
+- PBX dialplan key files
+- Reference: `Documentation/DEPLOYMENT.md` (authoritative config source)
+
+#### 15. Quick Reference (final section)
+- All service URLs in one table
+- Test phone numbers
+- VVP dial prefix
+- Common operations table (task → where to do it)
+- Key PBX files
+- Related documentation links table
+
+### Content Guidelines
+
+1. **Canonical sections** (1, 4, 5, 9, 11, 13, 15) contain original procedural content written for this manual
+2. **Summary + Link sections** (2, 6, 7, 8, 10, 12) provide 1-2 paragraph operator-oriented summaries then link to the authoritative doc
+3. **Link Only sections** (3, 14) contain a single sentence plus a link to the authoritative source
+4. **Reference sections** (14-15) should use tables
+5. **Diagnostic sections** (9, 13) should use symptom → cause → solution tables
+6. **Architecture diagram**: reuse the ASCII diagram from `README.md` (canonical source, authored Sprint 55)
+7. All service URLs must match `Documentation/DEPLOYMENT.md` as the single source of truth
+8. All configuration variables must match the service-specific documentation
+9. Use relative links (e.g., `[DEPLOYMENT.md](DEPLOYMENT.md)`) for cross-references
+
+### URL/Port/Config Validation Process
+
+To prevent drift between README, the manual requirements, and `Documentation/DEPLOYMENT.md`, the following validation checklist MUST be completed before declaring the README update complete:
+
+**Extraction checklist** — verify each value against `Documentation/DEPLOYMENT.md`:
+
+| Item | Source in DEPLOYMENT.md | Verify in README |
+|------|------------------------|------------------|
+| Issuer production URL | Service inventory table | Services table |
+| Verifier production URL | Service inventory table | Services table |
+| Witness URLs (×3) | Service inventory table | Services table |
+| PBX DNS name | Infrastructure section | Services table |
+| SIP Signer port (5070 UDP) | PBX services table | Architecture diagram + services table |
+| SIP Verifier port (5071 UDP) | PBX services table | Architecture diagram + services table |
+| FreeSWITCH ports (5060, 7443) | PBX services table | Architecture diagram |
+| Health endpoints (/healthz, /oobi) | Health check section | Deployment section |
+| Local dev ports (8000, 8001, 5642-5644) | Docker section | Local Service URLs table |
+
+**Validation method**: After README edits, run a manual diff of all URLs and ports against DEPLOYMENT.md. For the User Manual (future sprint), the same checklist applies at implementation time.
+
+### README Procedural Accuracy Validation
+
+In addition to URL/port validation, all procedural content in the README (install commands, Docker instructions, CLI examples, script references) MUST be verified against the actual repo. Complete this checklist before declaring the README update done:
+
+| Item | Verify Against | Check |
+|------|---------------|-------|
+| `pip install -e common/` | `common/pyproject.toml` exists | Package name, extras match |
+| `pip install -e services/verifier/` | `services/verifier/pyproject.toml` exists | Package installable |
+| `pip install -e services/issuer/` | `services/issuer/pyproject.toml` exists | Package installable |
+| `pip install -e 'common[cli]'` | `common/pyproject.toml` `[cli]` extra exists | CLI entry point defined |
+| `docker compose up -d` | `docker-compose.yml` exists | Default profile starts witnesses |
+| `docker compose --profile full up -d` | `docker-compose.yml` `full` profile defined | Starts all services |
+| `uvicorn app.main:app` commands | `services/*/app/main.py` exists | Module path correct |
+| `./scripts/system-health-check.sh` | `scripts/system-health-check.sh` exists and is executable | Path correct |
+| `scripts/sip-call-test.py` | `scripts/sip-call-test.py` exists | Path correct |
+| `scripts/bootstrap-issuer.py` | `scripts/bootstrap-issuer.py` exists | Path correct |
+| `scripts/run-integration-tests.sh` | `scripts/run-integration-tests.sh` exists | Path correct |
+| `./scripts/run-tests.sh` | `scripts/run-tests.sh` exists | Path correct |
+| All `vvp` CLI subcommands listed | `common/pyproject.toml` entry points | Commands match defined entry points |
+| All relative doc links | File system | Each linked file exists in repo |
+
+**Validation method**: After README edits, verify each command and path by checking the referenced file exists. For install commands, confirm `pyproject.toml` files define the expected packages/extras.
+
+### Troubleshooting Failure Modes Source
+
+The "top 15 failure modes" in section 13 are derived from these concrete sources:
+
+1. **Verifier ErrorCode enum** from `services/verifier/app/vvp/api_models.py` (SIGNATURE_INVALID, CREDENTIAL_REVOKED, TN_NOT_AUTHORIZED, etc.) — exhaustive list of verification failure codes
+2. **Issuer API error responses** from `services/issuer/app/api/` routers (401, 403, 404, 500 responses) — authentication, authorization, and resource errors
+3. **SIP Redirect/Verify error paths** from `services/sip-redirect/app/` and `services/sip-verify/app/` — signing and verification service failures
+4. **E2E_TEST.md** troubleshooting section — end-to-end test failure patterns
+5. **CHANGES.md** bug fix entries (Sprints 42-53) — real-world failure modes discovered and fixed during development
+
+The manual implementor MUST enumerate failure modes from sources 1-3 (code-derived, exhaustive) and supplement with operational experience from sources 4-5.
+
+### Acceptance Criteria
+
+1. A new operator can follow the manual from section 4 through section 6 and successfully:
+   - Log into the Issuer UI
+   - Create an organization
+   - Create an API key
+   - Issue a TN Allocation credential
+   - Build a dossier
+   - Create and test a TN mapping
+2. An integration engineer can follow section 7 and configure a FreeSWITCH PBX for VVP signing
+3. All service URLs and ports pass the URL/Port/Config Validation Checklist (see above) against `Documentation/DEPLOYMENT.md`
+4. All cross-references to existing docs resolve to actual files (verified by checking each relative link path exists in the repo)
+5. The troubleshooting section covers at least 15 failure modes, enumerated from the defined source list (Verifier ErrorCode enum, Issuer API error responses, SIP service error paths, E2E_TEST.md, CHANGES.md bug fixes)
+6. The quick reference section provides all information needed for day-to-day operations on a single page
+7. Content tiers are respected: "Canonical" sections contain original content, "Summary + Link" sections summarize without reproducing source material, "Link Only" sections point to authoritative docs. No section reproduces more than a 1-2 paragraph summary from a linked source.
+
+### Out of Scope
+
+- API endpoint reference (covered by `knowledge/api-reference.md` and Swagger UI)
+- Developer setup and code contribution (covered by `Documentation/DEVELOPMENT.md`)
+- CI/CD pipeline details (covered by `Documentation/CICD.md`)
+- Protocol specification details (covered by `Documentation/VVP_Verifier_Specification_v1.5.md`)
+- KERI/ACDC internals (covered by `knowledge/keri-primer.md`)
+
+---
+
+## Files Changed in This Sprint
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `README.md` | Rewrite | Updated project landing page reflecting all services |
+| `PLAN_Sprint55.md` | Create | This requirements document |
+| `SPRINTS.md` | Modify | Add Sprint 55 entry |
+
+## Exit Criteria
+
+1. README.md accurately reflects the current monorepo structure, all services, and links to all documentation
+2. User Manual requirements are specified with sufficient detail for implementation (including content tier classification, validation checklist, and failure mode sources)
+3. All links in README resolve to existing files (verified by enumerating each relative link and checking file existence)
+4. All URLs/ports in README pass the URL/Port/Config Validation Checklist against `Documentation/DEPLOYMENT.md`
+
