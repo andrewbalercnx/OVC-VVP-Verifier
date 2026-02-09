@@ -625,159 +625,360 @@ for svc in data.get('services', []):
 }
 
 # ---------------------------------------------------------------------------
-# Phase 4: End-to-End Verification Test
+# Phase 4: End-to-End Call Test
+# ---------------------------------------------------------------------------
+# Sends real SIP INVITEs through the signing and verification services
+# to prove the full call chain is functioning:
+#
+#   Signing:  SIP INVITE → SIP Redirect (5070) → Issuer API → 302 + VVP headers
+#   Verify:   SIP INVITE → SIP Verify (5071) → Verifier API → SIP response
+#   Dialplan: fs_cli originate → FreeSWITCH VVP loopback → signing → log check
+#
 # ---------------------------------------------------------------------------
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SIP_TEST_SCRIPT="$REPO_ROOT/scripts/sip-call-test.py"
+
 check_e2e() {
-    log_header "Phase 4: End-to-End Verification Test"
+    log_header "Phase 4: End-to-End Call Test"
 
     if [ "$DO_E2E" = false ]; then
-        log_info "E2E test skipped (use --e2e to enable)"
+        log_info "E2E call test skipped (use --e2e to enable)"
         return 0
     fi
 
     local failed=0
 
-    # Step 1: Create a VVP identity via the Issuer API
-    log_check "Issuer → create VVP identity (PASSporT + VVP-Identity header)"
-
-    if [ -z "$API_KEY" ]; then
-        log_warn "E2E test requires VVP_TEST_API_KEY — skipping"
-        record_result "E2E" "create_identity" "warn" "No API key"
-        return 0
-    fi
-
-    local create_body create_response
-    create_body=$(cat <<'PAYLOAD'
-{
-    "orig_tn": "+441923311001",
-    "dest_tn": "+441923311006"
-}
-PAYLOAD
-    )
-
-    create_response=$(curl -sf --max-time 15 \
-        -X POST "${ISSUER_URL}/api/vvp/create" \
-        -H "Content-Type: application/json" \
-        -H "X-API-Key: ${API_KEY}" \
-        -d "$create_body" 2>/dev/null) || create_response=""
-
-    if [ -z "$create_response" ]; then
-        log_fail "Issuer VVP create returned no response"
-        record_result "E2E" "create_identity" "fail" "No response from issuer"
-        return 1
-    fi
-
-    local identity_header
-    identity_header=$(echo "$create_response" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-# The response may contain the identity header directly or within a field
-header = data.get('identity_header') or data.get('vvp_identity') or data.get('identity') or ''
-print(header)
-" 2>/dev/null) || identity_header=""
-
-    if [ -n "$identity_header" ]; then
-        log_pass "Issuer created VVP identity (${#identity_header} chars)"
-        record_result "E2E" "create_identity" "pass" "Created ${#identity_header} char header"
+    if [ "$MODE" = "local" ]; then
+        # Local mode: run SIP test script directly against local services
+        _run_sip_tests_local || failed=1
     else
-        # Even if we can't parse the specific field, a 2xx response means the API works
-        log_pass "Issuer API responded to VVP create request"
-        record_result "E2E" "create_identity" "pass" "API responded"
-
-        if [ "$VERBOSE" = true ] && [ "$JSON_OUTPUT" = false ]; then
-            log_info "Response: $(echo "$create_response" | head -c 200)"
-        fi
-    fi
-
-    # Step 2: Verify a PASSporT via the Verifier API
-    log_check "Verifier → verify PASSporT (using test JWT)"
-
-    # Use the verifier's test endpoint to check it can process a verification request
-    local verify_response
-    verify_response=$(curl -sf --max-time 15 \
-        -X POST "${VERIFIER_URL}/verify" \
-        -H "Content-Type: application/json" \
-        -d '{"identity_header": "test-health-check"}' 2>/dev/null) || verify_response=""
-
-    # We expect this to fail validation (it's a fake header), but the API should respond
-    if [ -n "$verify_response" ]; then
-        log_pass "Verifier API is processing verification requests"
-        record_result "E2E" "verify_passport" "pass" "API responding to verify requests"
-    else
-        # Try the GET healthz as fallback
-        local verify_health
-        verify_health=$(curl -sf --max-time "$HTTP_TIMEOUT" "${VERIFIER_URL}/healthz" 2>/dev/null)
-        if [ -n "$verify_health" ]; then
-            log_pass "Verifier API is reachable (verify endpoint may require different format)"
-            record_result "E2E" "verify_passport" "pass" "Verifier reachable"
-        else
-            log_fail "Verifier API not responding"
-            record_result "E2E" "verify_passport" "fail" "No response"
-            failed=1
-        fi
-    fi
-
-    # Step 3: Full round-trip test (if we got a real identity from step 1)
-    if [ -n "$identity_header" ]; then
-        log_check "Round-trip: Issuer-created identity → Verifier"
-
-        local roundtrip_response
-        roundtrip_response=$(curl -sf --max-time 30 \
-            -X POST "${VERIFIER_URL}/verify" \
-            -H "Content-Type: application/json" \
-            -d "{\"identity_header\": $(echo "$identity_header" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')}" 2>/dev/null) || roundtrip_response=""
-
-        if [ -n "$roundtrip_response" ]; then
-            local rt_status
-            rt_status=$(echo "$roundtrip_response" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-status = data.get('status') or data.get('result') or data.get('valid') or 'unknown'
-print(status)
-" 2>/dev/null) || rt_status="unknown"
-
-            if [ "$rt_status" = "VALID" ] || [ "$rt_status" = "True" ] || [ "$rt_status" = "true" ]; then
-                log_pass "Round-trip verification: VALID"
-                record_result "E2E" "round_trip" "pass" "VALID"
-            else
-                log_warn "Round-trip verification returned: $rt_status (may be expected for test data)"
-                record_result "E2E" "round_trip" "warn" "Result: $rt_status"
-            fi
-
-            if [ "$VERBOSE" = true ] && [ "$JSON_OUTPUT" = false ]; then
-                echo "$roundtrip_response" | python3 -m json.tool 2>/dev/null | while IFS= read -r line; do
-                    log_info "  $line"
-                done
-            fi
-        else
-            log_warn "Round-trip verification got no response"
-            record_result "E2E" "round_trip" "warn" "No response"
-        fi
-    fi
-
-    # Step 4: PBX SIP-level E2E test (informational — requires registered endpoints)
-    if [ "$MODE" = "azure" ] && [ "$SKIP_PBX" != "true" ]; then
-        log_check "PBX SIP registration status"
-
-        local reg_output
-        reg_output=$(pbx_run "
-            fs_cli -x 'sofia status profile internal reg' 2>/dev/null | head -30
-        " 2>/dev/null) || reg_output=""
-
-        local reg_count
-        reg_count=$(echo "$reg_output" | grep -c "sip:" 2>/dev/null) || reg_count=0
-
-        if [ "$reg_count" -gt 0 ]; then
-            log_pass "PBX has $reg_count registered SIP endpoints"
-            record_result "PBX" "sip_registrations" "pass" "$reg_count registered"
-        else
-            log_info "No SIP endpoints currently registered (normal if no clients connected)"
-            record_result "PBX" "sip_registrations" "warn" "None registered"
-        fi
+        # Azure mode: run SIP tests on PBX VM + FreeSWITCH originate test
+        _run_sip_tests_pbx || failed=1
+        _run_freeswitch_call_test || failed=1
     fi
 
     return $failed
+}
+
+# Run SIP call tests against local services (direct invocation)
+_run_sip_tests_local() {
+    local failed=0
+
+    if [ ! -f "$SIP_TEST_SCRIPT" ]; then
+        log_fail "SIP test script not found at $SIP_TEST_SCRIPT"
+        return 1
+    fi
+
+    # --- Signing test ---
+    log_check "SIP Redirect signing (INVITE → port 5070 → Issuer API → 302)"
+
+    if [ -z "$API_KEY" ]; then
+        log_warn "Signing test requires VVP_TEST_API_KEY — skipping"
+        record_result "E2E" "sip_signing" "warn" "No API key"
+    else
+        local sign_output
+        sign_output=$(VVP_TEST_API_KEY="$API_KEY" python3 "$SIP_TEST_SCRIPT" \
+            --test sign --host 127.0.0.1 --json --timeout 10 2>&1) || true
+
+        _parse_sip_test_result "$sign_output" "sip_signing" "Signing" || failed=1
+    fi
+
+    # --- Verification test ---
+    log_check "SIP Verify verification (INVITE → port 5071 → Verifier API)"
+
+    local verify_output
+    verify_output=$(python3 "$SIP_TEST_SCRIPT" \
+        --test verify --host 127.0.0.1 --json --timeout 10 2>&1) || true
+
+    _parse_sip_test_result "$verify_output" "sip_verify" "Verification" || failed=1
+
+    return $failed
+}
+
+# Run SIP call tests on the PBX VM via Azure CLI
+_run_sip_tests_pbx() {
+    local failed=0
+
+    if [ "$SKIP_PBX" = "true" ]; then
+        log_info "PBX SIP tests skipped (VVP_SKIP_PBX=true)"
+        return 0
+    fi
+
+    log_check "SIP call tests on PBX VM (signing + verification)"
+
+    # Inline the SIP test as a Python one-liner run on the PBX.
+    # We send the full test script via base64 to avoid shell escaping issues.
+    local script_b64
+    script_b64=$(base64 -w0 "$SIP_TEST_SCRIPT" 2>/dev/null || base64 "$SIP_TEST_SCRIPT" 2>/dev/null)
+
+    if [ -z "$script_b64" ]; then
+        log_fail "Could not encode SIP test script"
+        return 1
+    fi
+
+    # Determine which tests to run
+    local test_mode="all"
+    local api_key_env=""
+    if [ -n "$API_KEY" ]; then
+        api_key_env="VVP_TEST_API_KEY='$API_KEY'"
+    else
+        test_mode="verify"  # Skip signing if no API key
+        log_warn "No VVP_TEST_API_KEY — signing test will be skipped on PBX"
+    fi
+
+    local pbx_output
+    pbx_output=$(pbx_run "
+        # Decode and run the SIP test script
+        echo '$script_b64' | base64 -d > /tmp/vvp-sip-test.py
+
+        # Run with appropriate environment
+        $api_key_env \
+        VVP_SIP_REDIRECT_HOST=127.0.0.1 \
+        VVP_SIP_REDIRECT_PORT=5070 \
+        VVP_SIP_VERIFY_HOST=127.0.0.1 \
+        VVP_SIP_VERIFY_PORT=5071 \
+        python3 /tmp/vvp-sip-test.py --test $test_mode --json --timeout 10 2>&1
+
+        # Cleanup
+        rm -f /tmp/vvp-sip-test.py
+    " 2>/dev/null) || {
+        log_fail "Could not run SIP tests on PBX VM"
+        record_result "E2E" "sip_tests_pbx" "fail" "az vm run-command failed"
+        return 1
+    }
+
+    # The pbx_output from az vm run-command includes stdout and stderr markers.
+    # Extract the JSON portion.
+    local json_output
+    json_output=$(echo "$pbx_output" | grep -A9999 '{"results"' | head -n -1) || json_output=""
+
+    if [ -z "$json_output" ]; then
+        # Try to find JSON anywhere in the output
+        json_output=$(echo "$pbx_output" | python3 -c "
+import sys, json
+text = sys.stdin.read()
+# Find JSON object in the text
+start = text.find('{\"results\"')
+if start >= 0:
+    # Find matching closing brace
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == '{': depth += 1
+        elif text[i] == '}': depth -= 1
+        if depth == 0:
+            print(text[start:i+1])
+            break
+" 2>/dev/null) || json_output=""
+    fi
+
+    if [ "$VERBOSE" = true ] && [ "$JSON_OUTPUT" = false ]; then
+        log_info "PBX SIP test raw output:"
+        echo "$pbx_output" | while IFS= read -r line; do
+            log_info "  $line"
+        done
+    fi
+
+    if [ -n "$json_output" ]; then
+        # Parse each test result from the JSON
+        local num_results
+        num_results=$(echo "$json_output" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('results',[])))" 2>/dev/null) || num_results=0
+
+        local i=0
+        while [ "$i" -lt "$num_results" ]; do
+            local test_name test_status test_detail
+            read -r test_name test_status test_detail <<< $(echo "$json_output" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+r = data['results'][$i]
+print(r.get('test','?'), r.get('status','fail'), r.get('detail',''))
+" 2>/dev/null)
+
+            local check_name="sip_${test_name}_pbx"
+            if [ "$test_status" = "pass" ]; then
+                log_pass "PBX $test_name: $test_detail"
+                record_result "E2E" "$check_name" "pass" "$test_detail"
+            elif [ "$test_status" = "warn" ]; then
+                log_warn "PBX $test_name: $test_detail"
+                record_result "E2E" "$check_name" "warn" "$test_detail"
+            elif [ "$test_status" = "skip" ]; then
+                log_info "PBX $test_name: $test_detail"
+                record_result "E2E" "$check_name" "warn" "$test_detail"
+            else
+                log_fail "PBX $test_name: $test_detail"
+                record_result "E2E" "$check_name" "fail" "$test_detail"
+                failed=1
+            fi
+
+            i=$((i + 1))
+        done
+    else
+        log_fail "Could not parse SIP test results from PBX"
+        record_result "E2E" "sip_tests_pbx" "fail" "No parseable output"
+        failed=1
+    fi
+
+    return $failed
+}
+
+# Test a full FreeSWITCH VVP loopback call via fs_cli originate
+_run_freeswitch_call_test() {
+    local failed=0
+
+    if [ "$SKIP_PBX" = "true" ]; then
+        return 0
+    fi
+
+    log_check "FreeSWITCH VVP loopback call (originate → signing → log verification)"
+
+    local call_output
+    call_output=$(pbx_run "
+        set -e
+
+        # Record timestamp for log filtering
+        BEFORE=\$(date -u +%Y-%m-%dT%H:%M:%S 2>/dev/null || date +%s)
+
+        # Originate a test call through the VVP signing flow.
+        # The call routes: 71006 → vvp-loopback-outbound → SIP Redirect (5070)
+        #   → Issuer API → 302 → loopback-inbound → bridge to user/1006
+        # The final bridge will fail (1006 likely not registered), but the
+        # signing flow is what we're testing.
+        ORIGINATE_RESULT=\$(fs_cli -x 'bgapi originate {origination_caller_id_number=+441923311001,origination_caller_id_name=VVP-HealthCheck,sip_h_X-VVP-API-Key=Xt1uEFpqkp4egcPIYQl6PLOwoHHcIFxENOBVH5DyMSY}sofia/internal/71006@127.0.0.1 &park()' 2>/dev/null || echo 'ORIGINATE_FAILED')
+
+        # Wait for the call to process through signing flow
+        sleep 5
+
+        # Check FreeSWITCH logs for VVP activity since the test started
+        VVP_LOGS=\$(journalctl -u freeswitch --since \"\$BEFORE\" --no-pager 2>/dev/null | grep -i 'VVP' | tail -20 || echo '')
+
+        # Check if signing service was contacted (look for loopback routing)
+        SIGNING_EVIDENCE=\$(echo \"\$VVP_LOGS\" | grep -c 'Loopback call\\|Routing to signing\\|VVP.*brand' || echo '0')
+
+        # Hang up any test channels to clean up
+        fs_cli -x 'hupall NORMAL_CLEARING' 2>/dev/null || true
+
+        # Output structured results
+        echo '=== CALL_TEST_RESULTS ==='
+        echo \"originate:\$ORIGINATE_RESULT\"
+        echo \"signing_evidence:\$SIGNING_EVIDENCE\"
+        echo '=== VVP_LOGS ==='
+        echo \"\$VVP_LOGS\"
+        echo '=== END ==='
+    " 2>/dev/null) || {
+        log_fail "Could not run FreeSWITCH call test"
+        record_result "E2E" "freeswitch_call" "fail" "az vm run-command failed"
+        return 1
+    }
+
+    if [ "$VERBOSE" = true ] && [ "$JSON_OUTPUT" = false ]; then
+        log_info "FreeSWITCH call test output:"
+        echo "$call_output" | while IFS= read -r line; do
+            log_info "  $line"
+        done
+    fi
+
+    # Parse results
+    local originate_result signing_evidence
+    originate_result=$(echo "$call_output" | grep "^originate:" | cut -d: -f2-)
+    signing_evidence=$(echo "$call_output" | grep "^signing_evidence:" | cut -d: -f2)
+
+    # Check if originate succeeded (should contain a UUID or +OK)
+    if echo "$originate_result" | grep -qi "OK\|Job-UUID\|[0-9a-f]\{8\}"; then
+        log_pass "FreeSWITCH originated VVP loopback call"
+        record_result "E2E" "fs_originate" "pass" "Call originated"
+    elif echo "$originate_result" | grep -qi "ORIGINATE_FAILED"; then
+        log_fail "FreeSWITCH could not originate call"
+        record_result "E2E" "fs_originate" "fail" "Originate failed"
+        failed=1
+    else
+        log_warn "FreeSWITCH originate result unclear: $originate_result"
+        record_result "E2E" "fs_originate" "warn" "$originate_result"
+    fi
+
+    # Check if VVP signing flow was triggered (evidence in logs)
+    if [ -n "$signing_evidence" ] && [ "$signing_evidence" -gt 0 ] 2>/dev/null; then
+        log_pass "VVP signing flow triggered ($signing_evidence log entries)"
+        record_result "E2E" "vvp_signing_flow" "pass" "$signing_evidence VVP log entries"
+
+        # Show relevant log lines
+        if [ "$JSON_OUTPUT" = false ]; then
+            echo "$call_output" | sed -n '/=== VVP_LOGS ===/,/=== END ===/p' | grep -v "===" | while IFS= read -r line; do
+                if [ -n "$line" ]; then
+                    log_info "  $line"
+                fi
+            done
+        fi
+    else
+        log_warn "No VVP signing evidence in FreeSWITCH logs (signing service may not have responded)"
+        record_result "E2E" "vvp_signing_flow" "warn" "No VVP log entries found"
+    fi
+
+    return $failed
+}
+
+# Parse JSON output from sip-call-test.py and record results
+# Usage: _parse_sip_test_result <json_output> <check_name> <display_name>
+_parse_sip_test_result() {
+    local json_output="$1"
+    local check_name="$2"
+    local display_name="$3"
+
+    if [ -z "$json_output" ]; then
+        log_fail "$display_name test produced no output"
+        record_result "E2E" "$check_name" "fail" "No output"
+        return 1
+    fi
+
+    local test_status test_detail
+    test_status=$(echo "$json_output" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+results = data.get('results', [])
+if results:
+    print(results[0].get('status', 'fail'))
+else:
+    print('fail')
+" 2>/dev/null) || test_status="fail"
+
+    test_detail=$(echo "$json_output" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+results = data.get('results', [])
+if results:
+    print(results[0].get('detail', 'unknown'))
+else:
+    print('No results')
+" 2>/dev/null) || test_detail="parse error"
+
+    if [ "$test_status" = "pass" ]; then
+        log_pass "$display_name: $test_detail"
+        record_result "E2E" "$check_name" "pass" "$test_detail"
+        return 0
+    elif [ "$test_status" = "warn" ]; then
+        log_warn "$display_name: $test_detail"
+        record_result "E2E" "$check_name" "warn" "$test_detail"
+        return 0
+    elif [ "$test_status" = "skip" ]; then
+        log_info "$display_name: $test_detail"
+        record_result "E2E" "$check_name" "warn" "$test_detail"
+        return 0
+    else
+        log_fail "$display_name: $test_detail"
+        record_result "E2E" "$check_name" "fail" "$test_detail"
+        return 1
+    fi
+
+    # Show detailed checks in verbose mode
+    if [ "$VERBOSE" = true ] && [ "$JSON_OUTPUT" = false ]; then
+        echo "$json_output" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for r in data.get('results', []):
+    for check, passed in r.get('checks', {}).items():
+        mark = '+' if passed else '-'
+        print(f'        [{mark}] {check}')
+" 2>/dev/null
+    fi
 }
 
 # ---------------------------------------------------------------------------
