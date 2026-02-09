@@ -179,6 +179,7 @@
       </div>
     </div>
 
+    <script src="/static/shared.js"></script>
     <script>
       // Tab switching
       function showTab(tabName) {
@@ -209,7 +210,7 @@
         importResult.innerHTML = '';
 
         try {
-          const res = await fetch('/schema/weboftrust/registry');
+          const res = await authFetch('/schema/weboftrust/registry');
           const data = await res.json();
 
           if (!res.ok) {
@@ -237,6 +238,7 @@
           importList.innerHTML = html;
 
         } catch (err) {
+          if (err.status === 401) return; // Login modal handles this
           importList.innerHTML = `<div class="error">Failed to load: ${err.message}</div>`;
         } finally {
           loadRegistryBtn.disabled = false;
@@ -246,22 +248,12 @@
 
       // Import a schema from WebOfTrust
       async function importSchema(schemaId) {
-        const apiKey = localStorage.getItem('vvp_api_key') || '';
-        if (!apiKey) {
-          importResult.innerHTML = '<div class="error">API key required. Please set your API key in <a href="/ui/admin">Admin</a> settings.</div>';
-          return;
-        }
-
         importResult.innerHTML = '<div class="info"><span class="spinner"></span>Importing...</div>';
 
         try {
-          const res = await fetch('/schema/import', {
+          const res = await authFetch('/schema/import', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest',
-              'X-API-Key': apiKey
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               source: 'weboftrust',
               schema_id: schemaId,
@@ -282,6 +274,7 @@
           loadSchemas(); // Refresh the list
 
         } catch (err) {
+          if (err.status === 401) { importResult.innerHTML = ''; return; }
           importResult.innerHTML = `<div class="error">Import failed: ${err.message}</div>`;
         }
       }
@@ -289,12 +282,6 @@
       // Create new schema
       createForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-
-        const apiKey = localStorage.getItem('vvp_api_key') || '';
-        if (!apiKey) {
-          createResult.innerHTML = '<div class="error">API key required. Please set your API key in <a href="/ui/admin">Admin</a> settings.</div>';
-          return;
-        }
 
         createBtn.disabled = true;
         createBtn.innerHTML = '<span class="spinner"></span>Creating...';
@@ -318,13 +305,9 @@
         }
 
         try {
-          const res = await fetch('/schema/create', {
+          const res = await authFetch('/schema/create', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest',
-              'X-API-Key': apiKey
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               title,
               description: description || null,
@@ -348,6 +331,7 @@
           loadSchemas();
 
         } catch (err) {
+          if (err.status === 401) { return; }
           createResult.innerHTML = `<div class="error">Creation failed: ${err.message}</div>`;
         } finally {
           createBtn.disabled = false;
@@ -366,12 +350,9 @@
         const credentialType = document.getElementById('validateType').value;
 
         try {
-          const res = await fetch('/schema/validate', {
+          const res = await authFetch('/schema/validate', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               said,
               credential_type: credentialType || null
@@ -391,6 +372,7 @@
           }
 
         } catch (err) {
+          if (err.status === 401) return;
           validateResult.innerHTML = `<div class="error">Validation failed: ${err.message}</div>`;
         } finally {
           validateBtn.disabled = false;
@@ -403,15 +385,11 @@
         schemaList.innerHTML = '<em>Loading...</em>';
 
         try {
-          const res = await fetch('/schema');
+          const res = await authFetch('/schema');
           const data = await res.json();
 
           if (!res.ok) {
-            if (res.status === 401) {
-              schemaList.innerHTML = '<div class="error">Authentication required. Set VVP_AUTH_ENABLED=false for local development.</div>';
-            } else {
-              schemaList.innerHTML = `<div class="error">Error: ${data.detail || res.statusText}</div>`;
-            }
+            schemaList.innerHTML = `<div class="error">Error: ${data.detail || res.statusText}</div>`;
             return;
           }
 
@@ -446,6 +424,7 @@
           schemaList.innerHTML = html;
 
         } catch (err) {
+          if (err.status === 401) return;
           schemaList.innerHTML = `<div class="error">Failed to load: ${err.message}</div>`;
         }
       }
@@ -453,11 +432,11 @@
       // Show schema in modal
       async function showSchema(said) {
         try {
-          const res = await fetch(`/schema/${said}`);
+          const res = await authFetch(`/schema/${said}`);
           const data = await res.json();
 
           if (!res.ok) {
-            alert('Failed to load schema: ' + (data.detail || 'Unknown error'));
+            showToast('Failed to load schema: ' + (data.detail || 'Unknown error'), 'error');
             return;
           }
 
@@ -483,29 +462,31 @@
           document.body.appendChild(modal);
 
         } catch (err) {
-          alert('Failed to load schema: ' + err.message);
+          if (err.status === 401) return;
+          showToast('Failed to load schema: ' + err.message, 'error');
         }
       }
 
       // Verify schema SAID
       async function verifySaid(said) {
         try {
-          const res = await fetch(`/schema/${said}/verify`);
+          const res = await authFetch(`/schema/${said}/verify`);
           const data = await res.json();
 
           if (!res.ok) {
-            alert('Verification failed: ' + (data.detail || 'Unknown error'));
+            showToast('Verification failed: ' + (data.detail || 'Unknown error'), 'error');
             return;
           }
 
           if (data.valid) {
-            alert('SAID is valid - matches computed value');
+            showToast('SAID is valid - matches computed value', 'success');
           } else {
-            alert(`SAID mismatch!\nStored: ${said}\nComputed: ${data.computed_said}`);
+            showToast(`SAID mismatch! Stored: ${said.slice(0,12)}... Computed: ${data.computed_said?.slice(0,12)}...`, 'error');
           }
 
         } catch (err) {
-          alert('Verification failed: ' + err.message);
+          if (err.status === 401) return;
+          showToast('Verification failed: ' + err.message, 'error');
         }
       }
 
@@ -513,37 +494,24 @@
       async function deleteSchema(said) {
         if (!confirm(`Delete schema ${said.slice(0,20)}...?`)) return;
 
-        const apiKey = localStorage.getItem('vvp_api_key') || '';
-        if (!apiKey) {
-          alert('API key required. Please set your API key in Admin settings.');
-          return;
-        }
-
         try {
-          const res = await fetch(`/schema/${said}`, {
+          const res = await authFetch(`/schema/${said}`, {
             method: 'DELETE',
-            headers: { 'X-API-Key': apiKey }
           });
           const data = await res.json();
 
           if (!res.ok) {
-            alert('Delete failed: ' + (data.detail || 'Unknown error'));
+            showToast('Delete failed: ' + (data.detail || 'Unknown error'), 'error');
             return;
           }
 
-          alert('Schema deleted');
+          showToast('Schema deleted', 'success');
           loadSchemas();
 
         } catch (err) {
-          alert('Delete failed: ' + err.message);
+          if (err.status === 401) return;
+          showToast('Delete failed: ' + err.message, 'error');
         }
-      }
-
-      // Escape HTML
-      function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
       }
 
       // Refresh button
@@ -552,6 +520,5 @@
       // Initial load
       loadSchemas();
     </script>
-    <script src="/static/shared.js"></script>
   </body>
 </html>

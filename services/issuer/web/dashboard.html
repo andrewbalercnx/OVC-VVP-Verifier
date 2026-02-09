@@ -300,7 +300,7 @@
       btn.textContent = 'Checking...';
 
       try {
-        const res = await fetch('/api/dashboard/status');
+        const res = await authFetch('/api/dashboard/status');
         const data = await res.json();
 
         updateBanner(data.overall_status);
@@ -341,9 +341,11 @@
         }
 
       } catch (err) {
-        updateBanner('unhealthy');
-        document.getElementById('coreServices').innerHTML =
-          '<div class="empty-state">Failed to fetch service status</div>';
+        if (err.status !== 401) {
+          updateBanner('unhealthy');
+          document.getElementById('coreServices').innerHTML =
+            '<div class="empty-state">Failed to fetch service status</div>';
+        }
       } finally {
         btn.disabled = false;
         btn.textContent = 'Refresh Now';
