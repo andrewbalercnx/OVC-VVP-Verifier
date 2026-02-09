@@ -231,6 +231,8 @@ Base URL: `https://vvp-issuer.rcnx.io`
 | `POST` | `/api/admin/deployment-tests` | Run deployment test |
 | `GET` | `/api/admin/benchmarks` | Benchmark results |
 | `GET` | `/api/admin/audit-logs` | Audit log viewer |
+| `POST` | `/api/admin/mock-vlei/reinitialize` | Clear all data and re-create mock GLEIF/QVI infrastructure |
+| `GET` | `/api/admin/features` | Feature flags and cache status |
 
 ### Issuer UI Pages
 

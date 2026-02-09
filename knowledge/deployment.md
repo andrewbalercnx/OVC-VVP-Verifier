@@ -170,3 +170,21 @@ cd services/issuer && pip install -e . && uvicorn app.main:app --port 8001
 ./scripts/run-tests.sh -v           # Verbose
 ./scripts/run-tests.sh -k "test_x"  # Specific pattern
 ```
+
+### Operational Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/system-health-check.sh` | 4-phase health check (container apps, PBX, connectivity, E2E SIP). Use `--e2e --timing` for full validation with cache timing. |
+| `scripts/sip-call-test.py` | SIP INVITE test tool. Modes: `--test sign`, `--test verify`, `--test chain`. Timing: `--timing --timing-count N --timing-threshold X`. |
+| `scripts/bootstrap-issuer.py` | Re-provision issuer after LMDB/Postgres wipe. Creates mock vLEI, org, API key, TN allocations, TN mappings. Stdlib-only (runs on PBX). |
+| `scripts/test_sip_call_test.py` | 21 CLI regression tests for sip-call-test.py. Run via `python3 -m pytest scripts/test_sip_call_test.py`. |
+
+### Issuer Recovery (LMDB/Postgres Wipe)
+
+After an LMDB corruption or database reset:
+```bash
+# Re-provision the complete credential chain
+python3 scripts/bootstrap-issuer.py --url https://vvp-issuer.rcnx.io --admin-key <key>
+```
+This creates: mock GLEIF/QVI infrastructure → test org → org API key → TN allocation credentials → TN mappings.

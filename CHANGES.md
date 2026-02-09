@@ -1,5 +1,52 @@
 # VVP Verifier Change Log
 
+## Sprint 53: E2E System Validation & Cache Timing
+
+**Date:** 2026-02-09
+**Status:** APPROVED (Pair Review — 6 plan revisions, 1 code review round)
+
+### Summary
+
+Validated the full VVP system health check and SIP call test scripts against production. Added timing instrumentation (`--timing`, `--timing-count`, `--timing-threshold`, `--test chain`) to measure cache effectiveness via chained sign→verify mode. Fixed a pre-existing bug in SIP redirect that silently dropped P-VVP-Identity and P-VVP-Passport headers. Created a bootstrap script for complete issuer asset provisioning after LMDB/Postgres recovery.
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `scripts/bootstrap-issuer.py` | 5-step bootstrap: reinit mock vLEI → create org → API key → TN allocation → TN mapping |
+| `scripts/test_sip_call_test.py` | 21 CLI regression tests for timing flags, chain mode, JSON schema |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `scripts/sip-call-test.py` | Added `--timing`, `--timing-count`, `--timing-threshold`, `--timing-delay`, `--test chain`, `--verifier-url`, cache metrics snapshot, chained sign→verify timing |
+| `scripts/system-health-check.sh` | Added `--timing` flag, `_run_timing_tests()` for Phase 4, timing in JSON output |
+| `services/issuer/app/api/admin.py` | Added `POST /admin/mock-vlei/reinitialize` — clears 6 tables, resets singleton, re-initializes infrastructure |
+| `services/sip-redirect/app/redirect/client.py` | Fixed VVP header field names: `vvp_identity` → `vvp_identity_header`, `passport` → `passport_jwt` |
+| `services/pbx/config/public-sip.xml` | Updated loopback dialplan API key to match bootstrapped org key |
+| `services/issuer/config/api_keys.json` | Updated dev-admin key hash |
+
+### Key Results
+
+- **Sign test:** 302 VALID with P-VVP-Identity, P-VVP-Passport, P-VVP-Brand-Name headers
+- **Verify test:** Verifier responds to SIP verification requests
+- **Chain timing:** 3.0x speedup (cold=42ms, cached=14ms)
+- **Issuer unit tests:** 422 tests pass
+- **CLI regression tests:** 21 tests pass
+
+### Bug Fix: SIP Redirect VVP Header Extraction
+
+The sip-redirect client extracted `data.get("vvp_identity")` and `data.get("passport")` from the issuer `/vvp/create` response, but the issuer returns `vvp_identity_header` and `passport_jwt`. This caused P-VVP-Identity and P-VVP-Passport headers to be silently `None` in all 302 redirect responses.
+
+### Commits
+
+- `6389b8b` — Sprint 53: Add cache timing instrumentation and CLI regression tests
+- `a142c61` — Add admin mock-vlei reinitialize endpoint and issuer bootstrap script
+- `ca8e54f` — Fix SIP redirect VVP header extraction and enhance bootstrap script
+
+---
+
 ## Sprint 51: Verification Result Caching
 
 **Date:** 2026-02-08
