@@ -78,6 +78,14 @@ WES_AID="BIKKuvBwpmDVA4Ds-EpL5bt9OqPzWPja2LigFYZN2YfX"
 HTTP_TIMEOUT=10
 WITNESS_TIMEOUT=30
 
+# Portable millisecond timer (macOS lacks date +%s%N)
+if date +%s%N 2>/dev/null | grep -q N; then
+    # macOS: %N not supported, use python3 fallback
+    now_ms() { python3 -c "import time; print(int(time.time()*1000))"; }
+else
+    now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
+fi
+
 # Tracking
 TOTAL_CHECKS=0
 PASSED_CHECKS=0
@@ -192,19 +200,25 @@ record_result() {
     local version="${5:-}"
     local response_ms="${6:-}"
 
-    RESULTS_JSON=$(echo "$RESULTS_JSON" | python3 -c "
-import json, sys
-results = json.load(sys.stdin)
+    RESULTS_JSON=$(_RR_COMPONENT="$component" \
+    _RR_CHECK="$check" \
+    _RR_STATUS="$status" \
+    _RR_DETAIL="$detail" \
+    _RR_VERSION="$version" \
+    _RR_RESPONSE_MS="$response_ms" \
+    python3 -c "
+import json, sys, os
+results = json.loads(sys.stdin.read())
 results.append({
-    'component': '$component',
-    'check': '$check',
-    'status': '$status',
-    'detail': '$detail',
-    'version': '$version' or None,
-    'response_ms': $response_ms if '$response_ms' else None,
+    'component': os.environ['_RR_COMPONENT'],
+    'check': os.environ['_RR_CHECK'],
+    'status': os.environ['_RR_STATUS'],
+    'detail': os.environ.get('_RR_DETAIL') or None,
+    'version': os.environ.get('_RR_VERSION') or None,
+    'response_ms': int(os.environ['_RR_RESPONSE_MS']) if os.environ.get('_RR_RESPONSE_MS') else None,
 })
 json.dump(results, sys.stdout)
-" 2>/dev/null || echo "$RESULTS_JSON")
+" <<< "$RESULTS_JSON" 2>/dev/null || echo "$RESULTS_JSON")
 }
 
 # Check an HTTP health endpoint
@@ -218,17 +232,16 @@ check_http_health() {
 
     log_check "$name health at $full_url"
 
-    local start_ms
-    start_ms=$(date +%s%N 2>/dev/null || echo "0")
+    local start_ms end_ms
+    start_ms=$(now_ms)
 
-    local http_code body
-    body=$(curl -sf --max-time "$HTTP_TIMEOUT" -w '\n%{http_code}' "$full_url" 2>/dev/null) || body="000"
-    http_code=$(echo "$body" | tail -1)
-    body=$(echo "$body" | head -n -1)
+    local http_code body response
+    response=$(curl -sf --max-time "$HTTP_TIMEOUT" -w '\n%{http_code}' "$full_url" 2>/dev/null) || response="000"
+    http_code=$(echo "$response" | tail -1)
+    body=$(echo "$response" | sed '$d')
 
-    local end_ms
-    end_ms=$(date +%s%N 2>/dev/null || echo "0")
-    local elapsed_ms=$(( (end_ms - start_ms) / 1000000 ))
+    end_ms=$(now_ms)
+    local elapsed_ms=$(( end_ms - start_ms ))
 
     if [ "$VERBOSE" = true ] && [ -n "$body" ] && [ "$JSON_OUTPUT" = false ]; then
         log_info "  Response: $body"
@@ -283,8 +296,9 @@ check_http_version() {
         record_result "$name" "version" "pass" "$short_sha" "$git_sha"
     fi
 
-    # Store version for cross-service comparison
-    eval "VERSION_${name//[^a-zA-Z0-9]/_}=$git_sha"
+    # Store version for cross-service comparison (declare -g not available in bash 3)
+    local var_name="VERSION_${name//[^a-zA-Z0-9]/_}"
+    printf -v "$var_name" '%s' "$git_sha"
     return 0
 }
 
@@ -298,15 +312,14 @@ check_witness_oobi() {
 
     log_check "$name OOBI at $oobi_url"
 
-    local start_ms
-    start_ms=$(date +%s%N 2>/dev/null || echo "0")
+    local start_ms end_ms
+    start_ms=$(now_ms)
 
     local http_code
     http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time "$WITNESS_TIMEOUT" "$oobi_url" 2>/dev/null) || http_code="000"
 
-    local end_ms
-    end_ms=$(date +%s%N 2>/dev/null || echo "0")
-    local elapsed_ms=$(( (end_ms - start_ms) / 1000000 ))
+    end_ms=$(now_ms)
+    local elapsed_ms=$(( end_ms - start_ms ))
 
     if [ "$http_code" = "200" ] || [ "$http_code" = "202" ]; then
         log_pass "$name OOBI responding (HTTP $http_code, ${elapsed_ms}ms)"
@@ -751,7 +764,7 @@ _run_sip_tests_pbx() {
     # The pbx_output from az vm run-command includes stdout and stderr markers.
     # Extract the JSON portion.
     local json_output
-    json_output=$(echo "$pbx_output" | grep -A9999 '{"results"' | head -n -1) || json_output=""
+    json_output=$(echo "$pbx_output" | grep -A9999 '{"results"' | sed '$d') || json_output=""
 
     if [ -z "$json_output" ]; then
         # Try to find JSON anywhere in the output
@@ -843,7 +856,7 @@ _run_freeswitch_call_test() {
         #   → Issuer API → 302 → loopback-inbound → bridge to user/1006
         # The final bridge will fail (1006 likely not registered), but the
         # signing flow is what we're testing.
-        ORIGINATE_RESULT=\$(fs_cli -x 'bgapi originate {origination_caller_id_number=+441923311001,origination_caller_id_name=VVP-HealthCheck,sip_h_X-VVP-API-Key=Xt1uEFpqkp4egcPIYQl6PLOwoHHcIFxENOBVH5DyMSY}sofia/internal/71006@127.0.0.1 &park()' 2>/dev/null || echo 'ORIGINATE_FAILED')
+        ORIGINATE_RESULT=\$(fs_cli -x \"bgapi originate {origination_caller_id_number=+441923311001,origination_caller_id_name=VVP-HealthCheck,sip_h_X-VVP-API-Key=$API_KEY}sofia/internal/71006@127.0.0.1 &park()\" 2>/dev/null || echo 'ORIGINATE_FAILED')
 
         # Wait for the call to process through signing flow
         sleep 5
@@ -950,22 +963,21 @@ else:
     print('No results')
 " 2>/dev/null) || test_detail="parse error"
 
+    local result_code=0
+
     if [ "$test_status" = "pass" ]; then
         log_pass "$display_name: $test_detail"
         record_result "E2E" "$check_name" "pass" "$test_detail"
-        return 0
     elif [ "$test_status" = "warn" ]; then
         log_warn "$display_name: $test_detail"
         record_result "E2E" "$check_name" "warn" "$test_detail"
-        return 0
     elif [ "$test_status" = "skip" ]; then
         log_info "$display_name: $test_detail"
         record_result "E2E" "$check_name" "warn" "$test_detail"
-        return 0
     else
         log_fail "$display_name: $test_detail"
         record_result "E2E" "$check_name" "fail" "$test_detail"
-        return 1
+        result_code=1
     fi
 
     # Show detailed checks in verbose mode
@@ -979,6 +991,8 @@ for r in data.get('results', []):
         print(f'        [{mark}] {check}')
 " 2>/dev/null
     fi
+
+    return $result_code
 }
 
 # ---------------------------------------------------------------------------
@@ -994,22 +1008,28 @@ print_summary() {
             overall="degraded"
         fi
 
+        _SUM_OVERALL="$overall" \
+        _SUM_MODE="$MODE" \
+        _SUM_TOTAL="$TOTAL_CHECKS" \
+        _SUM_PASSED="$PASSED_CHECKS" \
+        _SUM_FAILED="$FAILED_CHECKS" \
+        _SUM_WARNINGS="$WARNINGS" \
+        _SUM_CHECKED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         python3 -c "
-import json, sys
-
-results = json.loads('$RESULTS_JSON')
+import json, sys, os
+results = json.loads(sys.stdin.read())
 summary = {
-    'overall_status': '$overall',
-    'mode': '$MODE',
-    'total_checks': $TOTAL_CHECKS,
-    'passed': $PASSED_CHECKS,
-    'failed': $FAILED_CHECKS,
-    'warnings': $WARNINGS,
-    'checked_at': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+    'overall_status': os.environ['_SUM_OVERALL'],
+    'mode': os.environ['_SUM_MODE'],
+    'total_checks': int(os.environ['_SUM_TOTAL']),
+    'passed': int(os.environ['_SUM_PASSED']),
+    'failed': int(os.environ['_SUM_FAILED']),
+    'warnings': int(os.environ['_SUM_WARNINGS']),
+    'checked_at': os.environ['_SUM_CHECKED_AT'],
     'results': results,
 }
 print(json.dumps(summary, indent=2))
-"
+" <<< "$RESULTS_JSON"
         return
     fi
 

@@ -75,7 +75,6 @@ def build_signing_invite(orig_tn: str, dest_tn: str, api_key: str,
         f"Contact: <sip:{local_ip}:{local_port}>",
         f"X-VVP-API-Key: {api_key}",
         "Max-Forwards: 70",
-        "Content-Type: application/sdp",
         "Content-Length: 0",
     ]
     return ("\r\n".join(lines) + "\r\n\r\n").encode("utf-8")
@@ -137,7 +136,6 @@ def build_verify_invite(orig_tn: str, dest_tn: str,
         f"P-VVP-Identity: {identity_b64}",
         f"P-VVP-Passport: {passport_jwt}",
         "Max-Forwards: 70",
-        "Content-Type: application/sdp",
         "Content-Length: 0",
     ]
     return ("\r\n".join(lines) + "\r\n\r\n").encode("utf-8")
