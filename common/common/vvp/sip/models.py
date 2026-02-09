@@ -46,6 +46,12 @@ class SIPRequest:
     contact: Optional[str] = None
     content_length: int = 0
 
+    # All headers dict (Sprint 48: for monitoring dashboard event capture)
+    headers: dict = field(default_factory=dict)
+
+    # Source address (Sprint 48: for monitoring dashboard event capture)
+    source_addr: Optional[str] = None
+
     # Raw message for debugging
     raw: bytes = b""
 

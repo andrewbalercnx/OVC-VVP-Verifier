@@ -49,6 +49,19 @@ VVP_STATUS_HTTP_PORT = int(os.getenv("VVP_STATUS_HTTP_PORT", "8080"))
 VVP_STATUS_ADMIN_KEY = os.getenv("VVP_STATUS_ADMIN_KEY", "")
 
 # =============================================================================
+# Monitor Integration (Sprint 48)
+# =============================================================================
+
+# URL of the SIP Monitor dashboard's event ingestion endpoint
+VVP_MONITOR_URL = os.getenv("VVP_MONITOR_URL", "http://127.0.0.1:8090")
+
+# Enable/disable monitor event capture
+VVP_MONITOR_ENABLED = os.getenv("VVP_MONITOR_ENABLED", "true").lower() == "true"
+
+# Timeout for monitor API calls (seconds) - short to avoid blocking SIP
+VVP_MONITOR_TIMEOUT = float(os.getenv("VVP_MONITOR_TIMEOUT", "1.0"))
+
+# =============================================================================
 # Logging Configuration
 # =============================================================================
 

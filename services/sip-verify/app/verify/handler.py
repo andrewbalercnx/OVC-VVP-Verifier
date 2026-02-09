@@ -7,12 +7,17 @@ Sprint 44: Handles incoming SIP INVITEs with VVP headers:
 4. Call VVP Verifier POST /verify-callee with VVP-Identity header
 5. Map VerifyResponse to X-VVP-* headers
 6. Return SIP 302 redirect
+
+Sprint 48: Added event capture for monitoring dashboard via HTTP POST
+to the sip-redirect monitor's ingestion endpoint.
 """
 
 import logging
 import time
 from datetime import datetime, timezone
 from typing import Optional
+
+import httpx
 
 from common.vvp.sip import (
     SIPRequest,
@@ -22,12 +27,104 @@ from common.vvp.sip import (
 )
 
 from ..audit import log_verification
-from ..config import VVP_REDIRECT_TARGET, VVP_FALLBACK_STATUS
+from ..config import (
+    VVP_REDIRECT_TARGET,
+    VVP_FALLBACK_STATUS,
+    VVP_MONITOR_URL,
+    VVP_MONITOR_ENABLED,
+    VVP_MONITOR_TIMEOUT,
+)
 from .identity_parser import parse_identity_header, IdentityParseError
 from .vvp_identity import decode_vvp_identity, VVPIdentityDecodeError
 from .client import get_verifier_client, VerifyResult
 
 log = logging.getLogger(__name__)
+
+# Lazy-initialized persistent HTTP session for monitor
+_monitor_session: Optional[httpx.AsyncClient] = None
+
+
+def _get_monitor_session() -> httpx.AsyncClient:
+    """Get or create a persistent HTTP session for monitor integration."""
+    global _monitor_session
+    if _monitor_session is None:
+        _monitor_session = httpx.AsyncClient(timeout=VVP_MONITOR_TIMEOUT)
+    return _monitor_session
+
+
+async def _capture_event(
+    request: SIPRequest,
+    response: Optional[SIPResponse],
+    response_code: int,
+    vvp_status: str,
+    error: Optional[str] = None,
+) -> None:
+    """Capture SIP verification event for monitoring dashboard.
+
+    Posts event data to the sip-redirect monitor's ingestion endpoint.
+    Failures are logged but never propagate — monitoring must not affect
+    the SIP call path.
+
+    Args:
+        request: The SIP INVITE request
+        response: The SIP response (for extracting response VVP headers)
+        response_code: SIP response code (302, 400, etc.)
+        vvp_status: VVP verification status
+        error: Error message if any
+    """
+    if not VVP_MONITOR_ENABLED:
+        return
+
+    try:
+        # Extract request VVP headers
+        vvp_headers = {}
+        for name, value in request.headers.items():
+            name_lower = name.lower()
+            if name_lower.startswith("x-vvp-") or name_lower.startswith("p-vvp-"):
+                vvp_headers[name] = value
+            elif name_lower == "identity":
+                vvp_headers["Identity"] = value
+
+        # Extract response VVP headers
+        response_vvp_headers = {}
+        if response is not None:
+            if response.vvp_identity:
+                response_vvp_headers["P-VVP-Identity"] = response.vvp_identity
+            if response.vvp_passport:
+                response_vvp_headers["P-VVP-Passport"] = response.vvp_passport
+            if response.vvp_status:
+                response_vvp_headers["X-VVP-Status"] = response.vvp_status
+            if response.brand_name:
+                response_vvp_headers["X-VVP-Brand-Name"] = response.brand_name
+            if response.brand_logo_url:
+                response_vvp_headers["X-VVP-Brand-Logo"] = response.brand_logo_url
+            if response.caller_id:
+                response_vvp_headers["X-VVP-Caller-ID"] = response.caller_id
+            if response.error_code:
+                response_vvp_headers["X-VVP-Error"] = response.error_code
+
+        event_data = {
+            "service": "VERIFICATION",
+            "source_addr": request.source_addr or "unknown",
+            "method": request.method,
+            "request_uri": request.request_uri,
+            "call_id": request.call_id or "",
+            "from_tn": request.from_tn,
+            "to_tn": request.to_tn,
+            "headers": dict(request.headers),
+            "vvp_headers": vvp_headers,
+            "response_code": response_code,
+            "vvp_status": vvp_status,
+            "response_vvp_headers": response_vvp_headers,
+            "error": error,
+        }
+
+        session = _get_monitor_session()
+        url = f"{VVP_MONITOR_URL}/api/events/ingest"
+        resp = await session.post(url, json=event_data)
+        log.info(f"Monitor event captured: VERIFICATION {vvp_status} (code={response_code}, monitor_status={resp.status_code})")
+    except Exception as e:
+        log.warning(f"Failed to capture monitor event: {e}")
 
 
 async def handle_verify_invite(request: SIPRequest) -> SIPResponse:
@@ -54,10 +151,12 @@ async def handle_verify_invite(request: SIPRequest) -> SIPResponse:
     # Validate required headers for verification (400 per Sprint 44)
     if not request.has_verification_headers:
         log.warning(f"INVITE missing verification headers, call_id={request.call_id}")
-        return build_400_bad_request(
+        resp = build_400_bad_request(
             request,
             reason="Missing VVP verification headers (Identity or P-VVP-Identity required)",
         )
+        await _capture_event(request, resp, 400, "INDETERMINATE", error="Missing verification headers")
+        return resp
 
     # Parse Identity header (RFC 8224)
     passport_jwt: Optional[str] = None
@@ -71,7 +170,9 @@ async def handle_verify_invite(request: SIPRequest) -> SIPResponse:
             log.debug(f"Parsed Identity header: alg={identity.algorithm}, ppt={identity.ppt}")
         except IdentityParseError as e:
             log.warning(f"Failed to parse Identity header: {e}")
-            return build_400_bad_request(request, reason=f"Invalid Identity header: {e}")
+            resp = build_400_bad_request(request, reason=f"Invalid Identity header: {e}")
+            await _capture_event(request, resp, 400, "INDETERMINATE", error=f"Invalid Identity header: {e}")
+            return resp
 
     # Decode P-VVP-Identity header
     kid: Optional[str] = None
@@ -89,7 +190,9 @@ async def handle_verify_invite(request: SIPRequest) -> SIPResponse:
             log.debug(f"Decoded P-VVP-Identity: kid={kid[:50]}..., evd={evd[:50]}...")
         except VVPIdentityDecodeError as e:
             log.warning(f"Failed to decode P-VVP-Identity: {e}")
-            return build_400_bad_request(request, reason=f"Invalid P-VVP-Identity: {e}")
+            resp = build_400_bad_request(request, reason=f"Invalid P-VVP-Identity: {e}")
+            await _capture_event(request, resp, 400, "INDETERMINATE", error=f"Invalid P-VVP-Identity: {e}")
+            return resp
 
     # Use OOBI from Identity header info parameter as fallback for kid
     if not kid and oobi_url:
@@ -102,15 +205,21 @@ async def handle_verify_invite(request: SIPRequest) -> SIPResponse:
     # Validate we have required fields
     if not passport_jwt:
         log.warning(f"No PASSporT found, call_id={request.call_id}")
-        return build_400_bad_request(request, reason="No PASSporT JWT found")
+        resp = build_400_bad_request(request, reason="No PASSporT JWT found")
+        await _capture_event(request, resp, 400, "INDETERMINATE", error="No PASSporT JWT found")
+        return resp
 
     if not kid:
         log.warning(f"No OOBI URL found, call_id={request.call_id}")
-        return build_400_bad_request(request, reason="No OOBI URL found (kid)")
+        resp = build_400_bad_request(request, reason="No OOBI URL found (kid)")
+        await _capture_event(request, resp, 400, "INDETERMINATE", error="No OOBI URL found (kid)")
+        return resp
 
     if not evd:
         log.warning(f"No dossier URL found, call_id={request.call_id}")
-        return build_400_bad_request(request, reason="No dossier URL found (evd)")
+        resp = build_400_bad_request(request, reason="No dossier URL found (evd)")
+        await _capture_event(request, resp, 400, "INDETERMINATE", error="No dossier URL found (evd)")
+        return resp
 
     # Extract CSeq number from header (e.g., "1 INVITE" -> 1)
     cseq_num = 1
@@ -175,4 +284,5 @@ async def handle_verify_invite(request: SIPRequest) -> SIPResponse:
         f"time_ms={processing_time_ms:.1f}"
     )
 
+    await _capture_event(request, response, 302, result.status)
     return response

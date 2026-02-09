@@ -43,6 +43,7 @@ async def _capture_event(
     api_key_prefix: Optional[str] = None,
     redirect_uri: Optional[str] = None,
     error: Optional[str] = None,
+    response: Optional[SIPResponse] = None,
 ) -> None:
     """Capture SIP event for monitoring dashboard.
 
@@ -53,6 +54,7 @@ async def _capture_event(
         api_key_prefix: First 8 chars of API key
         redirect_uri: Contact URI from redirect response
         error: Error message if any
+        response: The SIP response (Sprint 48: for capturing response VVP headers)
     """
     if not MONITOR_ENABLED:
         return
@@ -69,9 +71,27 @@ async def _capture_event(
             elif name_lower == "identity":
                 vvp_headers["Identity"] = value
 
+        # Sprint 48: Extract VVP headers from response
+        response_vvp_headers = {}
+        if response is not None:
+            if response.vvp_identity:
+                response_vvp_headers["P-VVP-Identity"] = response.vvp_identity
+            if response.vvp_passport:
+                response_vvp_headers["P-VVP-Passport"] = response.vvp_passport
+            if response.vvp_status:
+                response_vvp_headers["X-VVP-Status"] = response.vvp_status
+            if response.brand_name:
+                response_vvp_headers["X-VVP-Brand-Name"] = response.brand_name
+            if response.brand_logo_url:
+                response_vvp_headers["X-VVP-Brand-Logo"] = response.brand_logo_url
+            if response.caller_id:
+                response_vvp_headers["X-VVP-Caller-ID"] = response.caller_id
+            if response.error_code:
+                response_vvp_headers["X-VVP-Error"] = response.error_code
+
         buffer = get_event_buffer()
         await buffer.add({
-            "service": "SIGNING",  # Sprint 47: Always SIGNING for sip-redirect
+            "service": "SIGNING",
             "source_addr": request.source_addr or "unknown",
             "method": request.method,
             "request_uri": request.request_uri,
@@ -83,6 +103,7 @@ async def _capture_event(
             "vvp_headers": vvp_headers,
             "response_code": response_code,
             "vvp_status": vvp_status,
+            "response_vvp_headers": response_vvp_headers,
             "redirect_uri": redirect_uri,
             "error": error,
         })
@@ -236,7 +257,7 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
             },
         )
 
-        await _capture_event(request, 302, "VALID", api_key_prefix, redirect_uri=contact_uri)
+        await _capture_event(request, 302, "VALID", api_key_prefix, redirect_uri=contact_uri, response=response)
         return response
 
     except Exception as e:

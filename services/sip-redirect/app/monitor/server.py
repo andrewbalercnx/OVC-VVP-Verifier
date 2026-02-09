@@ -224,6 +224,58 @@ async def handle_logout(request):
     return response
 
 
+async def handle_event_ingest(request):
+    """POST /api/events/ingest - Ingest events from other services (localhost only).
+
+    Sprint 48: Allows sip-verify to push verification events into the shared
+    event buffer via HTTP POST. Restricted to loopback addresses only.
+    """
+    # Loopback enforcement
+    peername = request.transport.get_extra_info("peername")
+    if peername is not None:
+        peer_ip = peername[0]
+        if peer_ip not in ("127.0.0.1", "::1"):
+            log.warning(f"Event ingest rejected from non-loopback peer: {peer_ip}")
+            return web.json_response({"error": "Forbidden"}, status=403)
+
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, Exception):
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    # Validate required fields
+    required_fields = {"service", "method", "request_uri", "call_id", "response_code"}
+    missing = required_fields - set(data.keys())
+    if missing:
+        return web.json_response(
+            {"error": f"Missing required fields: {', '.join(sorted(missing))}"},
+            status=400,
+        )
+
+    event_data = {
+        "service": data["service"],
+        "source_addr": data.get("source_addr", "unknown"),
+        "method": data["method"],
+        "request_uri": data["request_uri"],
+        "call_id": data["call_id"],
+        "from_tn": data.get("from_tn"),
+        "to_tn": data.get("to_tn"),
+        "api_key_prefix": data.get("api_key_prefix"),
+        "headers": data.get("headers", {}),
+        "vvp_headers": data.get("vvp_headers", {}),
+        "response_code": data["response_code"],
+        "vvp_status": data.get("vvp_status", "INDETERMINATE"),
+        "response_vvp_headers": data.get("response_vvp_headers", {}),
+        "redirect_uri": data.get("redirect_uri"),
+        "error": data.get("error"),
+    }
+
+    buffer = get_event_buffer()
+    event_id = await buffer.add(event_data)
+    log.info(f"Ingested event from {data['service']}: {data['method']} (id={event_id})")
+    return web.json_response({"ok": True, "event_id": event_id})
+
+
 async def handle_events(request):
     """GET /api/events - Return all buffered events."""
     session = await require_session(request)
@@ -704,6 +756,7 @@ def create_web_app() -> "web.Application":
     app.router.add_get("/api/events", handle_events)
     app.router.add_get("/api/events/since/{id}", handle_events_since)
     app.router.add_post("/api/clear", handle_clear)
+    app.router.add_post("/api/events/ingest", handle_event_ingest)
 
     # OAuth routes (Sprint 50)
     app.router.add_get("/auth/oauth/m365/start", handle_oauth_start)

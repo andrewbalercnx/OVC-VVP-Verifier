@@ -109,7 +109,7 @@ function renderEventRow(event) {
     row.dataset.eventId = event.id;
 
     const serviceClass = event.service === 'SIGNING' ? 'service-signing' : 'service-verify';
-    const statusClass = getVvpStatusClass(event.vvp_headers);
+    const statusClass = getVvpStatusClass(event.vvp_headers, event.response_vvp_headers);
 
     row.innerHTML = `
         <td class="col-time">${escapeHtml(formatTime(event.timestamp))}</td>
@@ -126,8 +126,10 @@ function renderEventRow(event) {
 /**
  * Get CSS class for VVP status
  */
-function getVvpStatusClass(vvpHeaders) {
-    const status = vvpHeaders?.['X-VVP-Status'] || '';
+function getVvpStatusClass(vvpHeaders, responseVvpHeaders) {
+    const status = responseVvpHeaders?.['X-VVP-Status']
+        || vvpHeaders?.['X-VVP-Status']
+        || '';
     switch (status.toUpperCase()) {
         case 'VALID': return 'status-valid';
         case 'INVALID': return 'status-invalid';
@@ -509,6 +511,9 @@ function showTab(tabName) {
         case 'vvp':
             content.innerHTML = renderVvpTab(event);
             break;
+        case 'response-vvp':
+            content.innerHTML = renderResponseVvpTab(event);
+            break;
         case 'passport':
             content.innerHTML = renderPassportTab(event);
             break;
@@ -629,7 +634,7 @@ function renderVvpTab(event) {
 
     // Check for VVP status
     const status = vvpHeaders['X-VVP-Status'] || '';
-    const statusClass = getVvpStatusClass(vvpHeaders);
+    const statusClass = getVvpStatusClass(vvpHeaders, {});
 
     let statusBanner = '';
     if (status) {
@@ -645,7 +650,56 @@ function renderVvpTab(event) {
         <table class="headers-table vvp-headers">
             <thead>
                 <tr>
-                    <th>VVP Header</th>
+                    <th>Request VVP Header</th>
+                    <th>Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${rows}
+            </tbody>
+        </table>
+    `;
+}
+
+/**
+ * Render Response VVP headers tab (Sprint 48)
+ */
+function renderResponseVvpTab(event) {
+    const responseVvpHeaders = event.response_vvp_headers || {};
+    const entries = Object.entries(responseVvpHeaders);
+
+    if (entries.length === 0) {
+        return '<p class="empty-message">No VVP headers found in the response</p>';
+    }
+
+    const rows = entries
+        .map(([name, value]) => `
+            <tr>
+                <td class="header-name">${escapeHtml(name)}</td>
+                <td class="header-value">${escapeHtml(value)}</td>
+            </tr>
+        `)
+        .join('');
+
+    // Check for VVP status in response headers
+    const status = responseVvpHeaders['X-VVP-Status'] || '';
+    const statusClass = getVvpStatusClass({}, responseVvpHeaders);
+
+    let statusBanner = '';
+    if (status) {
+        statusBanner = `
+            <div class="vvp-status-banner ${statusClass}">
+                VVP Status: <strong>${escapeHtml(status)}</strong>
+            </div>
+        `;
+    }
+
+    return `
+        ${statusBanner}
+        <table class="headers-table vvp-headers">
+            <thead>
+                <tr>
+                    <th>Response VVP Header</th>
                     <th>Value</th>
                 </tr>
             </thead>

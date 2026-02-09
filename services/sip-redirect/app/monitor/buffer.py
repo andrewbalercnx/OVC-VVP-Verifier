@@ -40,6 +40,7 @@ class SIPEvent:
     vvp_headers: dict  # VVP-specific headers (X-VVP-*, Identity)
     response_code: int  # Response sent (302, 401, etc.)
     vvp_status: str  # VVP status (VALID, INVALID, INDETERMINATE)
+    response_vvp_headers: dict  # VVP headers from SIP response (Sprint 48)
     redirect_uri: Optional[str]  # Contact URI from 302 response
     error: Optional[str]  # Error message if any
 
@@ -75,6 +76,9 @@ class SIPEventBuffer:
         async with self._lock:
             event_id = self._next_id
             self._next_id += 1
+
+            # Default response_vvp_headers if not provided (backward compat)
+            event_data.setdefault("response_vvp_headers", {})
 
             event = SIPEvent(
                 id=event_id,

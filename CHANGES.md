@@ -1,5 +1,47 @@
 # VVP Verifier Change Log
 
+## Sprint 48 (addendum): Full SIP Call Flow Event Capture
+
+**Date:** 2026-02-09
+**Status:** Implementation complete, pending code review
+
+### Summary
+
+Extended the SIP Monitor dashboard to capture all 4 stages of a VVP call flow (signing request, signing response, verification request, verification response). Previously only the signing INVITE request headers were captured.
+
+Key changes:
+- Added `response_vvp_headers` field to `SIPEvent` dataclass for storing response VVP headers
+- Updated signing handler to pass `SIPResponse` to `_capture_event` for response header extraction
+- Added `POST /api/events/ingest` endpoint (localhost-only) for cross-process event ingestion
+- Added event capture to the verification handler via HTTP POST to the monitor
+- Updated dashboard UI: renamed "VVP Headers" tab to "Request VVP", added "Response VVP" tab
+- Status badge now prefers `response_vvp_headers["X-VVP-Status"]` (definitive) over request headers
+
+### Files Modified
+
+| File | Description |
+|------|-------------|
+| `services/sip-redirect/app/monitor/buffer.py` | Added `response_vvp_headers: dict` to SIPEvent, default in `add()` |
+| `services/sip-redirect/app/redirect/handler.py` | Added `response` param to `_capture_event`, extract response VVP headers |
+| `services/sip-redirect/app/monitor/server.py` | Added `POST /api/events/ingest` handler with loopback enforcement |
+| `services/sip-redirect/app/monitor_web/index.html` | Renamed "VVP Headers" to "Request VVP", added "Response VVP" tab |
+| `services/sip-redirect/app/monitor_web/sip-monitor.js` | Added `renderResponseVvpTab`, updated status badge logic |
+| `services/sip-verify/app/config.py` | Added `VVP_MONITOR_URL`, `VVP_MONITOR_ENABLED`, `VVP_MONITOR_TIMEOUT` |
+| `services/sip-verify/app/verify/handler.py` | Added `_capture_event()` with HTTP POST to monitor ingestion endpoint |
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `services/sip-redirect/tests/test_monitor_buffer.py` | 5 tests for response_vvp_headers in buffer |
+| `services/sip-redirect/tests/test_monitor_ingest.py` | 6 tests for ingestion endpoint |
+| `services/sip-verify/tests/test_handler_events.py` | 5 tests for verification event capture |
+
+### Test Results
+
+- sip-redirect: 113 tests passed (11 new)
+- sip-verify: 46 tests passed (5 new)
+
 ## Sprint 56: System Operator User Manual
 
 **Date:** 2026-02-09
