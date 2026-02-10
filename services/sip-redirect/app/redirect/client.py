@@ -208,6 +208,8 @@ class IssuerClient:
         dossier_said: str,
         orig_tn: str,
         dest_tn: str,
+        call_id: Optional[str] = None,
+        cseq: Optional[int] = None,
     ) -> VVPCreateResult:
         """Create VVP headers via issuer API.
 
@@ -217,6 +219,8 @@ class IssuerClient:
             dossier_said: Root credential SAID for dossier
             orig_tn: Originating telephone number
             dest_tn: Destination telephone number
+            call_id: SIP Call-ID for dialog binding (callee PASSporT §5.2)
+            cseq: SIP CSeq number for dialog binding (callee PASSporT §5.2)
 
         Returns:
             VVPCreateResult with VVP headers or error
@@ -233,14 +237,20 @@ class IssuerClient:
         log.info(f"VVP create START: identity={identity_name}, dossier={dossier_said[:16]}..., orig={orig_tn}, dest={dest_tn}")
 
         try:
+            request_body = {
+                "identity_name": identity_name,
+                "dossier_said": dossier_said,
+                "orig_tn": orig_tn,
+                "dest_tn": [dest_tn],  # API expects list of TNs
+            }
+            if call_id is not None:
+                request_body["call_id"] = call_id
+            if cseq is not None:
+                request_body["cseq"] = cseq
+
             response = await self._client.post(
                 "/vvp/create",
-                json={
-                    "identity_name": identity_name,
-                    "dossier_said": dossier_said,
-                    "orig_tn": orig_tn,
-                    "dest_tn": [dest_tn],  # API expects list of TNs
-                },
+                json=request_body,
                 headers={"X-API-Key": api_key},
             )
             elapsed = (time.monotonic() - t0) * 1000

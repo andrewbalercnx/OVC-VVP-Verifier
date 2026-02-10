@@ -54,6 +54,8 @@ class PassportPayload:
     goal: Optional[str] = None
     call_reason: Optional[str] = None  # Mapped from "call-reason"
     origid: Optional[str] = None
+    call_id: Optional[str] = None  # Mapped from "call-id" (callee PASSporT §5.2)
+    cseq: Optional[int] = None     # CSeq from SIP INVITE (callee PASSporT §5.2)
 
 
 @dataclass(frozen=True)
@@ -343,6 +345,13 @@ def _parse_payload(data: dict[str, Any]) -> tuple[PassportPayload, list[str]]:
     if origid is not None and not isinstance(origid, str):
         origid = None
 
+    # Callee PASSporT claims (§5.2): "call-id" and "cseq"
+    call_id = data.get("call-id")
+    if call_id is not None and not isinstance(call_id, str):
+        call_id = None
+
+    cseq = _get_optional_integer(data, "cseq", "payload")
+
     payload = PassportPayload(
         iat=iat,
         orig=orig,
@@ -354,6 +363,8 @@ def _parse_payload(data: dict[str, Any]) -> tuple[PassportPayload, list[str]]:
         goal=goal,
         call_reason=call_reason,
         origid=origid,
+        call_id=call_id,
+        cseq=cseq,
     )
     return payload, warnings
 

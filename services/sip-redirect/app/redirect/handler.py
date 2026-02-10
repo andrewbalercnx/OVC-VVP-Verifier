@@ -212,6 +212,14 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
             await _capture_event(request, 404, "INVALID", api_key_prefix, error=lookup_result.error)
             return build_404_not_found(request, lookup_result.error or f"No mapping for {from_tn}")
 
+        # Parse CSeq number from header (format: "314159 INVITE")
+        cseq_num = None
+        if request.cseq:
+            try:
+                cseq_num = int(request.cseq.split()[0])
+            except (ValueError, IndexError):
+                pass
+
         # Create VVP headers
         vvp_result = await client.create_vvp(
             api_key=api_key,
@@ -219,6 +227,8 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
             dossier_said=lookup_result.dossier_said,
             orig_tn=from_tn,
             dest_tn=to_tn or "",
+            call_id=call_id,
+            cseq=cseq_num,
         )
 
         if not vvp_result.success:

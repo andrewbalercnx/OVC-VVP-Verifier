@@ -167,6 +167,8 @@ async def create_vvp_attestation(
             iat=vvp_header.iat,
             exp=vvp_header.exp,
             card=card,
+            call_id=body.call_id,
+            cseq=body.cseq,
         )
 
         # Build RFC 8224 Identity header (Sprint 57)

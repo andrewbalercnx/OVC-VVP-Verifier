@@ -106,6 +106,8 @@ async def create_passport(
     iat: int,
     exp: int,
     card: Optional[dict] = None,
+    call_id: Optional[str] = None,
+    cseq: Optional[int] = None,
 ) -> PASSporT:
     """Create a signed PASSporT JWT per §5.0-§5.4.
 
@@ -121,6 +123,8 @@ async def create_passport(
         iat: Issued-at timestamp (MUST match VVP-Identity iat)
         exp: Expiry timestamp (MUST match VVP-Identity exp)
         card: Optional vCard dict for brand identity (Sprint 58)
+        call_id: SIP Call-ID for dialog binding (callee PASSporT §5.2)
+        cseq: SIP CSeq number for dialog binding (callee PASSporT §5.2)
 
     Returns:
         PASSporT with JWT string and component metadata
@@ -166,6 +170,12 @@ async def create_passport(
     # Sprint 58: Include vCard card claim if brand data is available
     if card:
         jwt_payload["card"] = card
+
+    # Callee PASSporT dialog binding claims (§5.2)
+    if call_id is not None:
+        jwt_payload["call-id"] = call_id
+    if cseq is not None:
+        jwt_payload["cseq"] = cseq
 
     # Encode header and payload
     header_b64 = _base64url_encode(json.dumps(jwt_header, separators=(",", ":")).encode("utf-8"))
