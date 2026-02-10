@@ -115,6 +115,38 @@ class TestBuild302Redirect:
         assert "X-VVP-Brand-Name: Test Corp\r\n" in text
 
 
+    def test_identity_header_in_serialization(self, sample_request):
+        """Sprint 57: Test Identity header appears in serialized response."""
+        identity_value = "eyJhbGci.payload.sig;info=<https://w.example.com/oobi/AID/controller>;alg=EdDSA;ppt=vvp"
+        response = build_302_redirect(
+            request=sample_request,
+            contact_uri="sip:+14445678901@carrier.com",
+            identity=identity_value,
+            vvp_identity="test-identity",
+            vvp_passport="test-passport",
+        )
+
+        data = response.to_bytes()
+        text = data.decode("utf-8")
+
+        assert f"Identity: {identity_value}\r\n" in text
+
+    def test_identity_header_absent_when_none(self, sample_request):
+        """Sprint 57: Test Identity header absent when not provided."""
+        response = build_302_redirect(
+            request=sample_request,
+            contact_uri="sip:+14445678901@carrier.com",
+            vvp_identity="test-identity",
+            vvp_passport="test-passport",
+        )
+
+        data = response.to_bytes()
+        text = data.decode("utf-8")
+
+        # Use \r\nIdentity: to avoid matching P-VVP-Identity:
+        assert "\r\nIdentity: " not in text
+
+
 class TestBuild401Unauthorized:
     """Test 401 Unauthorized response builder."""
 

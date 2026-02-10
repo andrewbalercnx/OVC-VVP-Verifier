@@ -21,19 +21,14 @@ def _encode_vvp_identity(kid: str, evd: str, iat: int = 1704067200) -> str:
     return base64.urlsafe_b64encode(json_str.encode()).decode().rstrip("=")
 
 
-def _encode_passport(passport: str) -> str:
-    """Encode PASSporT for Identity header."""
-    return base64.urlsafe_b64encode(passport.encode()).decode().rstrip("=")
-
-
 @pytest.fixture
 def sample_request():
     """Create a sample SIP request with VVP headers."""
     passport = "eyJhbGciOiJFZERTQSJ9.eyJpYXQiOjE3MDQwNjcyMDB9.signature"
-    encoded_passport = _encode_passport(passport)
     kid = "https://witness.example.com/oobi/EAbc/witness"
     evd = "https://dossier.example.com/dossiers/SAbc"
 
+    # RFC 8224 format: JWT;info=<URI>;alg=EdDSA;ppt=vvp (Sprint 57)
     return SIPRequest(
         method="INVITE",
         request_uri="sip:+14155551234@pbx.example.com",
@@ -45,7 +40,7 @@ def sample_request():
         cseq="1 INVITE",
         from_tn="+15551234567",
         to_tn="+14155551234",
-        identity_header=f"<{encoded_passport}>;info={kid};alg=EdDSA;ppt=vvp",
+        identity_header=f"{passport};info=<{kid}>;alg=EdDSA;ppt=vvp",
         p_vvp_identity=_encode_vvp_identity(kid, evd),
         p_vvp_passport=passport,
     )
@@ -82,8 +77,8 @@ class TestHandleVerifyInvite:
             assert response.brand_logo_url == "https://cdn.acme.com/logo.png"
 
     @pytest.mark.asyncio
-    async def test_missing_headers_returns_400(self):
-        """Request without VVP headers returns 400 Bad Request (Sprint 44)."""
+    async def test_missing_headers_returns_none(self):
+        """Request without VVP headers returns None (bare INVITE ignored)."""
         request = SIPRequest(
             method="INVITE",
             request_uri="sip:+14155551234@pbx.example.com",
@@ -97,13 +92,12 @@ class TestHandleVerifyInvite:
 
         response = await handle_verify_invite(request)
 
-        assert response.status_code == 400
-        assert "Missing VVP verification headers" in (response.error_reason or "")
+        assert response is None
 
     @pytest.mark.asyncio
-    async def test_invalid_identity_returns_400(self, sample_request):
-        """Invalid Identity header returns 400."""
-        sample_request.identity_header = "<invalid!!!>;info=bad"
+    async def test_malformed_identity_returns_400(self, sample_request):
+        """Malformed Identity header (unclosed bracket) returns 400."""
+        sample_request.identity_header = "<unclosed"
 
         response = await handle_verify_invite(sample_request)
 

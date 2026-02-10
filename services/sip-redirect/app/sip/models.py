@@ -81,6 +81,9 @@ class SIPResponse:
     # Response-specific headers
     contact: Optional[str] = None
 
+    # RFC 8224 Identity header (Sprint 57: STIR compliance)
+    identity: Optional[str] = None
+
     # VVP headers for 302 redirect
     vvp_identity: Optional[str] = None
     vvp_passport: Optional[str] = None
@@ -109,6 +112,10 @@ class SIPResponse:
         # Response-specific headers
         if self.contact:
             lines.append(f"Contact: {self.contact}")
+
+        # RFC 8224 Identity header (Sprint 57)
+        if self.identity:
+            lines.append(f"Identity: {self.identity}")
 
         # VVP headers for 302 redirect
         if self.vvp_identity:

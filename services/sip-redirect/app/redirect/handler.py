@@ -72,8 +72,11 @@ async def _capture_event(
                 vvp_headers["Identity"] = value
 
         # Sprint 48: Extract VVP headers from response
+        # Sprint 57: Include RFC 8224 Identity header
         response_vvp_headers = {}
         if response is not None:
+            if getattr(response, "identity", None):
+                response_vvp_headers["Identity"] = response.identity
             if response.vvp_identity:
                 response_vvp_headers["P-VVP-Identity"] = response.vvp_identity
             if response.vvp_passport:
@@ -238,6 +241,7 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
         response = build_302_redirect(
             request=request,
             contact_uri=contact_uri,
+            identity=vvp_result.identity_header,
             vvp_identity=vvp_result.vvp_identity,
             vvp_passport=vvp_result.vvp_passport,
             vvp_status="VALID",

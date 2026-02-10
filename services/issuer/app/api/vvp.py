@@ -21,6 +21,7 @@ from app.vvp.exceptions import (
     VVPCreationError,
 )
 from app.vvp.header import create_vvp_identity_header, MAX_VALIDITY_SECONDS
+from app.vvp.identity import build_identity_header
 from app.vvp.oobi import build_dossier_url, build_issuer_oobi
 from app.vvp.passport import create_passport
 from app.config import WITNESS_OOBI_BASE_URLS, VVP_ISSUER_BASE_URL
@@ -143,6 +144,9 @@ async def create_vvp_attestation(
             exp=vvp_header.exp,
         )
 
+        # Build RFC 8224 Identity header (Sprint 57)
+        identity_hdr = build_identity_header(passport.jwt, issuer_oobi)
+
         log.info(
             f"Created VVP attestation: identity={body.identity_name}, "
             f"orig={body.orig_tn}, dossier={body.dossier_said[:16]}..."
@@ -151,6 +155,7 @@ async def create_vvp_attestation(
         return CreateVVPResponse(
             vvp_identity_header=vvp_header.encoded,
             passport_jwt=passport.jwt,
+            identity_header=identity_hdr,
             dossier_url=dossier_url,
             kid_oobi=issuer_oobi,
             iat=vvp_header.iat,

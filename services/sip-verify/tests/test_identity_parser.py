@@ -1,9 +1,10 @@
 """Tests for RFC 8224 Identity header parser.
 
 Sprint 44: Tests for parsing SIP Identity header.
+Sprint 57: Updated for RFC 8224 compliance — body is JWT directly,
+info uses angle-bracketed URI.
 """
 
-import base64
 import pytest
 
 from app.verify.identity_parser import (
@@ -16,13 +17,11 @@ from app.verify.identity_parser import (
 class TestParseIdentityHeader:
     """Tests for parse_identity_header function."""
 
-    def test_parse_basic_identity(self):
-        """Parse basic Identity header with angle brackets."""
-        # Build a sample PASSporT JWT (just a placeholder for testing)
+    def test_parse_rfc8224_format(self):
+        """Parse RFC 8224 Identity header: JWT;info=<URI>;alg=EdDSA;ppt=vvp."""
         passport = "eyJhbGciOiJFZERTQSJ9.eyJpYXQiOjE3MDQwNjcyMDB9.sig"
-        encoded = base64.urlsafe_b64encode(passport.encode()).decode().rstrip("=")
 
-        header = f"<{encoded}>;info=https://witness.example.com/oobi/EAbc/witness;alg=EdDSA;ppt=vvp"
+        header = f"{passport};info=<https://witness.example.com/oobi/EAbc/witness>;alg=EdDSA;ppt=vvp"
 
         result = parse_identity_header(header)
 
@@ -31,35 +30,43 @@ class TestParseIdentityHeader:
         assert result.algorithm == "EdDSA"
         assert result.ppt == "vvp"
 
-    def test_parse_without_angle_brackets(self):
-        """Parse Identity header without angle brackets (legacy format)."""
+    def test_parse_legacy_angle_bracket_body(self):
+        """Parse legacy format with body in angle brackets."""
         passport = "eyJhbGciOiJFZERTQSJ9.eyJpYXQiOjE3MDQwNjcyMDB9.sig"
-        encoded = base64.urlsafe_b64encode(passport.encode()).decode().rstrip("=")
 
-        header = f"{encoded};info=https://witness.example.com/oobi/EAbc/witness;alg=EdDSA;ppt=vvp"
+        header = f"<{passport}>;info=<https://witness.example.com/oobi/EAbc/witness>;alg=EdDSA;ppt=vvp"
 
         result = parse_identity_header(header)
 
+        # Body is used directly as JWT (no base64url decode)
         assert result.passport_jwt == passport
         assert result.info_url == "https://witness.example.com/oobi/EAbc/witness"
 
     def test_parse_quoted_info(self):
-        """Parse Identity header with quoted info parameter."""
+        """Parse Identity header with quoted info parameter (legacy)."""
         passport = "test.payload.signature"
-        encoded = base64.urlsafe_b64encode(passport.encode()).decode().rstrip("=")
 
-        header = f'<{encoded}>;info="https://witness.example.com/oobi/EAbc/witness";alg=EdDSA;ppt=vvp'
+        header = f'{passport};info="https://witness.example.com/oobi/EAbc/witness";alg=EdDSA;ppt=vvp'
 
         result = parse_identity_header(header)
 
         assert result.info_url == "https://witness.example.com/oobi/EAbc/witness"
 
+    def test_parse_bare_info(self):
+        """Parse Identity header with unquoted info parameter (fallback)."""
+        passport = "test.payload.signature"
+
+        header = f"{passport};info=https://example.com/oobi;alg=EdDSA;ppt=vvp"
+
+        result = parse_identity_header(header)
+
+        assert result.info_url == "https://example.com/oobi"
+
     def test_parse_missing_ppt(self):
         """Parse Identity header without ppt parameter."""
         passport = "test.payload.signature"
-        encoded = base64.urlsafe_b64encode(passport.encode()).decode().rstrip("=")
 
-        header = f"<{encoded}>;info=https://example.com;alg=EdDSA"
+        header = f"{passport};info=<https://example.com>;alg=EdDSA"
 
         result = parse_identity_header(header)
 
@@ -80,22 +87,28 @@ class TestParseIdentityHeader:
         with pytest.raises(IdentityParseError, match="unclosed"):
             parse_identity_header("<body")
 
-    def test_parse_invalid_base64_raises(self):
-        """Invalid base64 should raise error."""
-        with pytest.raises(IdentityParseError, match="base64|UTF-8"):
-            parse_identity_header("<!!!invalid!!!>;info=https://example.com")
-
     def test_parse_url_encoded_info(self):
         """URL-encoded info parameter should be decoded."""
         passport = "test.payload.signature"
-        encoded = base64.urlsafe_b64encode(passport.encode()).decode().rstrip("=")
 
-        # URL-encoded URL
-        header = f"<{encoded}>;info=https%3A%2F%2Fexample.com%2Fpath;alg=EdDSA"
+        header = f"{passport};info=https%3A%2F%2Fexample.com%2Fpath;alg=EdDSA"
 
         result = parse_identity_header(header)
 
         assert result.info_url == "https://example.com/path"
+
+    def test_parse_whitespace_tolerance(self):
+        """Parser should tolerate whitespace around semicolons."""
+        passport = "eyJhbGciOiJFZERTQSJ9.eyJpYXQiOjE3MDQwNjcyMDB9.sig"
+
+        header = f"{passport} ; info=<https://example.com/oobi> ; alg=EdDSA ; ppt=vvp"
+
+        result = parse_identity_header(header)
+
+        assert result.passport_jwt == passport
+        assert result.info_url == "https://example.com/oobi"
+        assert result.algorithm == "EdDSA"
+        assert result.ppt == "vvp"
 
 
 class TestParsedIdentityHeader:

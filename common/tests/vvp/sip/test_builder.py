@@ -87,6 +87,17 @@ class TestBuild302Redirect:
         assert response.vvp_status == "INVALID"
         assert response.error_code == "SIGNATURE_INVALID"
 
+    def test_302_with_identity_header(self, sample_request):
+        """Sprint 57: Build 302 redirect with RFC 8224 Identity header."""
+        identity_value = "eyJhbGci.payload.sig;info=<https://w.example.com/oobi/AID>;alg=EdDSA;ppt=vvp"
+        response = build_302_redirect(
+            sample_request,
+            contact_uri="sip:+14155551234@pbx.example.com:5060",
+            identity=identity_value,
+        )
+
+        assert response.identity == identity_value
+
     def test_302_copies_transaction_headers(self, sample_request):
         """302 response copies transaction headers from request."""
         response = build_302_redirect(
@@ -250,3 +261,56 @@ class TestSIPResponseSerialization:
 
         data = response.to_bytes()
         assert data.endswith(b"\r\n\r\n")
+
+    def test_serialization_includes_identity_header(self, sample_request):
+        """Sprint 57: Serialization includes Identity header when set."""
+        identity_value = (
+            "eyJhbGci.payload.sig;"
+            "info=<https://witness.example.com/oobi/AID/controller>;"
+            "alg=EdDSA;ppt=vvp"
+        )
+        response = build_302_redirect(
+            sample_request,
+            contact_uri="sip:dest@pbx.example.com",
+            identity=identity_value,
+            vvp_identity="identity123",
+            vvp_passport="passport456",
+        )
+
+        data = response.to_bytes()
+        text = data.decode("utf-8")
+
+        assert f"Identity: {identity_value}\r\n" in text
+
+    def test_serialization_omits_identity_header_when_none(self, sample_request):
+        """Sprint 57: Identity header absent when not provided."""
+        response = build_302_redirect(
+            sample_request,
+            contact_uri="sip:dest@pbx.example.com",
+            vvp_identity="identity123",
+            vvp_passport="passport456",
+        )
+
+        data = response.to_bytes()
+        text = data.decode("utf-8")
+
+        # Use \r\nIdentity: to avoid matching P-VVP-Identity:
+        assert "\r\nIdentity: " not in text
+
+    def test_identity_header_before_vvp_headers(self, sample_request):
+        """Sprint 57: Identity header appears before P-VVP-* headers."""
+        identity_value = "eyJhbGci.payload.sig;info=<https://w.example.com/oobi/AID>;alg=EdDSA;ppt=vvp"
+        response = build_302_redirect(
+            sample_request,
+            contact_uri="sip:dest@pbx.example.com",
+            identity=identity_value,
+            vvp_identity="identity123",
+            vvp_passport="passport456",
+        )
+
+        data = response.to_bytes()
+        text = data.decode("utf-8")
+
+        identity_pos = text.index("Identity:")
+        pvvp_pos = text.index("P-VVP-Identity:")
+        assert identity_pos < pvvp_pos

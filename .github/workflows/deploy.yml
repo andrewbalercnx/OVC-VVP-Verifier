@@ -400,7 +400,8 @@ jobs:
               "VVP_POSTGRES_HOST=${{ secrets.POSTGRES_HOST }}" \
               "VVP_POSTGRES_USER=${{ secrets.POSTGRES_USER }}" \
               "VVP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" \
-              "VVP_POSTGRES_DB=${{ secrets.POSTGRES_DB }}"
+              "VVP_POSTGRES_DB=${{ secrets.POSTGRES_DB }}" \
+              "VVP_ISSUER_BASE_URL=https://vvp-issuer.rcnx.io"
 
       - name: Verify deployed version
         run: |

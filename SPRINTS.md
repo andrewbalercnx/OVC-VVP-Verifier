@@ -43,6 +43,7 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 54 | Open-Source Standalone VVP Verifier | TODO | Sprints 1-25, 44 |
 | 55 | README Update & User Manual Requirements | COMPLETE | Sprint 53 |
 | 56 | System Operator User Manual | COMPLETE | Sprint 55 |
+| 57 | Complete STIR Header Compliance | COMPLETE | Sprint 44, 42 |
 
 ---
 
@@ -3292,3 +3293,29 @@ Branch: `vvp-verifier` (orphan) — 41 files, ~11,400 lines, 81 tests passing.
 - [x] No CLAUDE.md, memory files, sprint files, review scripts, or internal tooling
 - [x] No references to monorepo structure or internal services
 - [x] Repository is fully self-contained with no external package dependencies beyond PyPI
+
+---
+
+## Sprint 57: Complete STIR Header Compliance (COMPLETE)
+
+**Goal:** Generate the standard RFC 8224 `Identity` header on the signing side, completing the full STIR header round-trip.
+
+**Context:** The VVP signing chain (issuer + sip-redirect) created PASSporT JWTs and VVP-Identity headers but never generated the standard RFC 8224 `Identity` header. The verification side (sip-verify) already parsed it. This sprint closes the gap.
+
+**RFC 8224 Identity header format:**
+```
+Identity: eyJhbGci...sig;info=<OOBI-URL>;alg=EdDSA;ppt=vvp
+```
+
+**Deliverables:**
+- [x] New `build_identity_header()` in `services/issuer/app/vvp/identity.py`
+- [x] `identity_header` field added to `CreateVVPResponse` API model
+- [x] `/vvp/create` endpoint returns RFC 8224 Identity header
+- [x] `identity` field added to common `SIPResponse` model with `to_bytes()` emission
+- [x] Common `build_302_redirect()` accepts `identity` parameter
+- [x] sip-redirect local SIP models/builder updated with `identity` field
+- [x] sip-redirect client extracts `identity_header` from issuer API response
+- [x] sip-redirect handler passes Identity through to SIP 302 response
+- [x] sip-redirect monitor event capture includes Identity header
+- [x] sip-verify Identity parser fixed: body is JWT directly (no base64url decode), `info` accepts angle-bracketed URI, whitespace tolerance around semicolons
+- [x] 55 tests pass across issuer (13), sip-redirect (12), common (19), sip-verify (11)

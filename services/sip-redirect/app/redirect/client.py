@@ -36,6 +36,7 @@ class VVPCreateResult:
     """Result from VVP create API call."""
 
     success: bool
+    identity_header: Optional[str] = None  # Sprint 57: RFC 8224 Identity header
     vvp_identity: Optional[str] = None
     vvp_passport: Optional[str] = None
     error: Optional[str] = None
@@ -249,6 +250,7 @@ class IssuerClient:
                 log.info(f"VVP create OK: orig={orig_tn}, elapsed={elapsed:.0f}ms")
                 return VVPCreateResult(
                     success=True,
+                    identity_header=data.get("identity_header"),
                     vvp_identity=data.get("vvp_identity_header"),
                     vvp_passport=data.get("passport_jwt"),
                 )

@@ -3,22 +3,25 @@
 Sprint 44: Parses the SIP Identity header per RFC 8224 to extract
 the PASSporT JWT and header parameters.
 
-Header format:
-    Identity: <base64url-passport>;info=<oobi>;alg=EdDSA;ppt=vvp
+Sprint 57: Fixed to comply with RFC 8224 §4 ABNF:
+- Body is the PASSporT compact JWS directly (no base64url wrapper)
+- info parameter uses angle-bracketed URI: info=<URI>
+- Also accepts legacy quoted-string info for backwards compatibility
 
-The header contains:
-- Body: Base64URL-encoded PASSporT JWT
-- Parameters:
-  - info: OOBI URL for key resolution (REQUIRED per VVP)
-  - alg: Signing algorithm (EdDSA for VVP)
-  - ppt: PASSporT type (vvp)
+RFC 8224 §4 ABNF:
+    signed-identity-digest SEMI ident-info *(SEMI ident-info-params)
+    signed-identity-digest = 1*(base64-char / ".")
+    ident-info = "info" EQUAL LAQUOT absoluteURI RAQUOT
+    ident-info-alg = "alg" EQUAL token
+    ident-type = "ppt" EQUAL token
+
+Example:
+    Identity: eyJhbGci...sig;info=<https://witness.example.com/oobi/AID/controller>;alg=EdDSA;ppt=vvp
 """
 
-import base64
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 from urllib.parse import unquote
 
 log = logging.getLogger(__name__)
@@ -35,11 +38,11 @@ class ParsedIdentityHeader:
     """Parsed RFC 8224 Identity header.
 
     Attributes:
-        passport_jwt: Decoded PASSporT JWT string.
+        passport_jwt: PASSporT compact JWS string (header.payload.signature).
         info_url: OOBI URL from info parameter.
         algorithm: Signing algorithm (EdDSA for VVP).
         ppt: PASSporT type (vvp).
-        raw_body: Original base64url-encoded body.
+        raw_body: Original body string from the header.
     """
 
     passport_jwt: str
@@ -49,43 +52,17 @@ class ParsedIdentityHeader:
     raw_body: str
 
 
-def _base64url_decode(data: str) -> bytes:
-    """Decode base64url-encoded data (RFC 4648 Section 5).
-
-    Handles missing padding and URL-safe alphabet.
-
-    Args:
-        data: Base64url-encoded string
-
-    Returns:
-        Decoded bytes
-
-    Raises:
-        IdentityParseError: If decoding fails
-    """
-    # Add padding if needed
-    padding = 4 - len(data) % 4
-    if padding != 4:
-        data += "=" * padding
-
-    # Replace URL-safe characters
-    data = data.replace("-", "+").replace("_", "/")
-
-    try:
-        return base64.b64decode(data)
-    except Exception as e:
-        raise IdentityParseError(f"Invalid base64url encoding: {e}")
-
-
 def parse_identity_header(header_value: str) -> ParsedIdentityHeader:
     """Parse RFC 8224 Identity header.
 
-    Per RFC 8224 Section 4.1:
-    - Identity-Spec: "<" Identity-Body ">" *( ";" Identity-Params )
-    - Identity-Body: base64url-encoded PASSporT
-    - Identity-Params: "info" "=" quoted-string
-                     | "alg" "=" token
-                     | "ppt" "=" token
+    Per RFC 8224 §4:
+    - Body is the PASSporT compact JWS (header.payload.signature)
+    - info parameter: angle-bracketed URI (info=<URI>)
+    - alg parameter: plain token
+    - ppt parameter: plain token
+
+    Accepts both RFC 8224 format (body without angle brackets) and
+    legacy format (body in angle brackets) for backwards compatibility.
 
     Args:
         header_value: Raw Identity header value
@@ -101,16 +78,16 @@ def parse_identity_header(header_value: str) -> ParsedIdentityHeader:
 
     header_value = header_value.strip()
 
-    # Extract body (may or may not be in angle brackets)
+    # Extract body — accept both formats for backwards compatibility
     if header_value.startswith("<"):
-        # RFC 8224 format: <body>;params
+        # Legacy format: <body>;params (body in angle brackets)
         match = re.match(r"<([^>]+)>(.*)$", header_value)
         if not match:
             raise IdentityParseError("Malformed Identity header: unclosed angle bracket")
         raw_body = match.group(1)
         params_str = match.group(2)
     else:
-        # Legacy format without angle brackets: body;params
+        # RFC 8224 format: body;params (body is the compact JWS directly)
         parts = header_value.split(";", 1)
         raw_body = parts[0].strip()
         params_str = ";" + parts[1] if len(parts) > 1 else ""
@@ -118,24 +95,40 @@ def parse_identity_header(header_value: str) -> ParsedIdentityHeader:
     if not raw_body:
         raise IdentityParseError("Empty Identity body")
 
-    # Decode the PASSporT JWT
-    try:
-        passport_bytes = _base64url_decode(raw_body)
-        passport_jwt = passport_bytes.decode("utf-8")
-    except UnicodeDecodeError as e:
-        raise IdentityParseError(f"PASSporT not valid UTF-8: {e}")
+    # The body IS the PASSporT compact JWS (no base64url decode needed)
+    passport_jwt = raw_body
 
-    # Parse parameters
+    # Parse parameters — accept both angle-bracketed and quoted-string info
     params = {}
     if params_str:
-        # Match semicolon-separated key=value pairs
-        # Values may be quoted or unquoted
-        param_pattern = re.compile(r';([a-zA-Z0-9-]+)=(?:"([^"]+)"|([^;]+))')
-        for match in param_pattern.finditer(params_str):
-            key = match.group(1).lower()
-            value = match.group(2) if match.group(2) else match.group(3)
-            # URL decode the value
-            params[key] = unquote(value.strip())
+        # Match info=<URI> (RFC 8224 standard)
+        # Allow optional whitespace around ; per SIP header folding rules
+        info_angle_match = re.search(r";\s*info=<([^>]+)>", params_str, re.IGNORECASE)
+        if info_angle_match:
+            params["info"] = info_angle_match.group(1)
+
+        # Match info="URI" (legacy quoted-string)
+        if "info" not in params:
+            info_quoted_match = re.search(r';\s*info="([^"]+)"', params_str, re.IGNORECASE)
+            if info_quoted_match:
+                params["info"] = unquote(info_quoted_match.group(1))
+
+        # Match info=URI (unquoted fallback)
+        if "info" not in params:
+            info_bare_match = re.search(
+                r";\s*info=([^;<>\"]+)", params_str, re.IGNORECASE
+            )
+            if info_bare_match:
+                params["info"] = unquote(info_bare_match.group(1).strip())
+
+        # Match alg and ppt (always plain tokens)
+        alg_match = re.search(r";\s*alg=([^;]+)", params_str, re.IGNORECASE)
+        if alg_match:
+            params["alg"] = alg_match.group(1).strip()
+
+        ppt_match = re.search(r";\s*ppt=([^;]+)", params_str, re.IGNORECASE)
+        if ppt_match:
+            params["ppt"] = ppt_match.group(1).strip()
 
     # Extract required parameters
     info_url = params.get("info", "")

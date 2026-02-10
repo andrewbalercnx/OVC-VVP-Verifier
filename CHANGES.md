@@ -1,5 +1,44 @@
 # VVP Verifier Change Log
 
+## Sprint 57: Complete STIR Header Compliance
+
+**Date:** 2026-02-10
+**Status:** Complete
+
+### Summary
+
+Added RFC 8224 Identity header generation to the signing side, completing the full STIR header round-trip. Previously the issuer only returned proprietary `P-VVP-Identity` and `P-VVP-Passport` headers; the standard `Identity` header required by the VVP specification was missing.
+
+Key changes:
+- New `build_identity_header()` in issuer — formats `JWT;info=<OOBI>;alg=EdDSA;ppt=vvp` per RFC 8224
+- Identity header flows through: issuer API response → sip-redirect client → SIP 302 response → sip-verify parser
+- Updated sip-verify `identity_parser.py` for RFC 8224 compliance — body is compact JWS directly (no extra base64url layer), whitespace-tolerant parameter parsing
+- Common and sip-redirect SIP models emit `Identity:` header in serialized responses
+- SIP Monitor captures Identity header in response VVP headers
+- 55 tests passing across issuer (13), sip-redirect (12), common (19), sip-verify (11)
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `services/issuer/app/vvp/identity.py` | NEW: `build_identity_header()` |
+| `services/issuer/app/api/models.py` | Add `identity_header` to `CreateVVPResponse` |
+| `services/issuer/app/api/vvp.py` | Call builder, return in response |
+| `common/common/vvp/sip/models.py` | Add `identity` field + `to_bytes()` emission |
+| `common/common/vvp/sip/builder.py` | Accept + pass through `identity` param |
+| `services/sip-redirect/app/sip/models.py` | Add `identity` field + `to_bytes()` emission |
+| `services/sip-redirect/app/sip/builder.py` | Accept + pass through `identity` param |
+| `services/sip-redirect/app/redirect/client.py` | Add `identity_header` field + extract from response |
+| `services/sip-redirect/app/redirect/handler.py` | Pass through + monitor capture |
+| `services/sip-verify/app/verify/identity_parser.py` | RFC 8224 compliance: JWT body directly, whitespace tolerance |
+| `services/issuer/tests/test_identity_header.py` | NEW: 13 builder + round-trip tests |
+| `services/sip-redirect/tests/test_builder.py` | Identity header serialization tests |
+| `common/tests/vvp/sip/test_builder.py` | Identity header in common SIP builder tests |
+| `services/sip-verify/tests/test_identity_parser.py` | Updated for RFC 8224 format |
+| `services/sip-verify/tests/test_handler.py` | Updated for RFC 8224 Identity format |
+
+---
+
 ## Sprint 54: Open-Source Standalone VVP Verifier
 
 **Date:** 2026-02-10

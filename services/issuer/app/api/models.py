@@ -396,6 +396,13 @@ class CreateVVPResponse(BaseModel):
     kid_oobi: str = Field(..., description="Full kid OOBI URL for issuer")
     iat: int = Field(..., description="Issued-at timestamp (seconds since epoch)")
     exp: int = Field(..., description="Expiry timestamp (seconds since epoch)")
+    identity_header: str = Field(
+        ...,
+        description=(
+            "RFC 8224 Identity header value. "
+            "Format: JWT;info=<OOBI-URL>;alg=EdDSA;ppt=vvp"
+        ),
+    )
     revocation_status: str = Field(
         "TRUSTED",
         description=(

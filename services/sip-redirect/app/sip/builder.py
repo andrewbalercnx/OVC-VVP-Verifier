@@ -51,8 +51,9 @@ def _copy_transaction_headers(request: SIPRequest, response: SIPResponse) -> Non
 def build_302_redirect(
     request: SIPRequest,
     contact_uri: str,
-    vvp_identity: str,
-    vvp_passport: str,
+    identity: Optional[str] = None,
+    vvp_identity: str = "",
+    vvp_passport: str = "",
     vvp_status: str = "VALID",
     brand_name: Optional[str] = None,
     brand_logo_url: Optional[str] = None,
@@ -60,6 +61,7 @@ def build_302_redirect(
     """Build 302 Moved Temporarily response with VVP headers.
 
     Used for successful VVP attestation. The response includes:
+    - Identity: RFC 8224 Identity header (Sprint 57)
     - Contact: Redirect destination
     - P-VVP-Identity: Base64url VVP-Identity header
     - P-VVP-Passport: Signed PASSporT JWT
@@ -70,6 +72,7 @@ def build_302_redirect(
     Args:
         request: Original SIP INVITE request
         contact_uri: Redirect destination URI
+        identity: RFC 8224 Identity header value (Sprint 57)
         vvp_identity: Base64url encoded VVP-Identity header
         vvp_passport: Signed PASSporT JWT
         vvp_status: Verification status (default: VALID)
@@ -83,6 +86,7 @@ def build_302_redirect(
         status_code=302,
         reason_phrase="Moved Temporarily",
         contact=f"<{contact_uri}>",
+        identity=identity,
         vvp_identity=vvp_identity,
         vvp_passport=vvp_passport,
         vvp_status=vvp_status,
