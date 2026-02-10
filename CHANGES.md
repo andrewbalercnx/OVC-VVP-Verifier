@@ -1,5 +1,35 @@
 # VVP Verifier Change Log
 
+## Sprint 54: Open-Source Standalone VVP Verifier
+
+**Date:** 2026-02-10
+**Status:** Complete
+
+### Summary
+
+Extracted the VVP verification logic into a standalone, self-contained open-source repository on the `vvp-verifier` orphan branch. The standalone verifier implements a 9-phase verification pipeline with dual SIP/HTTP interfaces, two-tier caching, and background revocation checking.
+
+Key deliverables:
+- 41 files, ~11,400 lines on `vvp-verifier` orphan branch
+- 81 tests passing (header, passport, SIP, cache, pipeline, error propagation)
+- 9-phase pipeline: Parse Identity → Parse PASSporT → Bind → Verify Ed25519 → Fetch Dossier → Validate DAG → Verify ACDC Chain → Check Revocation → Validate Authorization
+- SIP UDP interface (INVITE → 302 redirect with X-VVP-* headers)
+- FastAPI HTTP API (POST /verify, GET /healthz, GET / web UI)
+- Two-tier caching (verification result + dossier, LRU+TTL, config-fingerprinted)
+- Background revocation checker (async worker, queue dedup, REVOKED sticky)
+- Mandatory capabilities dict for subset compliance signaling (§4.2A)
+- MIT License (Rich Connexions Ltd)
+
+### Branch
+
+`vvp-verifier` (orphan branch, no monorepo history)
+
+Commits:
+- `0bc4347` Initial release: standalone VVP Verifier
+- `8509c3a` Fix code review findings: broken imports, DAG error propagation, add tests
+
+---
+
 ## Sprint 48 (addendum): Full SIP Call Flow Event Capture
 
 **Date:** 2026-02-09

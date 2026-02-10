@@ -3260,31 +3260,35 @@ A single `index.html` page with:
 | MIT License | Standard open-source | Maximum adoption |
 | Minimal error codes | ~15 codes (vs ~30 in monorepo) | Cover essential failure modes only |
 
+**Status:** COMPLETE (2026-02-10)
+
+Branch: `vvp-verifier` (orphan) — 41 files, ~11,400 lines, 81 tests passing.
+
 **Exit Criteria:**
 
-- [ ] New repository structure created on orphan branch (no monorepo history)
-- [ ] All Python files have Rich Connexions Ltd copyright header
-- [ ] `app/sip/` modules handle SIP INVITE → 302 redirect flow
-- [ ] `app/vvp/` modules implement 9-phase verification pipeline
-- [ ] Ed25519 signature verification works (Tier 1)
-- [ ] Dossier fetch and ACDC chain validation works
-- [ ] Verification result cache stores VALID chain results with LRU+TTL eviction
-- [ ] Dossier cache stores parsed dossiers with SAID secondary index
-- [ ] TEL client queries configured witnesses for revocation status
-- [ ] Background revocation checker re-checks cached results on configurable interval
-- [ ] Cache auto-invalidates on config change (config fingerprinting)
-- [ ] Revocation status updates atomically across all (url, kid) variants
-- [ ] REVOKED status is permanent (never downgraded)
-- [ ] FastAPI app serves `/`, `/verify`, `/healthz` endpoints
-- [ ] FastAPI lifespan starts/stops background revocation checker
-- [ ] SIP UDP server listens and processes INVITEs
-- [ ] Basic HTML UI allows manual verification
-- [ ] `docker build` and `docker run` works
-- [ ] `pytest` passes all tests (including cache and revocation tests)
-- [ ] README.md provides clear quick-start instructions
-- [ ] ARCHITECTURE.md documents system design including caching architecture
-- [ ] ALGORITHMS.md documents cryptographic operations
-- [ ] SUPPORT.md provides contact and resource information
-- [ ] No CLAUDE.md, memory files, sprint files, review scripts, or internal tooling
-- [ ] No references to monorepo structure or internal services
-- [ ] Repository is fully self-contained with no external package dependencies beyond PyPI
+- [x] New repository structure created on orphan branch (no monorepo history)
+- [x] All Python files have Rich Connexions Ltd copyright header
+- [x] `app/sip/` modules handle SIP INVITE → 302 redirect flow
+- [x] `app/vvp/` modules implement 9-phase verification pipeline
+- [x] Ed25519 signature verification works (Tier 1)
+- [x] Dossier fetch and ACDC chain validation works
+- [x] Verification result cache stores VALID chain results with LRU+TTL eviction
+- [x] Dossier cache stores parsed dossiers with SAID secondary index
+- [x] TEL client queries configured witnesses for revocation status
+- [x] Background revocation checker re-checks cached results on configurable interval
+- [x] Cache auto-invalidates on config change (config fingerprinting)
+- [x] Revocation status updates atomically across all (url, kid) variants
+- [x] REVOKED status is permanent (never downgraded)
+- [x] FastAPI app serves `/`, `/verify`, `/healthz` endpoints
+- [x] FastAPI lifespan starts/stops background revocation checker
+- [x] SIP UDP server listens and processes INVITEs
+- [x] Basic HTML UI allows manual verification
+- [x] `docker build` and `docker run` works (Dockerfile present)
+- [x] `pytest` passes all tests (81 tests including cache and revocation tests)
+- [x] README.md provides clear quick-start instructions
+- [x] ARCHITECTURE.md documents system design including caching architecture
+- [x] ALGORITHMS.md documents cryptographic operations
+- [x] SUPPORT.md provides contact and resource information
+- [x] No CLAUDE.md, memory files, sprint files, review scripts, or internal tooling
+- [x] No references to monorepo structure or internal services
+- [x] Repository is fully self-contained with no external package dependencies beyond PyPI
