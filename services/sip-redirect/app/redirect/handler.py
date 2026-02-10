@@ -106,6 +106,8 @@ async def _capture_event(
             "response_vvp_headers": response_vvp_headers,
             "redirect_uri": redirect_uri,
             "error": error,
+            "raw_request": request.raw.decode("utf-8", errors="replace") if request.raw else None,
+            "raw_response": response.to_bytes().decode("utf-8", errors="replace") if response else None,
         })
         log.info(f"Monitor event captured: {request.method} {vvp_status} (code={response_code})")
     except Exception as e:

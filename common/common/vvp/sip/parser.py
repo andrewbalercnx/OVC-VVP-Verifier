@@ -99,6 +99,7 @@ def parse_sip_request(data: bytes) -> Optional[SIPRequest]:
 
         # Parse headers
         via_headers = []
+        all_headers = {}  # Sprint 48: Collect all headers for monitoring
         for line in lines[1:]:
             line = line.strip()
             if not line:
@@ -108,8 +109,12 @@ def parse_sip_request(data: bytes) -> Optional[SIPRequest]:
             if not match:
                 continue
 
-            name = match.group(1).lower()
+            name_original = match.group(1)  # Preserve original case
+            name = name_original.lower()
             value = match.group(2)
+
+            # Store in all_headers with original case
+            all_headers[name_original] = value
 
             # Standard SIP headers (RFC 3261)
             if name == "via" or name == "v":
@@ -145,6 +150,7 @@ def parse_sip_request(data: bytes) -> Optional[SIPRequest]:
                 request.p_vvp_passport = value
 
         request.via = via_headers
+        request.headers = all_headers  # Sprint 48: For monitoring dashboard
 
         # Validate required headers
         if not request.via:

@@ -712,46 +712,134 @@ function renderResponseVvpTab(event) {
 
 /**
  * Render raw SIP tab
+ * Sprint 48: Shows raw request/response if captured, otherwise reconstructs from headers
  */
 function renderRawTab(event) {
-    return `
-        <pre class="raw-sip">${escapeHtml(event.raw_request || 'No raw data available')}</pre>
-    `;
+    let html = '';
+
+    if (event.raw_request) {
+        html += '<h3>Request</h3>';
+        html += `<pre class="raw-sip">${escapeHtml(event.raw_request)}</pre>`;
+    }
+
+    if (event.raw_response) {
+        html += '<h3>Response</h3>';
+        html += `<pre class="raw-sip">${escapeHtml(event.raw_response)}</pre>`;
+    }
+
+    // Fallback: reconstruct from event data
+    if (!html) {
+        html = reconstructRawSip(event);
+    }
+
+    return html;
+}
+
+/**
+ * Reconstruct a raw SIP view from event headers and metadata
+ */
+function reconstructRawSip(event) {
+    let html = '';
+
+    // Reconstruct request
+    const headers = event.headers || {};
+    const headerEntries = Object.entries(headers);
+    if (headerEntries.length > 0) {
+        let raw = `${event.method || 'INVITE'} ${event.request_uri || '?'} SIP/2.0\r\n`;
+        for (const [name, value] of headerEntries) {
+            raw += `${name}: ${value}\r\n`;
+        }
+        raw += '\r\n';
+        html += '<h3>Request (reconstructed)</h3>';
+        html += `<pre class="raw-sip">${escapeHtml(raw)}</pre>`;
+    }
+
+    // Reconstruct response from response_vvp_headers
+    const responseVvp = event.response_vvp_headers || {};
+    const responseEntries = Object.entries(responseVvp);
+    if (event.response_code && responseEntries.length > 0) {
+        const reason = event.response_code === 302 ? 'Moved Temporarily'
+            : event.response_code === 401 ? 'Unauthorized'
+            : event.response_code === 403 ? 'Forbidden'
+            : event.response_code === 404 ? 'Not Found'
+            : event.response_code === 500 ? 'Server Internal Error'
+            : 'OK';
+        let raw = `SIP/2.0 ${event.response_code} ${reason}\r\n`;
+        for (const [name, value] of responseEntries) {
+            raw += `${name}: ${value}\r\n`;
+        }
+        if (event.redirect_uri) {
+            raw += `Contact: <${event.redirect_uri}>\r\n`;
+        }
+        raw += 'Content-Length: 0\r\n\r\n';
+        html += '<h3>Response (reconstructed)</h3>';
+        html += `<pre class="raw-sip">${escapeHtml(raw)}</pre>`;
+    }
+
+    if (!html) {
+        html = '<p class="empty-message">No raw SIP data available</p>';
+    }
+
+    return html;
 }
 
 /**
  * Render PASSporT tab - decoded JWT and P-VVP-Identity
+ * Sprint 48: Also checks response_vvp_headers for signing events
  */
 function renderPassportTab(event) {
     let html = '';
     const headers = event.headers || {};
     const vvpHeaders = event.vvp_headers || {};
+    const responseVvpHeaders = event.response_vvp_headers || {};
 
-    // 1. Identity header JWT (RFC 8224 PASSporT)
+    // 1. Identity header JWT from request (RFC 8224 PASSporT)
     const identity = extractIdentityJWT(headers);
     if (identity) {
         const parsed = parseJWT(identity.jwt);
         if (parsed) {
-            html += renderJWTSection('Identity PASSporT', parsed, identity.params);
+            html += renderJWTSection('Identity PASSporT (Request)', parsed, identity.params);
         } else {
             html += '<div class="passport-error">Identity header present but JWT is malformed</div>';
         }
     }
 
-    // 2. P-VVP-Identity header (base64url JSON)
-    const pvvpValue = vvpHeaders['P-VVP-Identity'] || headers['P-VVP-Identity'];
-    if (pvvpValue) {
-        const pvvp = parsePVVPIdentity(pvvpValue);
-        if (pvvp) {
-            html += renderPVVPSection('P-VVP-Identity', pvvp);
+    // 2. P-VVP-Passport from response (signed PASSporT JWT)
+    const passportJwt = responseVvpHeaders['P-VVP-Passport'];
+    if (passportJwt) {
+        const parsed = parseJWT(passportJwt);
+        if (parsed) {
+            html += renderJWTSection('PASSporT JWT (Response)', parsed, null);
         } else {
-            html += '<div class="passport-error">P-VVP-Identity present but failed to decode</div>';
+            html += '<div class="passport-error">P-VVP-Passport present but JWT is malformed</div>';
         }
     }
 
-    // 3. No PASSporT data
+    // 3. P-VVP-Identity from request headers
+    const pvvpValueReq = vvpHeaders['P-VVP-Identity'] || headers['P-VVP-Identity'];
+    if (pvvpValueReq) {
+        const pvvp = parsePVVPIdentity(pvvpValueReq);
+        if (pvvp) {
+            html += renderPVVPSection('P-VVP-Identity (Request)', pvvp);
+        } else {
+            html += '<div class="passport-error">P-VVP-Identity (request) present but failed to decode</div>';
+        }
+    }
+
+    // 4. P-VVP-Identity from response headers
+    const pvvpValueResp = responseVvpHeaders['P-VVP-Identity'];
+    if (pvvpValueResp && pvvpValueResp !== pvvpValueReq) {
+        const pvvp = parsePVVPIdentity(pvvpValueResp);
+        if (pvvp) {
+            html += renderPVVPSection('P-VVP-Identity (Response)', pvvp);
+        } else {
+            html += '<div class="passport-error">P-VVP-Identity (response) present but failed to decode</div>';
+        }
+    }
+
+    // 5. No PASSporT data found anywhere
     if (!html) {
-        html = '<p class="empty-message">No PASSporT or VVP identity headers found in this request</p>';
+        html = '<p class="empty-message">No PASSporT or VVP identity headers found</p>';
     }
 
     return html;

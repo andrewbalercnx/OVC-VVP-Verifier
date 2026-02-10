@@ -131,6 +131,8 @@ async def _capture_event(
         "vvp_status": vvp_status,
         "response_vvp_headers": response_vvp_headers,
         "error": error,
+        "raw_request": request.raw.decode("utf-8", errors="replace") if request.raw else None,
+        "raw_response": response.to_bytes().decode("utf-8", errors="replace") if response else None,
     }
 
     # Fire-and-forget: schedule HTTP POST as background task

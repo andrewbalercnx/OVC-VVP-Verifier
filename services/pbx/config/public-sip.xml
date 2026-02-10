@@ -175,30 +175,34 @@
   </context>
 
   <!-- Redirected context: handles calls after 302 redirect from signing service -->
+  <!-- Sprint 48: Routes through verification service (5071) before delivering to extension -->
   <context name="redirected">
 
-    <!-- VVP Redirect Inbound: calls from signing service 302 redirect -->
-    <extension name="vvp-redirect-inbound">
+    <!-- VVP Redirect: signing 302 -> verification service -> extension -->
+    <extension name="vvp-redirect-to-verify">
       <condition field="destination_number" expression="^\+?44192331(\d{4})$">
-        <action application="log" data="INFO [VVP] Redirected call to +44192331$1"/>
-        <!-- Extract VVP headers from 302 response (stored as sip_rh_*) -->
+        <action application="log" data="INFO [VVP] Signing 302 redirect for +44192331$1 — routing to verification"/>
+        <!-- Extract VVP headers from signing 302 response (stored as sip_rh_*) -->
+        <action application="set" data="vvp_identity=${sip_rh_P-VVP-Identity}"/>
+        <action application="set" data="vvp_passport=${sip_rh_P-VVP-Passport}"/>
         <action application="set" data="vvp_brand_name=${sip_rh_X-VVP-Brand-Name}"/>
         <action application="set" data="vvp_brand_logo=${sip_rh_X-VVP-Brand-Logo}"/>
         <action application="set" data="vvp_status=${sip_rh_X-VVP-Status}"/>
-        <!-- URL decode -->
-        <action application="set" data="vvp_brand_name=${url_decode(${vvp_brand_name})}"/>
-        <action application="set" data="vvp_brand_logo=${url_decode(${vvp_brand_logo})}"/>
-        <action application="log" data="INFO [VVP] Redirect headers: brand=${vvp_brand_name}, status=${vvp_status}"/>
-        <!-- Export to B-leg for WebRTC client -->
+        <action application="log" data="INFO [VVP] Signing result: status=${vvp_status}, brand=${vvp_brand_name}"/>
+        <!-- Pass VVP headers to verification service as SIP request headers -->
+        <action application="export" data="nolocal:sip_h_P-VVP-Identity=${vvp_identity}"/>
+        <action application="export" data="nolocal:sip_h_P-VVP-Passport=${vvp_passport}"/>
         <action application="export" data="nolocal:sip_h_X-VVP-Brand-Name=${vvp_brand_name}"/>
         <action application="export" data="nolocal:sip_h_X-VVP-Brand-Logo=${vvp_brand_logo}"/>
         <action application="export" data="nolocal:sip_h_X-VVP-Status=${vvp_status}"/>
-        <action application="ring_ready"/>
+        <!-- When verification returns 302, route to public context (not back here) -->
+        <action application="set" data="sip_redirect_context=public"/>
         <action application="set" data="hangup_after_bridge=true"/>
-        <!-- Map TN to extension: +4419233110xx -> 10xx, +441923311xxx -> 1xxx -->
-        <action application="set" data="target_ext=$1"/>
-        <action application="log" data="INFO [VVP] Bridging to extension ${target_ext}"/>
-        <action application="bridge" data="user/${target_ext}@pbx.rcnx.io"/>
+        <action application="set" data="continue_on_fail=true"/>
+        <action application="set" data="bridge_timeout=30"/>
+        <action application="set" data="sip_invite_timeout=35"/>
+        <action application="log" data="INFO [VVP] Bridging to verification service at 127.0.0.1:5071"/>
+        <action application="bridge" data="sofia/external/${destination_number}@127.0.0.1:5071"/>
       </condition>
     </extension>
 

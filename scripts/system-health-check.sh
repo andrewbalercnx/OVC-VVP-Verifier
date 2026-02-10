@@ -716,9 +716,9 @@ check_e2e() {
         _run_freeswitch_call_test || failed=1
     fi
 
-    # Cache timing sub-phase (warn-only, does not affect exit code)
+    # Cache timing sub-phase
     if [ "$DO_TIMING" = true ]; then
-        _run_timing_tests || true
+        _run_timing_tests || failed=1
     fi
 
     return $failed
@@ -737,8 +737,9 @@ _run_sip_tests_local() {
     log_check "SIP Redirect signing (INVITE → port 5070 → Issuer API → 302)"
 
     if [ -z "$API_KEY" ]; then
-        log_warn "Signing test requires VVP_TEST_API_KEY — skipping"
-        record_result "E2E" "sip_signing" "warn" "No API key"
+        log_fail "VVP_TEST_API_KEY not set — signing test cannot run"
+        record_result "E2E" "sip_signing" "fail" "No API key provided"
+        failed=1
     else
         local sign_output
         sign_output=$(VVP_TEST_API_KEY="$API_KEY" python3 "$SIP_TEST_SCRIPT" \
@@ -788,7 +789,9 @@ _run_sip_tests_pbx() {
         api_key_env="VVP_TEST_API_KEY='$API_KEY'"
     else
         test_mode="verify"  # Skip signing if no API key
-        log_warn "No VVP_TEST_API_KEY — signing test will be skipped on PBX"
+        log_fail "VVP_TEST_API_KEY not set — signing test cannot run (set env var or pass via VVP_TEST_API_KEY=...)"
+        record_result "E2E" "sip_signing_pbx" "fail" "No API key provided"
+        failed=1
     fi
 
     local pbx_output
@@ -812,29 +815,30 @@ _run_sip_tests_pbx() {
         return 1
     }
 
-    # The pbx_output from az vm run-command includes stdout and stderr markers.
-    # Extract the JSON portion.
+    # The pbx_output from az vm run-command includes [stdout]/[stderr] markers
+    # and the JSON may be pretty-printed across multiple lines.
+    # Use Python to robustly extract the first valid JSON object containing "results".
     local json_output
-    json_output=$(echo "$pbx_output" | grep -A9999 '{"results"' | sed '$d') || json_output=""
-
-    if [ -z "$json_output" ]; then
-        # Try to find JSON anywhere in the output
-        json_output=$(echo "$pbx_output" | python3 -c "
+    json_output=$(echo "$pbx_output" | python3 -c "
 import sys, json
 text = sys.stdin.read()
-# Find JSON object in the text
-start = text.find('{\"results\"')
-if start >= 0:
-    # Find matching closing brace
-    depth = 0
-    for i in range(start, len(text)):
-        if text[i] == '{': depth += 1
-        elif text[i] == '}': depth -= 1
-        if depth == 0:
-            print(text[start:i+1])
-            break
+# Find each '{' and try to parse a JSON object containing 'results'
+for i, c in enumerate(text):
+    if c == '{':
+        depth = 0
+        for j in range(i, len(text)):
+            if text[j] == '{': depth += 1
+            elif text[j] == '}': depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(text[i:j+1])
+                    if 'results' in obj:
+                        print(json.dumps(obj))
+                        sys.exit(0)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                break
 " 2>/dev/null) || json_output=""
-    fi
 
     if [ "$VERBOSE" = true ] && [ "$JSON_OUTPUT" = false ]; then
         log_info "PBX SIP test raw output:"
@@ -955,8 +959,9 @@ _run_freeswitch_call_test() {
         record_result "E2E" "fs_originate" "fail" "Originate failed"
         failed=1
     else
-        log_warn "FreeSWITCH originate result unclear: $originate_result"
-        record_result "E2E" "fs_originate" "warn" "$originate_result"
+        log_fail "FreeSWITCH originate result unclear: $originate_result"
+        record_result "E2E" "fs_originate" "fail" "$originate_result"
+        failed=1
     fi
 
     # Check if VVP signing flow was triggered (evidence in logs)
@@ -973,8 +978,9 @@ _run_freeswitch_call_test() {
             done
         fi
     else
-        log_warn "No VVP signing evidence in FreeSWITCH logs (signing service may not have responded)"
-        record_result "E2E" "vvp_signing_flow" "warn" "No VVP log entries found"
+        log_fail "No VVP signing evidence in FreeSWITCH logs — call was not signed"
+        record_result "E2E" "vvp_signing_flow" "fail" "No VVP log entries found"
+        failed=1
     fi
 
     return $failed
@@ -991,9 +997,9 @@ _run_timing_tests() {
     fi
 
     if [ -z "$API_KEY" ]; then
-        log_warn "Timing tests require VVP_TEST_API_KEY — skipping"
-        record_result "E2E" "cache_timing" "warn" "No API key"
-        return 0
+        log_fail "VVP_TEST_API_KEY not set — timing tests cannot run"
+        record_result "E2E" "cache_timing" "fail" "No API key provided"
+        return 1
     fi
 
     # Deploy sip-call-test.py to PBX and run chained timing
@@ -1027,20 +1033,26 @@ _run_timing_tests() {
         return 0  # warn, not fail
     }
 
-    # Extract JSON from az vm run-command output
+    # Extract JSON from az vm run-command output (may be pretty-printed)
     local json_output
     json_output=$(echo "$timing_output" | python3 -c "
 import sys, json
 text = sys.stdin.read()
-start = text.find('{\"results\"')
-if start >= 0:
-    depth = 0
-    for i in range(start, len(text)):
-        if text[i] == '{': depth += 1
-        elif text[i] == '}': depth -= 1
-        if depth == 0:
-            print(text[start:i+1])
-            break
+for i, c in enumerate(text):
+    if c == '{':
+        depth = 0
+        for j in range(i, len(text)):
+            if text[j] == '{': depth += 1
+            elif text[j] == '}': depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(text[i:j+1])
+                    if 'results' in obj:
+                        print(json.dumps(obj))
+                        sys.exit(0)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                break
 " 2>/dev/null) || json_output=""
 
     if [ "$VERBOSE" = true ] && [ "$JSON_OUTPUT" = false ]; then
