@@ -43,14 +43,12 @@ class TestBuild302Redirect:
             contact_uri="sip:+14445678901@carrier.com",
             vvp_identity="base64url-identity",
             vvp_passport="eyJhbGciOiJFZERTQSJ9...",
-            vvp_status="VALID",
         )
 
         assert response.status_code == 302
         assert response.reason_phrase == "Moved Temporarily"
         assert response.vvp_identity == "base64url-identity"
         assert response.vvp_passport == "eyJhbGciOiJFZERTQSJ9..."
-        assert response.vvp_status == "VALID"
 
     def test_copies_transaction_headers(self, sample_request):
         """Test that transaction headers are copied from request."""
@@ -72,19 +70,25 @@ class TestBuild302Redirect:
         assert response.call_id == sample_request.call_id
         assert response.cseq == sample_request.cseq
 
-    def test_includes_brand_info(self, sample_request):
-        """Test brand info is included in response."""
+    def test_no_xvvp_headers_in_signing_302(self, sample_request):
+        """Signing 302 must NOT include X-VVP brand/status headers.
+
+        Brand name, logo, and status are set exclusively by the
+        verification service — not the signing service.
+        """
         response = build_302_redirect(
             request=sample_request,
             contact_uri="sip:+14445678901@carrier.com",
             vvp_identity="identity",
             vvp_passport="passport",
-            brand_name="Test Corp",
-            brand_logo_url="https://example.com/logo.png",
         )
 
-        assert response.brand_name == "Test Corp"
-        assert response.brand_logo_url == "https://example.com/logo.png"
+        data = response.to_bytes()
+        text = data.decode("utf-8")
+
+        assert "X-VVP-Brand-Name:" not in text
+        assert "X-VVP-Brand-Logo:" not in text
+        assert "X-VVP-Status:" not in text
 
     def test_serialization(self, sample_request):
         """Test response serializes correctly."""
@@ -93,8 +97,6 @@ class TestBuild302Redirect:
             contact_uri="sip:+14445678901@carrier.com",
             vvp_identity="test-identity",
             vvp_passport="test-passport",
-            vvp_status="VALID",
-            brand_name="Test Corp",
         )
 
         data = response.to_bytes()
@@ -108,12 +110,13 @@ class TestBuild302Redirect:
         assert "To: <sip:+14445678901@carrier.com>" in text
         assert "Call-ID: a84b4c76e66710@enterprise.com\r\n" in text
         assert "CSeq: 314159 INVITE\r\n" in text
-        # Check VVP headers
+        # Check STIR attestation headers
         assert "P-VVP-Identity: test-identity\r\n" in text
         assert "P-VVP-Passport: test-passport\r\n" in text
-        assert "X-VVP-Status: VALID\r\n" in text
-        assert "X-VVP-Brand-Name: Test Corp\r\n" in text
-
+        # Must NOT include X-VVP headers
+        assert "X-VVP-Status:" not in text
+        assert "X-VVP-Brand-Name:" not in text
+        assert "X-VVP-Brand-Logo:" not in text
 
     def test_identity_header_in_serialization(self, sample_request):
         """Sprint 57: Test Identity header appears in serialized response."""

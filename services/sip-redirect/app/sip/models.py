@@ -87,7 +87,7 @@ class SIPResponse:
     # VVP headers for 302 redirect
     vvp_identity: Optional[str] = None
     vvp_passport: Optional[str] = None
-    vvp_status: str = "INDETERMINATE"  # VALID | INVALID | INDETERMINATE
+    vvp_status: Optional[str] = None    # VALID | INVALID | INDETERMINATE
     brand_name: Optional[str] = None
     brand_logo_url: Optional[str] = None
 
@@ -126,9 +126,8 @@ class SIPResponse:
             lines.append(f"X-VVP-Brand-Name: {self.brand_name}")
         if self.brand_logo_url:
             lines.append(f"X-VVP-Brand-Logo: {self.brand_logo_url}")
-
-        # Always include VVP status
-        lines.append(f"X-VVP-Status: {self.vvp_status}")
+        if self.vvp_status:
+            lines.append(f"X-VVP-Status: {self.vvp_status}")
 
         # Content-Length (always 0 for redirects)
         lines.append("Content-Length: 0")

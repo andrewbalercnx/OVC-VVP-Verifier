@@ -54,20 +54,18 @@ def build_302_redirect(
     identity: Optional[str] = None,
     vvp_identity: str = "",
     vvp_passport: str = "",
-    vvp_status: str = "VALID",
-    brand_name: Optional[str] = None,
-    brand_logo_url: Optional[str] = None,
 ) -> SIPResponse:
-    """Build 302 Moved Temporarily response with VVP headers.
+    """Build 302 Moved Temporarily response with STIR attestation headers.
 
-    Used for successful VVP attestation. The response includes:
+    The signing service returns ONLY STIR attestation headers.
+    Brand name/logo/status are set exclusively by the verification
+    service after it validates the PASSporT.
+
+    Headers included:
     - Identity: RFC 8224 Identity header (Sprint 57)
     - Contact: Redirect destination
     - P-VVP-Identity: Base64url VVP-Identity header
     - P-VVP-Passport: Signed PASSporT JWT
-    - X-VVP-Brand-Name: Organization name (optional)
-    - X-VVP-Brand-Logo: Logo URL (optional)
-    - X-VVP-Status: VALID | INVALID | INDETERMINATE
 
     Args:
         request: Original SIP INVITE request
@@ -75,9 +73,6 @@ def build_302_redirect(
         identity: RFC 8224 Identity header value (Sprint 57)
         vvp_identity: Base64url encoded VVP-Identity header
         vvp_passport: Signed PASSporT JWT
-        vvp_status: Verification status (default: VALID)
-        brand_name: Organization name for display
-        brand_logo_url: Logo URL for display
 
     Returns:
         SIPResponse ready to send
@@ -89,9 +84,6 @@ def build_302_redirect(
         identity=identity,
         vvp_identity=vvp_identity,
         vvp_passport=vvp_passport,
-        vvp_status=vvp_status,
-        brand_name=brand_name,
-        brand_logo_url=brand_logo_url,
     )
     _copy_transaction_headers(request, response)
     return response

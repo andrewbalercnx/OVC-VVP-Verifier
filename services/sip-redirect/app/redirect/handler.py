@@ -238,15 +238,15 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
         # Contact URI is the original request URI (enterprise routes the call)
         contact_uri = request.request_uri
 
+        # Signing service returns ONLY STIR attestation headers — no X-VVP-*
+        # brand/status headers. Brand name/logo/status are set exclusively by
+        # the verification service after it validates the PASSporT.
         response = build_302_redirect(
             request=request,
             contact_uri=contact_uri,
             identity=vvp_result.identity_header,
             vvp_identity=vvp_result.vvp_identity,
             vvp_passport=vvp_result.vvp_passport,
-            vvp_status="VALID",
-            brand_name=lookup_result.brand_name,
-            brand_logo_url=lookup_result.brand_logo_url,
         )
 
         audit.log(

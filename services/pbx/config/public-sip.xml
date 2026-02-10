@@ -185,19 +185,16 @@
     <extension name="vvp-redirect-to-verify">
       <condition field="destination_number" expression="^\+?44192331(\d{4})$">
         <action application="log" data="INFO [VVP] Signing 302 redirect for +44192331$1 — routing to verification"/>
-        <!-- Extract VVP headers from signing 302 response (stored as sip_rh_*) -->
+        <!-- Extract STIR attestation headers from signing 302 response (stored as sip_rh_*) -->
+        <!-- Signing service returns: Identity, P-VVP-Identity, P-VVP-Passport (no X-VVP-*) -->
+        <action application="set" data="vvp_identity_hdr=${sip_rh_Identity}"/>
         <action application="set" data="vvp_identity=${sip_rh_P-VVP-Identity}"/>
         <action application="set" data="vvp_passport=${sip_rh_P-VVP-Passport}"/>
-        <action application="set" data="vvp_brand_name=${sip_rh_X-VVP-Brand-Name}"/>
-        <action application="set" data="vvp_brand_logo=${sip_rh_X-VVP-Brand-Logo}"/>
-        <action application="set" data="vvp_status=${sip_rh_X-VVP-Status}"/>
-        <action application="log" data="INFO [VVP] Signing result: status=${vvp_status}, brand=${vvp_brand_name}"/>
-        <!-- Pass VVP headers to verification service as SIP request headers -->
+        <action application="log" data="INFO [VVP] Signing result: Identity present=${vvp_identity_hdr:+yes:no}, P-VVP-Passport present=${vvp_passport:+yes:no}"/>
+        <!-- Forward STIR attestation headers to verification service -->
+        <action application="export" data="nolocal:sip_h_Identity=${vvp_identity_hdr}"/>
         <action application="export" data="nolocal:sip_h_P-VVP-Identity=${vvp_identity}"/>
         <action application="export" data="nolocal:sip_h_P-VVP-Passport=${vvp_passport}"/>
-        <action application="export" data="nolocal:sip_h_X-VVP-Brand-Name=${vvp_brand_name}"/>
-        <action application="export" data="nolocal:sip_h_X-VVP-Brand-Logo=${vvp_brand_logo}"/>
-        <action application="export" data="nolocal:sip_h_X-VVP-Status=${vvp_status}"/>
         <!-- When verification returns 302, route to verified context for delivery -->
         <!-- Use export (not set) so the B-leg inherits the updated redirect context -->
         <action application="export" data="sip_redirect_context=verified"/>
