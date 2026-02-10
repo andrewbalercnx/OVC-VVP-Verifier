@@ -505,14 +505,11 @@ function showTab(tabName) {
         case 'summary':
             content.innerHTML = renderSummaryTab(event);
             break;
-        case 'headers':
-            content.innerHTML = renderHeadersTab(event);
+        case 'request':
+            content.innerHTML = renderRequestTab(event);
             break;
-        case 'vvp':
-            content.innerHTML = renderVvpTab(event);
-            break;
-        case 'response-vvp':
-            content.innerHTML = renderResponseVvpTab(event);
+        case 'response':
+            content.innerHTML = renderResponseTab(event);
             break;
         case 'passport':
             content.innerHTML = renderPassportTab(event);
@@ -580,134 +577,171 @@ function renderSummaryTab(event) {
 }
 
 /**
- * Render all headers tab
+ * Check if a header name is a VVP-specific header
  */
-function renderHeadersTab(event) {
+function isVvpHeader(name) {
+    const lower = name.toLowerCase();
+    return lower.startsWith('x-vvp-') || lower.startsWith('p-vvp-') || lower === 'identity';
+}
+
+/**
+ * Get SIP reason phrase for a response code
+ */
+function getReasonPhrase(code) {
+    const reasons = {
+        200: 'OK',
+        302: 'Moved Temporarily',
+        400: 'Bad Request',
+        401: 'Unauthorized',
+        403: 'Forbidden',
+        404: 'Not Found',
+        500: 'Server Internal Error',
+    };
+    return reasons[code] || '';
+}
+
+/**
+ * Render "Open in VVP Explorer" button for a PASSporT JWT
+ */
+function renderExplorerButton(jwt) {
+    const url = `https://vvp.rcnx.io/verify/explore?jwt=${encodeURIComponent(jwt)}`;
+    return `
+        <div class="explorer-link">
+            <a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="btn btn-primary explorer-btn">
+                Open in VVP Explorer &#x2197;
+            </a>
+        </div>
+    `;
+}
+
+/**
+ * Render request tab — shows service context, VVP headers, and all SIP headers
+ */
+function renderRequestTab(event) {
+    const service = event.service || 'SIGNING';
+    const serviceClass = service === 'SIGNING' ? 'service-signing' : 'service-verify';
+    const serviceLabel = service === 'SIGNING' ? 'Signing Request' : 'Verification Request';
     const headers = event.headers || {};
-    const rows = Object.entries(headers)
-        .map(([name, value]) => `
-            <tr>
-                <td class="header-name">${escapeHtml(name)}</td>
-                <td class="header-value">${escapeHtml(value)}</td>
-            </tr>
-        `)
-        .join('');
-
-    if (!rows) {
-        return '<p class="empty-message">No headers found</p>';
-    }
-
-    return `
-        <table class="headers-table">
-            <thead>
-                <tr>
-                    <th>Header</th>
-                    <th>Value</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${rows}
-            </tbody>
-        </table>
-    `;
-}
-
-/**
- * Render VVP headers tab
- */
-function renderVvpTab(event) {
     const vvpHeaders = event.vvp_headers || {};
-    const entries = Object.entries(vvpHeaders);
 
-    if (entries.length === 0) {
-        return '<p class="empty-message">No VVP headers found in this request</p>';
-    }
+    let html = '';
 
-    const rows = entries
-        .map(([name, value]) => `
-            <tr>
-                <td class="header-name">${escapeHtml(name)}</td>
-                <td class="header-value">${escapeHtml(value)}</td>
-            </tr>
-        `)
-        .join('');
-
-    // Check for VVP status
-    const status = vvpHeaders['X-VVP-Status'] || '';
-    const statusClass = getVvpStatusClass(vvpHeaders, {});
-
-    let statusBanner = '';
-    if (status) {
-        statusBanner = `
-            <div class="vvp-status-banner ${statusClass}">
-                VVP Status: <strong>${escapeHtml(status)}</strong>
-            </div>
-        `;
-    }
-
-    return `
-        ${statusBanner}
-        <table class="headers-table vvp-headers">
-            <thead>
-                <tr>
-                    <th>Request VVP Header</th>
-                    <th>Value</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${rows}
-            </tbody>
-        </table>
+    // Service context banner
+    html += `
+        <div class="request-context">
+            <span class="badge ${serviceClass}">${escapeHtml(service)}</span>
+            <span class="context-label">${escapeHtml(serviceLabel)}</span>
+        </div>
     `;
+
+    // VVP headers section (highlighted)
+    const vvpEntries = Object.entries(vvpHeaders);
+    if (vvpEntries.length > 0) {
+        html += '<h3 class="section-heading">VVP Headers</h3>';
+        html += '<table class="headers-table vvp-headers"><thead><tr><th>Header</th><th>Value</th></tr></thead><tbody>';
+        for (const [name, value] of vvpEntries) {
+            html += `
+                <tr class="vvp-highlight">
+                    <td class="header-name">${escapeHtml(name)}</td>
+                    <td class="header-value">${escapeHtml(value)}</td>
+                </tr>
+            `;
+        }
+        html += '</tbody></table>';
+    }
+
+    // All SIP headers
+    const headerEntries = Object.entries(headers);
+    if (headerEntries.length > 0) {
+        html += '<h3 class="section-heading">All SIP Headers</h3>';
+        html += '<table class="headers-table"><thead><tr><th>Header</th><th>Value</th></tr></thead><tbody>';
+        for (const [name, value] of headerEntries) {
+            const cls = isVvpHeader(name) ? ' class="vvp-highlight"' : '';
+            html += `
+                <tr${cls}>
+                    <td class="header-name">${escapeHtml(name)}</td>
+                    <td class="header-value">${escapeHtml(value)}</td>
+                </tr>
+            `;
+        }
+        html += '</tbody></table>';
+    }
+
+    if (vvpEntries.length === 0 && headerEntries.length === 0) {
+        html = '<p class="empty-message">No request headers found</p>';
+    }
+
+    return html;
 }
 
 /**
- * Render Response VVP headers tab (Sprint 48)
+ * Render response tab — shows response code, redirect URI, VVP status, response headers, Explorer link
  */
-function renderResponseVvpTab(event) {
+function renderResponseTab(event) {
     const responseVvpHeaders = event.response_vvp_headers || {};
-    const entries = Object.entries(responseVvpHeaders);
+    const responseCode = event.response_code;
+    const redirectUri = event.redirect_uri;
 
-    if (entries.length === 0) {
-        return '<p class="empty-message">No VVP headers found in the response</p>';
+    let html = '';
+
+    // Response summary
+    const reason = getReasonPhrase(responseCode);
+    const codeClass = responseCode >= 200 && responseCode < 400 ? 'status-valid'
+                    : responseCode >= 400 ? 'status-invalid'
+                    : 'status-unknown';
+
+    html += '<div class="response-summary">';
+    html += `
+        <div class="response-field">
+            <label>Response Code</label>
+            <value><span class="badge ${codeClass}">${escapeHtml(String(responseCode))} ${escapeHtml(reason)}</span></value>
+        </div>
+    `;
+    if (redirectUri) {
+        html += `
+            <div class="response-field">
+                <label>Redirect URI</label>
+                <value class="monospace" style="word-break: break-all; font-size: 0.8125rem;">${escapeHtml(redirectUri)}</value>
+            </div>
+        `;
     }
+    html += '</div>';
 
-    const rows = entries
-        .map(([name, value]) => `
-            <tr>
-                <td class="header-name">${escapeHtml(name)}</td>
-                <td class="header-value">${escapeHtml(value)}</td>
-            </tr>
-        `)
-        .join('');
-
-    // Check for VVP status in response headers
+    // VVP Status banner
     const status = responseVvpHeaders['X-VVP-Status'] || '';
-    const statusClass = getVvpStatusClass({}, responseVvpHeaders);
-
-    let statusBanner = '';
     if (status) {
-        statusBanner = `
+        const statusClass = getVvpStatusClass({}, responseVvpHeaders);
+        html += `
             <div class="vvp-status-banner ${statusClass}">
                 VVP Status: <strong>${escapeHtml(status)}</strong>
             </div>
         `;
     }
 
-    return `
-        ${statusBanner}
-        <table class="headers-table vvp-headers">
-            <thead>
+    // Response VVP headers table
+    const entries = Object.entries(responseVvpHeaders);
+    if (entries.length > 0) {
+        html += '<table class="headers-table vvp-headers"><thead><tr><th>Response Header</th><th>Value</th></tr></thead><tbody>';
+        for (const [name, value] of entries) {
+            html += `
                 <tr>
-                    <th>Response VVP Header</th>
-                    <th>Value</th>
+                    <td class="header-name">${escapeHtml(name)}</td>
+                    <td class="header-value">${escapeHtml(value)}</td>
                 </tr>
-            </thead>
-            <tbody>
-                ${rows}
-            </tbody>
-        </table>
-    `;
+            `;
+        }
+        html += '</tbody></table>';
+    } else {
+        html += '<p class="empty-message">No VVP headers in response</p>';
+    }
+
+    // VVP Explorer button if PASSporT JWT available
+    const passportJwt = responseVvpHeaders['P-VVP-Passport'];
+    if (passportJwt) {
+        html += renderExplorerButton(passportJwt);
+    }
+
+    return html;
 }
 
 /**
@@ -758,12 +792,7 @@ function reconstructRawSip(event) {
     const responseVvp = event.response_vvp_headers || {};
     const responseEntries = Object.entries(responseVvp);
     if (event.response_code && responseEntries.length > 0) {
-        const reason = event.response_code === 302 ? 'Moved Temporarily'
-            : event.response_code === 401 ? 'Unauthorized'
-            : event.response_code === 403 ? 'Forbidden'
-            : event.response_code === 404 ? 'Not Found'
-            : event.response_code === 500 ? 'Server Internal Error'
-            : 'OK';
+        const reason = getReasonPhrase(event.response_code) || 'OK';
         let raw = `SIP/2.0 ${event.response_code} ${reason}\r\n`;
         for (const [name, value] of responseEntries) {
             raw += `${name}: ${value}\r\n`;
@@ -798,7 +827,7 @@ function renderPassportTab(event) {
     if (identity) {
         const parsed = parseJWT(identity.jwt);
         if (parsed) {
-            html += renderJWTSection('Identity PASSporT (Request)', parsed, identity.params);
+            html += renderJWTSection('Identity PASSporT (Request)', parsed, identity.params, identity.jwt);
         } else {
             html += '<div class="passport-error">Identity header present but JWT is malformed</div>';
         }
@@ -809,7 +838,7 @@ function renderPassportTab(event) {
     if (passportJwt) {
         const parsed = parseJWT(passportJwt);
         if (parsed) {
-            html += renderJWTSection('PASSporT JWT (Response)', parsed, null);
+            html += renderJWTSection('PASSporT JWT (Response)', parsed, null, passportJwt);
         } else {
             html += '<div class="passport-error">P-VVP-Passport present but JWT is malformed</div>';
         }
@@ -848,7 +877,7 @@ function renderPassportTab(event) {
 /**
  * Render decoded JWT section with VVP field highlighting
  */
-function renderJWTSection(title, parsed, params) {
+function renderJWTSection(title, parsed, params, rawJwt) {
     const vvpBadge = parsed.isVVP
         ? '<span class="badge status-valid">VVP</span>'
         : '<span class="badge status-invalid">NOT VVP</span>';
@@ -887,6 +916,11 @@ function renderJWTSection(title, parsed, params) {
     html += `<div class="passport-signature">`;
     html += `<code>${escapeHtml(sigDisplay)}</code>`;
     html += `</div>`;
+
+    // VVP Explorer deep-link
+    if (parsed.isVVP && rawJwt) {
+        html += renderExplorerButton(rawJwt);
+    }
 
     html += `</div>`;
     return html;

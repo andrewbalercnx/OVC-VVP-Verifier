@@ -104,13 +104,18 @@ def verify_simple(request: Request):
 
 
 @app.get("/verify/explore")
-def verify_explore(request: Request):
-    """Serve the tabbed explorer page with JWT/SIP/SAID inputs."""
+def verify_explore(request: Request, jwt: str = ""):
+    """Serve the tabbed explorer page with JWT/SIP/SAID inputs.
+
+    Supports pre-filling the JWT input via ?jwt= query parameter,
+    enabling deep-linking from the SIP Monitor dashboard.
+    """
     return templates.TemplateResponse("tabbed_explorer.html", {
         "request": request,
-        "default_jwt": DEFAULT_TEST_JWT,
+        "default_jwt": jwt if jwt else DEFAULT_TEST_JWT,
         "default_sip": DEFAULT_TEST_SIP,
         "default_said": DEFAULT_TEST_SAID,
+        "prefilled": bool(jwt),
     })
 
 

@@ -164,6 +164,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initial update
     updateEvdUrl();
+
+    {% if prefilled %}
+    // Auto-resolve when JWT was pre-filled via query parameter
+    setTimeout(function() {
+        var jwtForm = document.querySelector('#panel-jwt form');
+        if (jwtForm) htmx.trigger(jwtForm, 'submit');
+    }, 300);
+    {% endif %}
 });
 </script>
 {% endblock %}

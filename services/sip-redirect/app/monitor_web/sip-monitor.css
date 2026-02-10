@@ -526,6 +526,92 @@ h2 { font-size: 1.125rem; }
 }
 
 /* =============================================================================
+   REQUEST / RESPONSE TABS
+   ============================================================================= */
+
+/* Context banner showing service type */
+.request-context,
+.response-context {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background-color: var(--bg-secondary);
+    border-radius: var(--border-radius);
+}
+
+.context-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+/* Section headings within tabs */
+.section-heading {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    margin: var(--spacing-md) 0 var(--spacing-sm);
+    padding-bottom: var(--spacing-xs);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.section-heading:first-child {
+    margin-top: 0;
+}
+
+/* VVP header row highlighting */
+.vvp-highlight td {
+    background-color: rgba(139, 92, 246, 0.06);
+}
+
+.vvp-highlight .header-name {
+    color: var(--service-signing);
+    font-weight: 600;
+}
+
+/* Response summary block */
+.response-summary {
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-md);
+    background-color: var(--bg-secondary);
+    border-radius: var(--border-radius);
+}
+
+.response-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    margin-top: var(--spacing-sm);
+}
+
+.response-field:first-child {
+    margin-top: 0;
+}
+
+.response-field label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+/* VVP Explorer deep-link button */
+.explorer-link {
+    margin-top: var(--spacing-md);
+    padding-top: var(--spacing-md);
+    border-top: 1px solid var(--border-color);
+}
+
+.explorer-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    text-decoration: none;
+}
+
+/* =============================================================================
    VVP STATUS BANNER
    ============================================================================= */
 
