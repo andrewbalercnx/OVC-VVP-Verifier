@@ -229,6 +229,8 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
             dest_tn=to_tn or "",
             call_id=call_id,
             cseq=cseq_num,
+            brand_name=lookup_result.brand_name,
+            brand_logo_url=lookup_result.brand_logo_url,
         )
 
         if not vvp_result.success:

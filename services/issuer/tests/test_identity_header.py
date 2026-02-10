@@ -177,10 +177,11 @@ class TestCardClaimInPassport:
         card = build_card_claim(attrs)
 
         assert card is not None
-        assert card["org"] == "ACME Corp"
-        assert card["fn"] == "ACME"
-        assert card["logo"] == "https://cdn.acme.com/logo.png"
-        assert card["url"] == "https://www.acme.com"
+        assert isinstance(card, list)
+        assert "ORG:ACME Corp" in card
+        assert "NICKNAME:ACME" in card
+        assert "LOGO;VALUE=URI:https://cdn.acme.com/logo.png" in card
+        assert "URL:https://www.acme.com" in card
 
     def test_card_claim_json_serializable(self):
         """Card claim must be JSON-serializable for JWT payload."""
