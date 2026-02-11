@@ -115,7 +115,7 @@ class ACDC:
             vcard = self.attributes.get("vcard")
             if vcard and _extract_lei_from_vcard(vcard):
                 return "LE"  # vCard-based Legal Entity credential
-            if "phone" in self.attributes or "tn" in self.attributes:
+            if "phone" in self.attributes or "tn" in self.attributes or "numbers" in self.attributes:
                 return "TNAlloc"  # TN Allocation credential
 
         # Check edges for credential type hints (fallback)

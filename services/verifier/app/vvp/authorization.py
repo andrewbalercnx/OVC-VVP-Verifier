@@ -447,6 +447,8 @@ def verify_tn_rights(
         ) or (
             tnalloc.attributes.get("phone") if tnalloc.attributes else None
         ) or (
+            tnalloc.attributes.get("numbers") if tnalloc.attributes else None
+        ) or (
             tnalloc.attributes.get("allocation") if tnalloc.attributes else None
         )
 

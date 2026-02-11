@@ -91,8 +91,9 @@ KNOWN_SCHEMA_SAIDS: Dict[str, FrozenSet[str]] = {
 
     # TN Allocation
     # Source: VVP Draft - pending vLEI governance publication
-    # Policy: Accept any schema until governance publishes official SAIDs
-    "TNAlloc": frozenset(),
+    "TNAlloc": frozenset({
+        "EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ",  # Base TN Allocation
+    }),
 }
 
 # Schema source documentation for audit/compliance

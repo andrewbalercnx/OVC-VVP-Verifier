@@ -194,19 +194,18 @@ def step_issue_tn_allocation(base_url, org_api_key, org_aid, registry_name, tn_r
 
 
 def step_issue_brand_credential(base_url, org_api_key, org_aid, registry_name,
-                                 le_said, brand_name, brand_logo_url):
-    """Step 3c: Issue Extended Brand Credential linked to LE credential.
+                                 le_said, brand_name, brand_logo_url,
+                                 tnalloc_saids=None):
+    """Step 3c: Issue Extended Brand Credential linked to LE + TNAlloc credentials.
 
     Sprint 60: The brand credential carries brand identity (name, logo, etc.)
-    and becomes the dossier root. The dossier builder DFS walks:
-    brand → LE → QVI, giving the verifier the full credential chain
-    including brand evidence.
-
-    The verifier extracts brand info from the card claim in the PASSporT,
-    validated against the brand credential in the dossier.
+    and becomes the dossier root. The dossier builder DFS walks edges:
+    brand → LE → QVI, brand → TNAlloc0, brand → TNAlloc1, giving the verifier
+    the full credential chain including brand evidence and TN rights.
     """
     BRAND_SCHEMA = "EK7kPhs5YkPsq9mZgUfPYfU-zq5iSlU8XVYJWqrVPk6g"
     LE_SCHEMA = "ENPXp1vQzRF6JwIuS-mp2U8Uf1MKAIuPchgRiMCe48Mb"
+    TN_ALLOC_SCHEMA = "EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ"
 
     print(f"\n[3c/5] Issuing Extended Brand Credential...")
     print(f"  Brand Name:     {brand_name}")
@@ -220,6 +219,21 @@ def step_issue_brand_credential(base_url, org_api_key, org_aid, registry_name,
     if brand_logo_url:
         attributes["logoUrl"] = brand_logo_url
 
+    # Build edges: LE (required) + TNAlloc credentials (for TN rights in dossier)
+    edges = {
+        "le": {
+            "n": le_said,
+            "s": LE_SCHEMA,
+        }
+    }
+    if tnalloc_saids:
+        for i, said in enumerate(tnalloc_saids):
+            edges[f"tnAlloc{i}"] = {
+                "n": said,
+                "s": TN_ALLOC_SCHEMA,
+            }
+        print(f"  TNAlloc edges:  {len(tnalloc_saids)} credentials linked")
+
     status, body = api_call(
         "POST",
         f"{base_url}/credential/issue",
@@ -227,12 +241,7 @@ def step_issue_brand_credential(base_url, org_api_key, org_aid, registry_name,
             "registry_name": registry_name,
             "schema_said": BRAND_SCHEMA,
             "attributes": attributes,
-            "edges": {
-                "le": {
-                    "n": le_said,
-                    "s": LE_SCHEMA,
-                }
-            },
+            "edges": edges,
             "rules": {
                 "brandUsageTerms": "The brand credential holder agrees to use this brand identity only for legitimate communications and in accordance with the brand owner's guidelines and applicable regulations."
             },
@@ -422,22 +431,25 @@ def main():
     org_aid = org.get("aid", "")
     registry_name = f"{identity_name}-registry"
 
-    # Step 3b: Issue TN Allocation credentials
+    # Step 3b: Issue TN Allocation credentials (before brand, so SAIDs can be linked)
     tn_ranges = [
         {"start": "+441923311000", "end": "+441923311099"},  # UK test range
         {"start": "+15551001000", "end": "+15551001099"},    # US test range
     ]
+    tnalloc_results = []
     if org_aid:
-        step_issue_tn_allocation(
+        tnalloc_results = step_issue_tn_allocation(
             base_url, org_api_key, org_aid, registry_name, tn_ranges,
         )
 
-    # Step 3c: Issue brand credential (Sprint 60)
+    # Step 3c: Issue brand credential with edges to LE + TNAlloc credentials
     brand_said = None
+    tnalloc_saids = [r["said"] for r in tnalloc_results] if tnalloc_results else None
     if le_said and org_aid:
         brand_said = step_issue_brand_credential(
             base_url, org_api_key, org_aid, registry_name,
             le_said, args.brand_name, args.brand_logo,
+            tnalloc_saids=tnalloc_saids,
         )
 
     # Sprint 60: Use brand credential as dossier root (brand → LE → QVI chain).
