@@ -162,7 +162,19 @@ class MockVLEIManager:
             qvi_registry_key = qvi_registry.regk
             log.info(f"Found existing mock QVI registry: {qvi_registry_key[:16]}...")
 
-        # 5. Issue QVI credential from mock-gleif to mock-qvi (if not exists)
+        # 5. Publish all mock vLEI identities to witnesses for OOBI resolution
+        try:
+            from app.keri.witness import get_witness_publisher
+            publisher = get_witness_publisher()
+            for aid_info in [gleif_info, qvi_info]:
+                kel_bytes = await identity_mgr.get_kel_bytes(aid_info.aid)
+                pub = await publisher.publish_oobi(aid_info.aid, kel_bytes)
+                log.info(f"Published {aid_info.name} to witnesses: "
+                         f"{pub.success_count}/{pub.total_count}")
+        except Exception as e:
+            log.warning(f"Failed to publish mock vLEI identities to witnesses: {e}")
+
+        # 6. Issue QVI credential from mock-gleif to mock-qvi (if not exists)
         qvi_cred_said = await self._get_or_issue_qvi_credential(
             issuer=issuer,
             gleif_registry_name=gleif_registry_name,

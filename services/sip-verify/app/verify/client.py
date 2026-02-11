@@ -216,6 +216,16 @@ class VerifierClient:
             async with session.post(url, json=request_body, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
+                    log.info(f"Verifier response for call_id={call_id}: status={data.get('overall_status')}, errors={data.get('errors', [])}, brand={data.get('brand_name')}, cache_hit={data.get('cache_hit')}")
+                    if data.get("overall_status") != "VALID":
+                        # Log claim tree for debugging
+                        import json
+                        claims = data.get("claims", [])
+                        for claim in claims:
+                            log.info(f"  claim: {claim.get('name')}={claim.get('status')}, reasons={claim.get('reasons', [])}")
+                            for child in claim.get("children", []):
+                                c = child.get("node", {})
+                                log.info(f"    child: {c.get('name')}={c.get('status')}, reasons={c.get('reasons', [])}")
                     result = self._parse_response(data)
                     # Cache brand info from successful verifications
                     if result.status == "VALID" and evd:

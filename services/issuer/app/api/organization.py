@@ -115,6 +115,7 @@ async def create_organization(
         try:
             from app.keri.identity import get_identity_manager
             from app.keri.registry import get_registry_manager
+            from app.keri.witness import get_witness_publisher
 
             identity_mgr = await get_identity_manager()
             registry_mgr = await get_registry_manager()
@@ -128,6 +129,16 @@ async def create_organization(
             )
             org.aid = org_identity.aid
             log.info(f"Created org identity: {org_identity.aid[:16]}...")
+
+            # Publish org identity to witnesses for OOBI resolution
+            try:
+                kel_bytes = await identity_mgr.get_kel_bytes(org_identity.aid)
+                publisher = get_witness_publisher()
+                pub_result = await publisher.publish_oobi(org_identity.aid, kel_bytes)
+                log.info(f"Published org identity to witnesses: "
+                         f"{pub_result.success_count}/{pub_result.total_count}")
+            except Exception as e:
+                log.warning(f"Failed to publish org identity to witnesses: {e}")
 
             # Create credential registry for org
             org_registry_name = f"{org_identity_name}-registry"
@@ -157,7 +168,7 @@ async def create_organization(
             db.add(managed_cred)
 
         except Exception as e:
-            log.error(f"Failed to create KERI infrastructure for org: {e}")
+            log.exception(f"Failed to create KERI infrastructure for org: {e}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to create KERI infrastructure: {str(e)}",

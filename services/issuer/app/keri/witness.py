@@ -135,8 +135,10 @@ class WitnessPublisher:
                     results.append(result)
 
             # Phase 2: Distribute all receipts to all witnesses
+            # Each witness needs receipts from OTHER witnesses so the event
+            # can be marked fullyWitnessed (required for OOBI resolution)
             if len(receipts) > 1:
-                log.debug(f"Distributing {len(receipts)} receipts to witnesses")
+                log.info(f"Distributing {len(receipts)} receipts ({sum(len(r) for r in receipts.values())} bytes) to witnesses")
                 all_receipts = bytearray()
                 for rct in receipts.values():
                     all_receipts.extend(rct)
@@ -144,6 +146,7 @@ class WitnessPublisher:
                 for url in receipts:
                     try:
                         await self._send_receipts(client, url, bytes(all_receipts))
+                        log.info(f"Distributed receipts to {url}")
                     except Exception as e:
                         log.warning(f"Failed to distribute receipts to {url}: {e}")
 
@@ -271,14 +274,14 @@ class WitnessPublisher:
         This distributes receipts from other witnesses so each witness
         has the full complement needed for fullyWitnessed.
 
-        Receipts are sent to /kel endpoint as raw CESR since they're
-        already properly formatted witness signatures.
+        Receipts are sent to the root endpoint (/) which is the generic
+        CESR message handler (HttpEnd) on keripy witnesses. It feeds raw
+        bytes into the parser's input stream for processing.
         """
-        # Send to /kel endpoint which accepts raw CESR messages
-        kel_url = f"{url.rstrip('/')}/kel"
+        root_url = f"{url.rstrip('/')}"
         headers = {"Content-Type": "application/cesr"}
 
-        response = await client.put(kel_url, content=receipt_bytes, headers=headers)
+        response = await client.put(root_url, content=receipt_bytes, headers=headers)
         if response.status_code not in (200, 202, 204):
             log.warning(f"Failed to distribute receipts to {url}: HTTP {response.status_code}")
 

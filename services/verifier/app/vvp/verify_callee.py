@@ -180,16 +180,18 @@ def validate_dialog_match(
 
 def validate_issuer_match(
     passport_kid: str,
-    dossier_issuer_aid: str,
+    dossier_subject_aid: str,
 ) -> ClaimBuilder:
-    """Validate dossier was signed by AID in passport kid per §5B Step 9.
+    """Validate dossier subject matches AID in passport kid per §5B Step 9.
 
     Per §5.2-2.9:
-    - Dossier issuer AID MUST match AID extracted from passport kid
+    - Dossier subject AID MUST match AID extracted from passport kid
+    - The kid identifies the PASSporT signer (the org), which must be the
+      subject (issuee) of the dossier's root credential
 
     Args:
         passport_kid: kid from PASSporT header (OOBI URL or bare AID)
-        dossier_issuer_aid: Issuer AID from dossier root credential
+        dossier_subject_aid: Subject/issuee AID from dossier root credential
 
     Returns:
         ClaimBuilder for issuer_matched claim
@@ -200,12 +202,12 @@ def validate_issuer_match(
     kid_aid = _extract_aid_from_kid(passport_kid)
 
     claim.add_evidence(f"kid_aid:{kid_aid[:20]}...")
-    claim.add_evidence(f"dossier_issuer:{dossier_issuer_aid[:20]}...")
+    claim.add_evidence(f"dossier_subject:{dossier_subject_aid[:20]}...")
 
-    if kid_aid != dossier_issuer_aid:
+    if kid_aid != dossier_subject_aid:
         claim.fail(
             ClaimStatus.INVALID,
-            f"Issuer mismatch: kid AID '{kid_aid[:20]}...' != dossier issuer '{dossier_issuer_aid[:20]}...'",
+            f"Subject mismatch: kid AID '{kid_aid[:20]}...' != dossier subject '{dossier_subject_aid[:20]}...'",
         )
         return claim
 
@@ -269,18 +271,32 @@ def _convert_dag_to_acdcs(dag: DossierDAG) -> Dict[str, "ACDC"]:
 
 
 def _get_dossier_root_issuer(dag: DossierDAG) -> Optional[str]:
-    """Get the issuer AID of the dossier root credential.
+    """Get the subject AID of the dossier root credential.
 
-    Per §5B Step 9, the dossier issuer must match the passport kid.
+    Per §5B Step 9, the dossier subject (issuee) must match the passport kid.
+    The kid identifies the entity the dossier is about — the issuee of the
+    root credential (a.i), not the entity that issued/signed it (i).
+
+    In a vLEI chain: GLEIF → QVI → Org, the root credential is issued BY
+    the QVI (i field) TO the org (a.i field). The kid OOBI resolves to the
+    org's AID, so we compare against a.i.
 
     Args:
         dag: Parsed DossierDAG
 
     Returns:
-        Issuer AID of the root credential, or None if not found
+        Subject/issuee AID of the root credential, or None if not found
     """
     if dag.root_said and dag.root_said in dag.nodes:
-        return dag.nodes[dag.root_said].issuer
+        node = dag.nodes[dag.root_said]
+        # Extract issuee from attributes (a.i field in ACDC)
+        attrs = node.raw.get("a")
+        if isinstance(attrs, dict):
+            issuee = attrs.get("i")
+            if issuee:
+                return issuee
+        # Fall back to issuer if no issuee found
+        return node.issuer
     return None
 
 
@@ -1095,10 +1111,11 @@ async def verify_callee_vvp(
     tn_rights_node = tn_rights_claim.build()
 
     # Build root claim children list
+    from app.core.config import CALLEE_TN_RIGHTS_REQUIRED
     root_children = [
         ChildLink(required=True, node=passport_node),
         ChildLink(required=True, node=dossier_node),
-        ChildLink(required=True, node=tn_rights_node),
+        ChildLink(required=CALLEE_TN_RIGHTS_REQUIRED, node=tn_rights_node),
     ]
 
     # Add brand_verified node if card was present (REQUIRED when present)

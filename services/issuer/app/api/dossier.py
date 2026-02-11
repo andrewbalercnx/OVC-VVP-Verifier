@@ -6,6 +6,8 @@ Provides endpoints to build dossiers from credential chains.
 
 import logging
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -246,6 +248,18 @@ async def build_dossier_info(
         raise HTTPException(status_code=500, detail=f"Internal error: {e}")
 
 
+async def _optional_principal(request: Request) -> Optional[Principal]:
+    """Return authenticated principal if available, None if unauthenticated.
+
+    Sprint 59: Allows dossier GET to work both authenticated (dashboard) and
+    unauthenticated (verifier fetching via evd URL).
+    """
+    user = getattr(request, "user", None)
+    if user is not None and getattr(user, "is_authenticated", False):
+        return user
+    return None
+
+
 @router.get(
     "/{said}",
     responses={
@@ -258,20 +272,29 @@ async def get_dossier(
     said: str,
     format: str = Query("cesr", description="Output format: cesr or json"),
     include_tel: bool = Query(True, description="Include TEL events (CESR only)"),
-    principal: Principal = require_auth,
+    principal: Optional[Principal] = Depends(_optional_principal),
     db: Session = Depends(get_db),
 ) -> Response:
     """Get a dossier by root credential SAID.
 
     Builds the dossier on-demand from the credential chain.
 
-    **Sprint 41:** Non-admin users can only access dossiers from credentials
-    owned by their organization.
+    **Sprint 59:** Public access for verifier dossier fetching (evd URL).
+    Dossiers are content-addressed by SAID and meant to be publicly readable
+    per VVP spec §6.1B.  When authenticated, Sprint 41 org-scoping still applies.
 
-    **Authentication:** Requires `issuer:readonly+` OR `org:dossier_manager+` role.
+    **Authentication:** Optional. If authenticated, requires `issuer:readonly+`
+    OR `org:dossier_manager+` role.
     """
-    # Sprint 41: Check role access (system readonly+ OR org dossier_manager+)
-    check_credential_access_role(principal)
+    # If authenticated, enforce role and org scoping (Sprint 41)
+    if principal is not None:
+        check_credential_access_role(principal)
+
+        if not can_access_credential(db, principal, said):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied to credential {said[:16]}...",
+            )
 
     try:
         dossier_format = DossierFormat(format.lower())
@@ -281,30 +304,24 @@ async def get_dossier(
             detail=f"Invalid format: {format}. Use 'cesr' or 'json'.",
         )
 
-    # Sprint 41: Check access to root credential
-    if not can_access_credential(db, principal, said):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Access denied to credential {said[:16]}...",
-        )
-
     try:
         builder = await get_dossier_builder()
         content = await builder.build(root_said=said, include_tel=include_tel)
 
-        # Sprint 41: Validate access to FULL chain, not just root credential
-        inaccessible = validate_dossier_chain_access(db, principal, content.credential_saids)
-        if inaccessible:
-            log.warning(
-                f"Dossier get blocked: {len(inaccessible)} inaccessible credentials in chain "
-                f"for principal {principal.key_id}"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail=f"Access denied to {len(inaccessible)} credential(s) in chain: "
-                f"{', '.join(said[:16] + '...' for said in inaccessible[:3])}"
-                + (f" and {len(inaccessible) - 3} more" if len(inaccessible) > 3 else ""),
-            )
+        # If authenticated, validate chain access (Sprint 41)
+        if principal is not None:
+            inaccessible = validate_dossier_chain_access(db, principal, content.credential_saids)
+            if inaccessible:
+                log.warning(
+                    f"Dossier get blocked: {len(inaccessible)} inaccessible credentials in chain "
+                    f"for principal {principal.key_id}"
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Access denied to {len(inaccessible)} credential(s) in chain: "
+                    f"{', '.join(said[:16] + '...' for said in inaccessible[:3])}"
+                    + (f" and {len(inaccessible) - 3} more" if len(inaccessible) > 3 else ""),
+                )
 
         data, content_type = serialize_dossier(content, dossier_format)
 

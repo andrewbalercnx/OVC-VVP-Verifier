@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from keri.core import coring, eventing
+from keri.core import coring, eventing, serdering
+from keri.db.dbing import dgKey, snKey
 from keri.vdr.credentialing import Regery
 from keri.vdr.viring import Reger
 
@@ -73,11 +74,16 @@ class CredentialRegistryManager:
             # This ensures the Regery uses the same storage mode as the Habery
             temp_mode = self._temp or identity_mgr.temp
 
-            # Create Reger with the same headDirPath as the Habery's database
-            # This ensures TEL events are stored in the same location as KEL events
+            # Create Reger with the same headDirPath as the Habery's database.
+            # This ensures TEL events are stored in the same location as KEL events.
+            # IMPORTANT: db=hby.db enables the read-through tever cache (rbdict).
+            # Without it, reger.tevers is a plain dict and Tever objects are never
+            # auto-loaded from the persisted RegStateRecord entries in LMDB,
+            # causing KeyError when accessing registry.tever after restart.
             reger = Reger(
                 name=hby.name,
                 headDirPath=hby.db.headDirPath,
+                db=hby.db,
                 temp=temp_mode,
                 reopen=True,
             )
@@ -91,7 +97,95 @@ class CredentialRegistryManager:
             )
 
             log.info(f"Regery initialized with {len(self._regery.regs)} existing registries")
+
+            # Ensure tevers are loaded for all existing registries.
+            # With db=hby.db, reger.tevers is an rbdict that auto-loads
+            # from persisted RegStateRecord.  For registries without state
+            # records (created before this fix), we bootstrap from raw TEL.
+            self._ensure_tevers_loaded()
+
             self._initialized = True
+
+    def _ensure_tevers_loaded(self) -> None:
+        """Ensure Tever objects exist for all loaded registries.
+
+        The rbdict read-through cache (enabled by db=hby.db in Reger)
+        auto-loads Tevers from persisted RegStateRecord entries.  However,
+        if the Reger was previously created without ``db``, those state
+        records were never written.  In that case, we reconstruct Tevers
+        from the raw TEL data (VCP event + anchor) that ``Tever.logEvent``
+        wrote to LMDB during the original ``create_registry()`` call.
+        """
+        reger = self._regery.reger
+        tvy = self._regery.tvy
+        cached = 0
+        bootstrapped = 0
+        failed = 0
+
+        for regk, registry in list(self._regery.regs.items()):
+            # Check if tever already loadable (via rbdict state cache)
+            if regk in reger.tevers:
+                cached += 1
+                continue
+
+            # Not in cache — try to reconstruct from raw TEL data
+            try:
+                pre = regk.encode("utf-8") if isinstance(regk, str) else regk
+
+                # Get VCP digest at TEL sequence 0 (inception)
+                dig = reger.getTel(snKey(pre, 0))
+                if dig is None:
+                    log.warning(f"Registry {registry.name} ({regk[:16]}...): "
+                                "no TEL entry at sn=0, skipping")
+                    failed += 1
+                    continue
+
+                # Get VCP event bytes
+                vcp_raw = reger.getTvt(dgKey(pre, bytes(dig)))
+                if vcp_raw is None:
+                    log.warning(f"Registry {registry.name} ({regk[:16]}...): "
+                                "no TVT entry for VCP, skipping")
+                    failed += 1
+                    continue
+
+                # Get anchor (seqner || saider bytes)
+                anc = reger.getAnc(dgKey(pre, bytes(dig)))
+                if anc is None:
+                    log.warning(f"Registry {registry.name} ({regk[:16]}...): "
+                                "no anchor entry, skipping")
+                    failed += 1
+                    continue
+
+                # Parse VCP serder and anchor components
+                vcp_serder = serdering.SerderKERI(raw=bytes(vcp_raw))
+                ancb = bytearray(anc)
+                seqner = coring.Seqner(qb64b=ancb, strip=True)
+                saider = coring.Saider(qb64b=ancb, strip=True)
+
+                # Process through Tevery — creates Tever and (with rbdict)
+                # persists RegStateRecord to reger.states for future loads
+                tvy.processEvent(
+                    serder=vcp_serder,
+                    seqner=seqner,
+                    saider=saider,
+                )
+                bootstrapped += 1
+                log.info(f"Bootstrapped tever for {registry.name} ({regk[:16]}...)")
+
+            except Exception as e:
+                failed += 1
+                log.warning(f"Failed to bootstrap tever for {registry.name} "
+                            f"({regk[:16]}...): {e}")
+
+        parts = []
+        if cached:
+            parts.append(f"{cached} from state cache")
+        if bootstrapped:
+            parts.append(f"{bootstrapped} bootstrapped from TEL")
+        if failed:
+            parts.append(f"{failed} failed")
+        if parts:
+            log.info(f"Tever loading: {', '.join(parts)}")
 
     async def close(self) -> None:
         """Close the Regery and release resources."""

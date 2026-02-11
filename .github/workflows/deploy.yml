@@ -530,6 +530,7 @@ jobs:
               "WITNESS_NAME=${{ matrix.witness.witness_name }}" \
               "HTTP_PORT=${{ matrix.witness.http_port }}" \
               "TCP_PORT=${{ matrix.witness.tcp_port }}" \
+              "KERI_DB_PATH=/data/witness" \
               "GIT_SHA=${{ github.sha }}"
 
       - name: Wait for witness to be ready

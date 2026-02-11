@@ -61,16 +61,24 @@ def main():
     salt_qb64 = Salter(raw=salt_raw).qb64
     expected_aid = EXPECTED_AIDS[name]
 
+    # Persistent storage path: KERI_DB_PATH env var or default
+    db_path = os.environ.get("KERI_DB_PATH", "")
+
     logger.info("=== VVP Witness Startup ===")
     logger.info(f"Name: {name}")
     logger.info(f"HTTP Port: {http_port}")
     logger.info(f"TCP Port: {tcp_port}")
     logger.info(f"Salt (qb64): {salt_qb64}")
     logger.info(f"Expected AID: {expected_aid}")
+    logger.info(f"DB Path: {db_path or '~/.keri (default)'}")
 
-    # Create Habery with deterministic salt
-    # temp=False means persistent storage
-    hby = habbing.Habery(name=name, salt=salt_qb64, temp=False)
+    # Create Habery with deterministic salt and persistent storage.
+    # headDirPath sets the root directory for all KERI LMDB databases
+    # (db, ks, reg, etc.) so data persists to mounted Azure Files volume.
+    hby_kwargs = dict(name=name, salt=salt_qb64, temp=False)
+    if db_path:
+        hby_kwargs["headDirPath"] = db_path
+    hby = habbing.Habery(**hby_kwargs)
 
     # Create HaberyDoer to manage the Habery lifecycle
     hby_doer = habbing.HaberyDoer(habery=hby)

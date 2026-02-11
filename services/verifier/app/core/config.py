@@ -162,6 +162,14 @@ SIP_TIMING_TOLERANCE_SECONDS: int = int(os.getenv("VVP_SIP_TIMING_TOLERANCE", "3
 # When True: missing SIP context results in INVALID
 CONTEXT_ALIGNMENT_REQUIRED: bool = os.getenv("VVP_CONTEXT_REQUIRED", "false").lower() == "true"
 
+# Whether callee TN rights validation is a required claim (default True)
+# When True: TN rights failure propagates to overall status
+# When False: TN rights is evaluated but does not affect overall status
+# Set to False when dossiers lack APE/TNAlloc credentials (e.g., dev/demo)
+CALLEE_TN_RIGHTS_REQUIRED: bool = os.getenv(
+    "VVP_CALLEE_TN_RIGHTS_REQUIRED", "true"
+).lower() == "true"
+
 
 def _parse_accepted_goals() -> frozenset[str]:
     """Parse comma-separated accepted goals from environment.

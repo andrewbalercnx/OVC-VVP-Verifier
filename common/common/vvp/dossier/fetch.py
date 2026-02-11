@@ -18,9 +18,11 @@ from .exceptions import FetchError
 
 # Content types we accept (§4.1B, §6.1B)
 # - application/json+cesr: KERI CESR format (preferred)
+# - application/cesr: Raw CESR stream (used by issuer dossier endpoint)
 # - application/json: Standard JSON (for compatibility)
 ACCEPTED_CONTENT_TYPES = frozenset({
     "application/json+cesr",
+    "application/cesr",
     "application/json",
 })
 

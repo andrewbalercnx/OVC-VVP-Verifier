@@ -914,30 +914,38 @@ _run_freeswitch_call_test() {
         return 0
     fi
 
-    log_check "FreeSWITCH VVP signing call (originate → SIP Redirect → signing log verification)"
+    log_check "FreeSWITCH VVP E2E call (originate → signing → verification → delivery)"
 
     local call_output
     call_output=$(pbx_run "
         # Record the invite.completed count before originating
         BEFORE_COUNT=\$(journalctl -u vvp-sip-redirect --no-pager 2>/dev/null | grep -c 'invite.completed' || echo '0')
+        VERIFY_BEFORE=\$(journalctl -u vvp-sip-verify --no-pager 2>/dev/null | grep -c 'Verification complete' || echo '0')
 
-        # Originate a call directly to the SIP Redirect signing service (5070).
-        # This tests FreeSWITCH → SIP Redirect → Issuer API → 302 with VVP headers.
-        # The signing service responds with 302 + VVP-Identity/PASSporT headers.
-        ORIGINATE_RESULT=\$(fs_cli -x \"bgapi originate {origination_caller_id_number=+441923311000,origination_caller_id_name=VVP-HealthCheck,sip_h_X-VVP-API-Key=${API_KEY}}sofia/external/+441923311006@127.0.0.1:5070 &park()\" 2>/dev/null) || ORIGINATE_RESULT='ORIGINATE_FAILED'
+        # Originate through the loopback/public dialplan context for full 3-stage flow:
+        # FreeSWITCH → sip-redirect:5070 (signing) → redirected → sip-verify:5071 (verification) → verified → delivery
+        # The public context's vvp-loopback-outbound extension adds the API key and sets sip_redirect_context.
+        ORIGINATE_RESULT=\$(fs_cli -x \"bgapi originate {origination_caller_id_number=+441923311000,origination_caller_id_name=VVP-HealthCheck}loopback/71006/public &park()\" 2>/dev/null) || ORIGINATE_RESULT='ORIGINATE_FAILED'
 
-        # Wait for the call to process through signing flow (signing can take 5-8s)
-        sleep 10
+        # Wait for full signing (~3s) + verification (~1s) chain
+        sleep 12
 
         # Count completed invites after the call — delta proves signing happened
         AFTER_COUNT=\$(journalctl -u vvp-sip-redirect --no-pager 2>/dev/null | grep -c 'invite.completed' || echo '0')
         DELTA=\$(( AFTER_COUNT - BEFORE_COUNT ))
 
-        # Get recent SIP redirect signing logs as evidence
+        # Count verification completions — delta proves verification happened
+        VERIFY_AFTER=\$(journalctl -u vvp-sip-verify --no-pager 2>/dev/null | grep -c 'Verification complete' || echo '0')
+        VERIFY_DELTA=\$(( VERIFY_AFTER - VERIFY_BEFORE ))
+
+        # Get recent signing logs as evidence
         SIP_LOGS=\$(journalctl -u vvp-sip-redirect -n 50 --no-pager 2>/dev/null | grep -E 'invite\.(received|completed)|Monitor event' | tail -10 || echo 'NO_LOGS')
 
+        # Get recent verification logs as evidence
+        VERIFY_LOGS=\$(journalctl -u vvp-sip-verify -n 50 --no-pager 2>/dev/null | grep -E 'Verification complete|Verifier response|Monitor event' | tail -10 || echo 'NO_LOGS')
+
         # Also check FreeSWITCH log file for VVP dialplan evidence
-        FS_LOGS=\$(tail -200 /var/log/freeswitch/freeswitch.log 2>/dev/null | grep -i 'VVP\|loopback\|signing' | tail -10 || echo '')
+        FS_LOGS=\$(tail -200 /var/log/freeswitch/freeswitch.log 2>/dev/null | grep -i 'VVP\|loopback\|signing\|verification\|verified' | tail -10 || echo '')
 
         # Hang up any test channels to clean up
         fs_cli -x 'hupall NORMAL_CLEARING' 2>/dev/null || true
@@ -946,8 +954,11 @@ _run_freeswitch_call_test() {
         echo '=== CALL_TEST_RESULTS ==='
         echo \"originate:\$ORIGINATE_RESULT\"
         echo \"signing_delta:\$DELTA\"
+        echo \"verify_delta:\$VERIFY_DELTA\"
         echo '=== VVP_LOGS ==='
         echo \"\$SIP_LOGS\"
+        echo '=== VERIFY_LOGS ==='
+        echo \"\$VERIFY_LOGS\"
         echo \"\$FS_LOGS\"
         echo '=== END ==='
     " 2>/dev/null) || {
@@ -964,9 +975,10 @@ _run_freeswitch_call_test() {
     fi
 
     # Parse results
-    local originate_result signing_delta
+    local originate_result signing_delta verify_delta
     originate_result=$(echo "$call_output" | grep "^originate:" | cut -d: -f2-)
     signing_delta=$(echo "$call_output" | grep "^signing_delta:" | cut -d: -f2)
+    verify_delta=$(echo "$call_output" | grep "^verify_delta:" | cut -d: -f2)
 
     # Check if originate succeeded (should contain a UUID or +OK)
     if echo "$originate_result" | grep -qi "OK\|Job-UUID\|[0-9a-f]\{8\}"; then
@@ -987,9 +999,9 @@ _run_freeswitch_call_test() {
         log_pass "VVP signing flow triggered ($signing_delta new invite.completed entries)"
         record_result "E2E" "vvp_signing_flow" "pass" "$signing_delta signing events"
 
-        # Show relevant log lines
+        # Show relevant signing log lines
         if [ "$JSON_OUTPUT" = false ]; then
-            echo "$call_output" | sed -n '/=== VVP_LOGS ===/,/=== END ===/p' | grep -v "===" | while IFS= read -r line; do
+            echo "$call_output" | sed -n '/=== VVP_LOGS ===/,/=== VERIFY_LOGS ===/p' | grep -v "===" | while IFS= read -r line; do
                 if [ -n "$line" ]; then
                     log_info "  $line"
                 fi
@@ -999,6 +1011,24 @@ _run_freeswitch_call_test() {
         log_fail "No VVP signing evidence — signing_delta=${signing_delta:-empty}"
         record_result "E2E" "vvp_signing_flow" "fail" "No new invite.completed entries"
         failed=1
+    fi
+
+    # Check if VVP verification flow completed
+    if [ -n "$verify_delta" ] && [ "$verify_delta" -gt 0 ] 2>/dev/null; then
+        log_pass "VVP verification flow completed ($verify_delta new Verification complete entries)"
+        record_result "E2E" "vvp_verify_flow" "pass" "$verify_delta verification events"
+
+        # Show relevant verification log lines
+        if [ "$JSON_OUTPUT" = false ]; then
+            echo "$call_output" | sed -n '/=== VERIFY_LOGS ===/,/=== END ===/p' | grep -v "===" | while IFS= read -r line; do
+                if [ -n "$line" ]; then
+                    log_info "  $line"
+                fi
+            done
+        fi
+    else
+        log_warn "No VVP verification evidence — verify_delta=${verify_delta:-empty} (verification service may be down)"
+        record_result "E2E" "vvp_verify_flow" "warn" "No Verification complete entries"
     fi
 
     return $failed
