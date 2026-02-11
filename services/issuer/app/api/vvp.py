@@ -150,15 +150,8 @@ async def create_vvp_attestation(
         except Exception as e:
             log.warning(f"Failed to extract card claim from credentials: {e}")
 
-        # Fallback: build card from TN mapping brand info if credential
-        # chain didn't yield brand attributes.
-        if card is None and body.brand_name:
-            card = build_card_claim({
-                "brandName": body.brand_name,
-                "logoUrl": body.brand_logo_url,
-            })
-            if card:
-                log.debug(f"Card claim from TN mapping fallback: {body.brand_name}")
+        # Sprint 60: Card claim built ONLY from credential chain (above).
+        # No TN mapping fallback — brand must come from dossier evidence.
 
         # Create VVP-Identity header (this sets iat/exp)
         vvp_header = create_vvp_identity_header(

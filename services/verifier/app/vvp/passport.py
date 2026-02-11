@@ -381,20 +381,23 @@ def _validate_algorithm(alg: str) -> None:
 
 
 def _validate_typ_header(typ: Optional[str]) -> None:
-    """Validate typ header per RFC8225 and VVP §4.2.
+    """Validate typ header per RFC8225 and VVP §4.1.2.
 
     Per RFC8225: typ MUST be "passport" when present.
-    Per VVP §4.2: PASSporTs MUST comply with RFC8225.
+    Per VVP §4.1.2: typ MUST be "JWT".
+
+    Sprint 60: Accept both "passport" (RFC 8225) and "JWT" (VVP spec)
+    for backward compatibility.
 
     Args:
         typ: The typ header value (may be None).
 
     Raises:
-        PassportError: If typ is present but not "passport".
+        PassportError: If typ is present but not "passport" or "JWT".
     """
-    if typ is not None and typ != "passport":
+    if typ is not None and typ not in ("passport", "JWT"):
         raise PassportError.parse_failed(
-            f"typ must be 'passport' when present, got '{typ}'"
+            f"typ must be 'passport' or 'JWT' when present, got '{typ}'"
         )
 
 

@@ -88,8 +88,6 @@ class SIPResponse:
     vvp_identity: Optional[str] = None
     vvp_passport: Optional[str] = None
     vvp_status: Optional[str] = None    # VALID | INVALID | INDETERMINATE
-    brand_name: Optional[str] = None
-    brand_logo_url: Optional[str] = None
 
     # Error reason (for non-2xx responses)
     error_reason: Optional[str] = None
@@ -122,10 +120,6 @@ class SIPResponse:
             lines.append(f"P-VVP-Identity: {self.vvp_identity}")
         if self.vvp_passport:
             lines.append(f"P-VVP-Passport: {self.vvp_passport}")
-        if self.brand_name:
-            lines.append(f"X-VVP-Brand-Name: {self.brand_name}")
-        if self.brand_logo_url:
-            lines.append(f"X-VVP-Brand-Logo: {self.brand_logo_url}")
         if self.vvp_status:
             lines.append(f"X-VVP-Status: {self.vvp_status}")
 

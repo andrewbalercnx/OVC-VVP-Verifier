@@ -340,6 +340,53 @@ async def handle_status(request):
     })
 
 
+async def handle_calls_recent(request):
+    """GET /api/calls/recent - Recent call headers as JSON (localhost only).
+
+    Sprint 60: Provides a no-auth, localhost-only endpoint for inspecting
+    the VVP headers of recent calls. Used for evidence gathering and
+    spec compliance validation.
+
+    Query params:
+        limit: Max number of calls to return (default 5)
+    """
+    # Loopback enforcement (same as /api/events/ingest)
+    peername = request.transport.get_extra_info("peername")
+    if peername is not None:
+        peer_ip = peername[0]
+        if peer_ip not in ("127.0.0.1", "::1"):
+            return web.json_response({"error": "Forbidden"}, status=403)
+
+    try:
+        limit = int(request.query.get("limit", "5"))
+    except ValueError:
+        limit = 5
+
+    buffer = get_event_buffer()
+    events = await buffer.get_all()
+
+    # Group events by call_id, preserving insertion order
+    calls = {}
+    for ev in events:
+        cid = ev.get("call_id", "")
+        if not cid:
+            continue
+        if cid not in calls:
+            calls[cid] = []
+        calls[cid].append({
+            "service": ev.get("service"),
+            "response_code": ev.get("response_code"),
+            "vvp_status": ev.get("vvp_status"),
+            "vvp_headers": ev.get("vvp_headers", {}),
+            "response_vvp_headers": ev.get("response_vvp_headers", {}),
+            "timestamp": ev.get("timestamp"),
+        })
+
+    # Return most recent N calls
+    recent = list(calls.values())[-limit:]
+    return web.json_response({"calls": recent, "total": len(calls)})
+
+
 async def handle_auth_status(request):
     """GET /api/auth/status - Check if authenticated."""
     session = await require_session(request)
@@ -759,6 +806,7 @@ def create_web_app() -> "web.Application":
     app.router.add_get("/api/events/since/{id}", handle_events_since)
     app.router.add_post("/api/clear", handle_clear)
     app.router.add_post("/api/events/ingest", handle_event_ingest)
+    app.router.add_get("/api/calls/recent", handle_calls_recent)
 
     # OAuth routes (Sprint 50)
     app.router.add_get("/auth/oauth/m365/start", handle_oauth_start)

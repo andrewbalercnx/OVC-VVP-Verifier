@@ -52,7 +52,7 @@
         <!-- Route signing 302 through redirected context (not directly to Contact URI) -->
         <action application="set" data="sip_redirect_context=redirected"/>
         <!-- Route through signing service with org API key -->
-        <action application="export" data="nolocal:sip_h_X-VVP-API-Key=hx9WiBzvFlDiDTZclmA2T9uylaZwuu7QMeYr3mqxD3I"/>
+        <action application="export" data="nolocal:sip_h_X-VVP-API-Key=KVyccTJGNgQm4mqdts5_kLAdL5dGEj0X2duUwozBQ58"/>
         <action application="log" data="INFO [VVP] Routing to signing service: ${loopback_dest_tn}"/>
         <action application="bridge" data="sofia/external/${loopback_dest_tn}@127.0.0.1:5070"/>
       </condition>
@@ -186,11 +186,12 @@
       <condition field="destination_number" expression="^\+?44192331(\d{4})$">
         <action application="log" data="INFO [VVP] Signing 302 redirect for +44192331$1 — routing to verification"/>
         <!-- Extract STIR attestation headers from signing 302 response (stored as sip_rh_*) -->
-        <!-- Signing service returns: Identity, P-VVP-Identity, P-VVP-Passport (no X-VVP-*) -->
+        <!-- Sprint 60: Only attestation headers forwarded. No X-VVP-* brand headers — -->
+        <!-- brand/status are derived by verification service from dossier evidence. -->
         <action application="set" data="vvp_identity_hdr=${sip_rh_Identity}"/>
         <action application="set" data="vvp_identity=${sip_rh_P-VVP-Identity}"/>
         <action application="set" data="vvp_passport=${sip_rh_P-VVP-Passport}"/>
-        <action application="log" data="INFO [VVP] Signing result: Identity present=${vvp_identity_hdr:+yes:no}, P-VVP-Passport present=${vvp_passport:+yes:no}"/>
+        <action application="log" data="INFO [VVP] Signing result: Identity=${vvp_identity_hdr:+yes:no}, Passport=${vvp_passport:+yes:no}"/>
         <!-- Forward STIR attestation headers to verification service -->
         <action application="export" data="nolocal:sip_h_Identity=${vvp_identity_hdr}"/>
         <action application="export" data="nolocal:sip_h_P-VVP-Identity=${vvp_identity}"/>

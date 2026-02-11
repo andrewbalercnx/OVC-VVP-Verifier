@@ -193,6 +193,65 @@ def step_issue_tn_allocation(base_url, org_api_key, org_aid, registry_name, tn_r
     return results
 
 
+def step_issue_brand_credential(base_url, org_api_key, org_aid, registry_name,
+                                 le_said, brand_name, brand_logo_url):
+    """Step 3c: Issue Extended Brand Credential linked to LE credential.
+
+    Sprint 60: The brand credential carries brand identity (name, logo, etc.)
+    and becomes the dossier root. The dossier builder DFS walks:
+    brand → LE → QVI, giving the verifier the full credential chain
+    including brand evidence.
+
+    The verifier extracts brand info from the card claim in the PASSporT,
+    validated against the brand credential in the dossier.
+    """
+    BRAND_SCHEMA = "EK7kPhs5YkPsq9mZgUfPYfU-zq5iSlU8XVYJWqrVPk6g"
+    LE_SCHEMA = "ENPXp1vQzRF6JwIuS-mp2U8Uf1MKAIuPchgRiMCe48Mb"
+
+    print(f"\n[3c/5] Issuing Extended Brand Credential...")
+    print(f"  Brand Name:     {brand_name}")
+    print(f"  Logo URL:       {brand_logo_url}")
+
+    attributes = {
+        "i": org_aid,
+        "brandName": brand_name,
+        "assertionCountry": "GBR",
+    }
+    if brand_logo_url:
+        attributes["logoUrl"] = brand_logo_url
+
+    status, body = api_call(
+        "POST",
+        f"{base_url}/credential/issue",
+        data={
+            "registry_name": registry_name,
+            "schema_said": BRAND_SCHEMA,
+            "attributes": attributes,
+            "edges": {
+                "le": {
+                    "n": le_said,
+                    "s": LE_SCHEMA,
+                }
+            },
+            "rules": {
+                "brandUsageTerms": "The brand credential holder agrees to use this brand identity only for legitimate communications and in accordance with the brand owner's guidelines and applicable regulations."
+            },
+            "publish_to_witnesses": True,
+        },
+        api_key=org_api_key,
+        timeout=120,
+    )
+    if status != 200:
+        print(f"  WARNING: Failed to issue brand credential ({status}): {body.get('detail', body)}")
+        return None
+
+    cred = body["credential"]
+    brand_said = cred["said"]
+    print(f"  Brand Credential: {brand_said[:24]}...")
+    print(f"  Schema:           {BRAND_SCHEMA[:24]}...")
+    return brand_said
+
+
 def step_create_tn_mapping(base_url, org_api_key, tn, dossier_said, identity_name,
                            brand_name, brand_logo_url):
     """Step 4: Create TN mapping."""
@@ -373,11 +432,23 @@ def main():
             base_url, org_api_key, org_aid, registry_name, tn_ranges,
         )
 
+    # Step 3c: Issue brand credential (Sprint 60)
+    brand_said = None
+    if le_said and org_aid:
+        brand_said = step_issue_brand_credential(
+            base_url, org_api_key, org_aid, registry_name,
+            le_said, args.brand_name, args.brand_logo,
+        )
+
+    # Sprint 60: Use brand credential as dossier root (brand → LE → QVI chain).
+    # Falls back to LE credential if brand credential wasn't created.
+    dossier_root_said = brand_said or le_said
+
     # Step 4: Create TN mappings (uses org API key for org context)
     tn_mapping = None
-    if le_said:
+    if dossier_root_said:
         tn_mapping = step_create_tn_mapping(
-            base_url, org_api_key, args.tn, le_said, identity_name,
+            base_url, org_api_key, args.tn, dossier_root_said, identity_name,
             args.brand_name, args.brand_logo,
         )
         # Also create TN mappings for PBX loopback PSTN numbers
@@ -385,16 +456,16 @@ def main():
         for uk_tn in uk_tn_mappings:
             if uk_tn != args.tn:
                 step_create_tn_mapping(
-                    base_url, org_api_key, uk_tn, le_said, identity_name,
+                    base_url, org_api_key, uk_tn, dossier_root_said, identity_name,
                     args.brand_name, args.brand_logo,
                 )
     else:
-        print("\n[4/5] Skipping TN mapping (no LE credential SAID)")
+        print("\n[4/5] Skipping TN mapping (no dossier root credential)")
 
-    # Step 5: Verify dossier
+    # Step 5: Verify dossier (from brand root)
     dossier_info = None
-    if le_said:
-        dossier_info = step_verify_dossier(base_url, org_api_key, le_said)
+    if dossier_root_said:
+        dossier_info = step_verify_dossier(base_url, org_api_key, dossier_root_said)
     else:
         print("\n[5/5] Skipping dossier verification (no LE credential SAID)")
 
@@ -413,6 +484,8 @@ def main():
             "pseudo_lei": org["pseudo_lei"],
             "aid": org.get("aid"),
             "le_credential_said": le_said,
+            "brand_credential_said": brand_said,
+            "dossier_root_said": dossier_root_said,
             "identity_name": identity_name,
             "registry_key": org.get("registry_key"),
         },
@@ -426,6 +499,7 @@ def main():
             "mapping_id": tn_mapping["id"] if tn_mapping else None,
             "brand_name": args.brand_name,
             "brand_logo_url": args.brand_logo,
+            "dossier_said": dossier_root_said,
         },
         "dossier_verified": dossier_info is not None,
     }
@@ -439,6 +513,8 @@ def main():
         print(f"\n  Organization:     {org['name']} ({org_id[:8]}...)")
         print(f"  Org AID:          {org.get('aid', 'N/A')}")
         print(f"  LE Credential:    {le_said}")
+        print(f"  Brand Credential: {brand_said or 'N/A'}")
+        print(f"  Dossier Root:     {dossier_root_said}")
         print(f"  Identity Name:    {identity_name}")
         print(f"  Org API Key:      {org_api_key}")
         print(f"  Test TN:          {args.tn}")
@@ -452,7 +528,7 @@ def main():
         print(f'      -H "X-API-Key: {org_api_key}" \\')
         print(f'      -H "Content-Type: application/json" \\')
         print(f"      -d '{{\"identity_name\": \"{identity_name}\", "
-              f"\"dossier_said\": \"{le_said}\", "
+              f"\"dossier_said\": \"{dossier_root_said}\", "
               f"\"orig_tn\": \"{args.tn}\", "
               f"\"dest_tn\": [\"+15559876543\"]}}'")
 

@@ -45,6 +45,8 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 56 | System Operator User Manual | COMPLETE | Sprint 55 |
 | 57 | Complete STIR Header Compliance | COMPLETE | Sprint 44, 42 |
 | 58 | PASSporT vCard Card Claim | COMPLETE | Sprint 57 |
+| 59 | Infrastructure Fixes | IN PROGRESS | Sprint 53 |
+| 60 | Spec-Compliant VVP Header Flow | COMPLETE | Sprint 58 |
 
 ---
 
@@ -3336,3 +3338,31 @@ Identity: eyJhbGci...sig;info=<OOBI-URL>;alg=EdDSA;ppt=vvp
 - [x] Verifier `BRAND_INDICATOR_FIELDS` updated to match Extended Brand Credential field names
 - [x] Verifier `verify_brand_attributes()` uses vCard-to-credential field name mapping (`_VCARD_CREDENTIAL_MAP`)
 - [x] 158 tests pass across issuer (24), verifier brand (47), sip-verify (47), common (40)
+
+---
+
+## Sprint 60: Spec-Compliant VVP Header Flow (COMPLETE)
+
+**Goal:** Ensure brand identity (name, logo, verification status) is derived exclusively from verified dossier evidence per VVP spec sections 4 and 5 — not from out-of-band SIP headers.
+
+**Context:** The signing chain leaked brand identity through proprietary `X-VVP-Brand-Name` / `X-VVP-Brand-Logo` SIP headers set by the signing service (sip-redirect) and forwarded through the FreeSWITCH dialplan to the verification service (sip-verify). This violated the spec requirement that ALL identity evidence MUST be derived from the verified dossier referenced by the PASSporT's `evd` field.
+
+**Acceptance Criteria:**
+1. Signing 302 response contains ONLY: Contact, Identity, P-VVP-Identity, P-VVP-Passport (NO X-VVP-* headers)
+2. Verification derives name, TN, logo, and VALID status exclusively from dossier evidence
+3. X-VVP-* headers appear ONLY in the verification 302 response, populated from dossier
+4. Evidence captured via SIP monitor confirms this flow
+
+**Deliverables:**
+- [x] Removed `brand_name`, `brand_logo_url` from sip-redirect SIPResponse model and `to_bytes()` serialization
+- [x] Removed `brand_name`, `brand_logo_url` parameters from sip-redirect `build_302_redirect()`
+- [x] Removed brand passthrough from sip-redirect handler (signing 302 now contains only STIR attestation headers)
+- [x] Removed brand header fallback from sip-verify handler (no longer falls back to `X-VVP-Brand-Name`/`X-VVP-Brand-Logo` from incoming SIP headers)
+- [x] Cleaned up FreeSWITCH dialplan: removed `vvp_brand_name`/`vvp_brand_logo` extraction and forwarding from redirected context
+- [x] Added `step_issue_brand_credential()` to bootstrap script — issues Extended Brand Credential linked to LE credential, uses brand SAID as dossier root
+- [x] Removed TN mapping `brand_name` fallback card claim builder in issuer `/vvp/create` endpoint
+- [x] Fixed PASSporT `typ` field: `"passport"` → `"JWT"` per VVP spec §4.1.2
+- [x] Updated verifier to accept both `typ: "passport"` and `typ: "JWT"` for backwards compatibility
+- [x] Added SIP monitor `GET /api/calls/recent` endpoint for evidence capture (localhost-only)
+- [x] Fixed pre-existing test issues: `dossier_issuer_aid` → `dossier_subject_aid` parameter rename in verifier tests
+- [x] 2457 tests pass across sip-redirect (116), sip-verify (47), verifier (1844), issuer (450)

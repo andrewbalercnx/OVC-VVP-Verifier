@@ -1039,10 +1039,18 @@ class TestTypValidation:
         passport = parse_passport(jwt)
         assert passport.header.typ == "passport"
 
-    def test_typ_wrong_value_rejected(self):
-        """typ = "JWT" (wrong value) → PASSPORT_PARSE_FAILED."""
+    def test_typ_jwt_valid(self):
+        """Sprint 60: typ = "JWT" → Valid per VVP §4.1.2."""
         header = valid_header()
         header["typ"] = "JWT"
+        jwt = make_jwt(header, valid_payload())
+        passport = parse_passport(jwt)
+        assert passport.header.typ == "JWT"
+
+    def test_typ_wrong_value_rejected(self):
+        """typ with unexpected value → PASSPORT_PARSE_FAILED."""
+        header = valid_header()
+        header["typ"] = "bearer"
         jwt = make_jwt(header, valid_payload())
         with pytest.raises(PassportError) as exc:
             parse_passport(jwt)

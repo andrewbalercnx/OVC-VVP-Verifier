@@ -210,8 +210,6 @@ class IssuerClient:
         dest_tn: str,
         call_id: Optional[str] = None,
         cseq: Optional[int] = None,
-        brand_name: Optional[str] = None,
-        brand_logo_url: Optional[str] = None,
     ) -> VVPCreateResult:
         """Create VVP headers via issuer API.
 
@@ -223,8 +221,6 @@ class IssuerClient:
             dest_tn: Destination telephone number
             call_id: SIP Call-ID for dialog binding (callee PASSporT §5.2)
             cseq: SIP CSeq number for dialog binding (callee PASSporT §5.2)
-            brand_name: Brand name from TN mapping (fallback for card claim)
-            brand_logo_url: Brand logo URL from TN mapping (fallback for card claim)
 
         Returns:
             VVPCreateResult with VVP headers or error
@@ -251,11 +247,6 @@ class IssuerClient:
                 request_body["call_id"] = call_id
             if cseq is not None:
                 request_body["cseq"] = cseq
-            if brand_name is not None:
-                request_body["brand_name"] = brand_name
-            if brand_logo_url is not None:
-                request_body["brand_logo_url"] = brand_logo_url
-
             response = await self._client.post(
                 "/vvp/create",
                 json=request_body,

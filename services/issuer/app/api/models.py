@@ -387,8 +387,7 @@ class CreateVVPRequest(BaseModel):
     exp_seconds: int = Field(300, ge=1, le=300, description="Validity window in seconds (max 300)")
     call_id: Optional[str] = Field(None, description="SIP Call-ID for dialog binding (callee PASSporT §5.2)")
     cseq: Optional[int] = Field(None, description="SIP CSeq number for dialog binding (callee PASSporT §5.2)")
-    brand_name: Optional[str] = Field(None, description="Brand name fallback (from TN mapping) for card claim")
-    brand_logo_url: Optional[str] = Field(None, description="Brand logo URL fallback (from TN mapping) for card claim")
+    # Sprint 60: brand_name/brand_logo_url removed — brand derived from dossier only
 
 
 class CreateVVPResponse(BaseModel):

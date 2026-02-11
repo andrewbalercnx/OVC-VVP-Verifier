@@ -126,7 +126,7 @@ class TestIssuerVerification:
 
         result = validate_issuer_match(
             passport_kid=kid_aid,
-            dossier_issuer_aid=kid_aid,
+            dossier_subject_aid=kid_aid,
         )
 
         assert result.status == ClaimStatus.VALID
@@ -139,7 +139,7 @@ class TestIssuerVerification:
 
         result = validate_issuer_match(
             passport_kid=oobi_kid,
-            dossier_issuer_aid=kid_aid,
+            dossier_subject_aid=kid_aid,
         )
 
         assert result.status == ClaimStatus.VALID
@@ -148,11 +148,11 @@ class TestIssuerVerification:
         """Dossier issuer doesn't match kid."""
         result = validate_issuer_match(
             passport_kid="EKid12345678901234567890123456789012345678901",
-            dossier_issuer_aid="EDossier12345678901234567890123456789012345",
+            dossier_subject_aid="EDossier12345678901234567890123456789012345",
         )
 
         assert result.status == ClaimStatus.INVALID
-        assert "Issuer mismatch" in result.reasons[0]
+        assert "Subject mismatch" in result.reasons[0]
 
 
 class TestExtractAidFromKid:

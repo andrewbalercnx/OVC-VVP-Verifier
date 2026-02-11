@@ -245,6 +245,31 @@ async def handle_verify_invite(request: SIPRequest) -> Optional[SIPResponse]:
         if parts and parts[0].isdigit():
             cseq_num = int(parts[0])
 
+    # Extract call-id and cseq from PASSporT payload for dialog matching.
+    # In a FreeSWITCH 302-redirect chain, each bridge leg gets a new SIP
+    # Call-ID, so the INVITE arriving at sip-verify has a different call-id
+    # than the original INVITE that sip-redirect signed into the PASSporT.
+    # The verifier compares the context call_id against the PASSporT's
+    # call-id claim, so we must send the ORIGINAL call-id (from the PASSporT).
+    passport_call_id = request.call_id
+    passport_cseq = cseq_num
+    try:
+        import base64, json
+        # PASSporT is header.payload.signature — decode the payload
+        jwt_parts = passport_jwt.split(".")
+        if len(jwt_parts) >= 2:
+            payload_b64 = jwt_parts[1]
+            payload_b64 += "=" * (4 - len(payload_b64) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+            if "call-id" in payload:
+                passport_call_id = payload["call-id"]
+                log.debug(f"Using PASSporT call-id for dialog match: {passport_call_id}")
+            if "cseq" in payload:
+                passport_cseq = payload["cseq"]
+                log.debug(f"Using PASSporT cseq for dialog match: {passport_cseq}")
+    except Exception as e:
+        log.warning(f"Failed to extract call-id/cseq from PASSporT: {e}")
+
     # Build invite time from current time
     now = datetime.now(timezone.utc)
     invite_time = now.isoformat()
@@ -252,15 +277,22 @@ async def handle_verify_invite(request: SIPRequest) -> Optional[SIPResponse]:
     # Use iat from VVP-Identity, or fall back to current time
     iat = identity_iat if identity_iat is not None else int(now.timestamp())
 
+    # Build clean SIP URIs from TNs for the verifier context.
+    # SIP To/From headers include display name, angle brackets, and tag
+    # parameters (e.g. '"name" <sip:+441923311006@host>;tag=abc'), but the
+    # verifier's extract_tn_from_sip_uri() expects bare SIP URIs.
+    from_uri = f"sip:{request.from_tn}@pbx" if request.from_tn else request.from_header
+    to_uri = f"sip:{request.to_tn}@pbx" if request.to_tn else request.to_header
+
     # Call Verifier API
     client = get_verifier_client()
     result = await client.verify_callee(
         passport_jwt=passport_jwt,
-        call_id=request.call_id,
-        from_uri=request.from_header,
-        to_uri=request.to_header,
+        call_id=passport_call_id,
+        from_uri=from_uri,
+        to_uri=to_uri,
         invite_time=invite_time,
-        cseq=cseq_num,
+        cseq=passport_cseq,
         kid=kid,
         evd=evd,
         iat=iat,
@@ -280,6 +312,9 @@ async def handle_verify_invite(request: SIPRequest) -> Optional[SIPResponse]:
         error_code=result.error_code,
         processing_time_ms=processing_time_ms,
     )
+
+    # Sprint 60: Brand derived ONLY from verified dossier evidence.
+    # No fallback to incoming SIP headers.
 
     # Build 302 redirect with VVP headers
     response = build_302_redirect(

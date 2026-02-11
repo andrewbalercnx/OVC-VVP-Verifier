@@ -83,14 +83,6 @@ async def _capture_event(
                 response_vvp_headers["P-VVP-Passport"] = response.vvp_passport
             if response.vvp_status:
                 response_vvp_headers["X-VVP-Status"] = response.vvp_status
-            if response.brand_name:
-                response_vvp_headers["X-VVP-Brand-Name"] = response.brand_name
-            if response.brand_logo_url:
-                response_vvp_headers["X-VVP-Brand-Logo"] = response.brand_logo_url
-            if getattr(response, "caller_id", None):
-                response_vvp_headers["X-VVP-Caller-ID"] = response.caller_id
-            if getattr(response, "error_code", None):
-                response_vvp_headers["X-VVP-Error"] = response.error_code
 
         buffer = get_event_buffer()
         await buffer.add({
@@ -221,6 +213,11 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
                 pass
 
         # Create VVP headers
+        # Note: brand_name/brand_logo_url omitted from create request to
+        # avoid card claim in PASSporT when no brand credential exists in
+        # the dossier. Card claim triggers mandatory brand verification
+        # which fails without a brand credential. Brand info still flows
+        # via X-VVP-* headers set by the verification service.
         vvp_result = await client.create_vvp(
             api_key=api_key,
             identity_name=lookup_result.identity_name,
@@ -229,8 +226,6 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
             dest_tn=to_tn or "",
             call_id=call_id,
             cseq=cseq_num,
-            brand_name=lookup_result.brand_name,
-            brand_logo_url=lookup_result.brand_logo_url,
         )
 
         if not vvp_result.success:
@@ -250,9 +245,9 @@ async def handle_invite(request: SIPRequest) -> SIPResponse:
         # Contact URI is the original request URI (enterprise routes the call)
         contact_uri = request.request_uri
 
-        # Signing service returns ONLY STIR attestation headers — no X-VVP-*
-        # brand/status headers. Brand name/logo/status are set exclusively by
-        # the verification service after it validates the PASSporT.
+        # Sprint 60: Signing 302 contains ONLY STIR/VVP attestation headers.
+        # Brand/status are derived by the verification service from the
+        # dossier evidence referenced by the PASSporT evd field.
         response = build_302_redirect(
             request=request,
             contact_uri=contact_uri,

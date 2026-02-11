@@ -154,7 +154,7 @@ async def create_passport(
         "alg": "EdDSA",
         "ppt": "vvp",
         "kid": issuer_oobi,
-        "typ": "passport",
+        "typ": "JWT",
     }
 
     # Build JWT payload per §5.2

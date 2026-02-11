@@ -57,9 +57,9 @@ def build_302_redirect(
 ) -> SIPResponse:
     """Build 302 Moved Temporarily response with STIR attestation headers.
 
-    The signing service returns ONLY STIR attestation headers.
-    Brand name/logo/status are set exclusively by the verification
-    service after it validates the PASSporT.
+    Sprint 60: Signing 302 contains ONLY STIR/VVP attestation headers.
+    No X-VVP-* headers — brand/status are derived by the verification
+    service from the dossier evidence referenced by the PASSporT evd field.
 
     Headers included:
     - Identity: RFC 8224 Identity header (Sprint 57)
