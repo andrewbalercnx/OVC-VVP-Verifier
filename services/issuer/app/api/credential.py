@@ -29,9 +29,12 @@ from app.auth.roles import (
 )
 from app.auth.scoping import (
     can_access_credential,
+    get_org_aid,
     get_org_credentials,
+    get_user_organization,
     register_credential,
 )
+from app.db.models import Organization
 from app.audit import get_audit_logger
 from app.config import WITNESS_IURLS
 from app.db.session import get_db
@@ -181,30 +184,67 @@ async def list_credentials(
             status=status,
         )
 
-        # Sprint 41: Filter by organization unless admin
+        # Filter by organization and determine relationship
+        issued_saids: set[str] = set()
+        org_aid: str | None = None
+
         if principal.is_system_admin:
             credentials = all_credentials
         else:
-            # Get SAIDs of credentials the principal can access
+            # Credentials the org ISSUED (via ManagedCredential)
             org_managed = get_org_credentials(db, principal)
-            accessible_saids = {m.said for m in org_managed}
-            credentials = [c for c in all_credentials if c.said in accessible_saids]
+            issued_saids = {m.said for m in org_managed}
+
+            # Org's AID for subject matching
+            org_aid = get_org_aid(db, principal)
+
+            # Include issued OR subject credentials
+            credentials = [
+                c for c in all_credentials
+                if c.said in issued_saids
+                or (org_aid and c.recipient_aid == org_aid)
+            ]
+
+        # Batch AID-to-org-name lookup
+        aids_to_resolve = set()
+        for c in credentials:
+            aids_to_resolve.add(c.issuer_aid)
+            if c.recipient_aid:
+                aids_to_resolve.add(c.recipient_aid)
+        aid_to_name: dict[str, str] = {}
+        if aids_to_resolve:
+            orgs = db.query(Organization.aid, Organization.name).filter(
+                Organization.aid.in_(aids_to_resolve)
+            ).all()
+            aid_to_name = {o.aid: o.name for o in orgs if o.aid}
+
+        # Build response with relationship tagging and org names
+        result = []
+        for c in credentials:
+            relationship = None
+            if not principal.is_system_admin and principal.organization_id:
+                if c.said in issued_saids:
+                    relationship = "issued"
+                elif org_aid and c.recipient_aid == org_aid:
+                    relationship = "subject"
+
+            result.append(CredentialResponse(
+                said=c.said,
+                issuer_aid=c.issuer_aid,
+                recipient_aid=c.recipient_aid,
+                registry_key=c.registry_key,
+                schema_said=c.schema_said,
+                issuance_dt=c.issuance_dt,
+                status=c.status,
+                revocation_dt=c.revocation_dt,
+                relationship=relationship,
+                issuer_name=aid_to_name.get(c.issuer_aid),
+                recipient_name=aid_to_name.get(c.recipient_aid) if c.recipient_aid else None,
+            ))
 
         return CredentialListResponse(
-            credentials=[
-                CredentialResponse(
-                    said=c.said,
-                    issuer_aid=c.issuer_aid,
-                    recipient_aid=c.recipient_aid,
-                    registry_key=c.registry_key,
-                    schema_said=c.schema_said,
-                    issuance_dt=c.issuance_dt,
-                    status=c.status,
-                    revocation_dt=c.revocation_dt,
-                )
-                for c in credentials
-            ],
-            count=len(credentials),
+            credentials=result,
+            count=len(result),
         )
     except Exception as e:
         log.exception(f"Failed to list credentials: {e}")
@@ -234,8 +274,8 @@ async def get_credential(
         if cred_info is None:
             raise HTTPException(status_code=404, detail=f"Credential not found: {said}")
 
-        # Sprint 41: Check organization access
-        if not can_access_credential(db, principal, said):
+        # Sprint 41: Check organization access (issued or subject)
+        if not can_access_credential(db, principal, said, recipient_aid=cred_info.recipient_aid):
             raise HTTPException(
                 status_code=403,
                 detail="Access denied to this credential",

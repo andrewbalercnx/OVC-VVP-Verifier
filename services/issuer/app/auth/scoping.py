@@ -33,22 +33,31 @@ def get_user_organization(db: Session, principal: Principal) -> Organization | N
     ).first()
 
 
+def get_org_aid(db: Session, principal: Principal) -> str | None:
+    """Get the KERI AID for the principal's organization."""
+    org = get_user_organization(db, principal)
+    return org.aid if org else None
+
+
 def can_access_credential(
     db: Session,
     principal: Principal,
     credential_said: str,
+    recipient_aid: str | None = None,
 ) -> bool:
     """Check if a principal can access a specific credential.
 
     Access is granted if:
     1. Principal is a system admin (issuer:admin)
     2. Credential is managed and owned by principal's organization
-    3. Credential is unmanaged (no ManagedCredential record) - only admins can access
+    3. Principal's org is the credential's recipient (subject)
+    4. Credential is unmanaged (no ManagedCredential record) - only admins can access
 
     Args:
         db: Database session
         principal: The authenticated principal
         credential_said: The credential SAID to check
+        recipient_aid: The credential's recipient AID (for subject access check)
 
     Returns:
         True if principal can access the credential
@@ -67,19 +76,24 @@ def can_access_credential(
         ManagedCredential.said == credential_said
     ).first()
 
-    if managed is None:
-        # Unmanaged credential - only admins can access (already checked above)
-        log.debug(f"Credential {credential_said[:16]}... is unmanaged, denying access")
-        return False
+    if managed and managed.organization_id == principal.organization_id:
+        return True
 
-    if managed.organization_id != principal.organization_id:
+    # Check if principal's org is the recipient/subject
+    if recipient_aid:
+        org_aid = get_org_aid(db, principal)
+        if org_aid and org_aid == recipient_aid:
+            return True
+
+    if managed is None:
+        log.debug(f"Credential {credential_said[:16]}... is unmanaged, denying access")
+    else:
         log.debug(
             f"Credential {credential_said[:16]}... belongs to org {managed.organization_id}, "
             f"principal {principal.key_id} is in org {principal.organization_id}"
         )
-        return False
 
-    return True
+    return False
 
 
 def filter_credentials_by_org(

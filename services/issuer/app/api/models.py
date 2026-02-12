@@ -301,6 +301,9 @@ class CredentialResponse(BaseModel):
     issuance_dt: str = Field(..., description="Issuance datetime")
     status: str = Field(..., description="issued or revoked")
     revocation_dt: Optional[str] = Field(None, description="Revocation datetime")
+    relationship: Optional[str] = Field(None, description="Relationship to requesting org: 'issued' or 'subject'")
+    issuer_name: Optional[str] = Field(None, description="Issuer organization name if known")
+    recipient_name: Optional[str] = Field(None, description="Recipient organization name if known")
 
 
 class CredentialDetailResponse(CredentialResponse):
