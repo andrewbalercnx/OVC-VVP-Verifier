@@ -48,6 +48,9 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 59 | Infrastructure Fixes | IN PROGRESS | Sprint 53 |
 | 60 | Spec-Compliant VVP Header Flow | COMPLETE | Sprint 58 |
 | 60b | TNAlloc in Dossier + Brand Logo Fix | COMPLETE | Sprint 60 |
+| 61 | Organization Vetter Certification Association | TODO | Sprint 41, 40 |
+| 62 | Multichannel Vetter Constraint Enforcement | TODO | Sprint 61 |
+| 63 | Dossier Creation Wizard UI | TODO | Sprint 41, 32, 60b |
 
 ---
 
@@ -3389,3 +3392,628 @@ Identity: eyJhbGci...sig;info=<OOBI-URL>;alg=EdDSA;ppt=vvp
 - [x] Added mock GLEIF AID to `VVP_TRUSTED_ROOT_AIDS` on Azure verifier
 - [x] E2E verified: `status=VALID`, all claims (passport, dossier, tn_rights, brand) = VALID
 - [x] 1858 tests pass (verifier 1818, common 40)
+
+---
+
+## Sprint 61: Organization Vetter Certification Association (TODO)
+
+**Goal:** Associate organizations with Vetter Certification credentials so that users and API keys acting on behalf of an org inherit the vetter's geographic (ECC) and jurisdictional constraints. This is a prerequisite for Sprint 62, which enforces these constraints at issuance, dossier creation, and signing time.
+
+**Spec Reference:** `Documentation/Specs/How To Constrain Multichannel Vetters.pdf`
+
+### Specification: How To Constrain Multichannel Vetters (Full Text)
+
+The following is the complete normative specification. The reviewer should treat this as the authoritative requirements document.
+
+#### 1. Vetter Certification Credential
+
+Vetters (entities authorized to attest facts about phone-number holders) receive a **Vetter Certification** credential. This ACDC credential has two constraint fields that define the vetter's scope of authority:
+
+- **ECC Targets** (E.164 Country Code Targets): A list of E.164 country codes (e.g., `"44"`, `"1"`, `"33"`) in which the target of this vetter's attention may possess a phone number for which the vetter is certified to attest right to use.
+- **Jurisdiction Targets**: A list of ISO 3166-1 alpha-3 country codes (e.g., `"GBR"`, `"FRA"`, `"USA"`) for which the vetter is certified to attest incorporation, legal correctness, and legal entitlement to use brand assets.
+
+The VetterCertification credential schema (`EOefmhWU2qTpMiEQhXohE6z3xRXkpLloZdhTYIenlD4H`) is already defined in the issuer at `services/issuer/app/schema/schemas/vetter-certification-credential.json`. Its ACDC structure is:
+```json
+{
+  "v": "ACDC10JSON000000_",
+  "d": "<SAID>",
+  "i": "<issuer_aid>",
+  "s": "EOefmhWU2qTpMiEQhXohE6z3xRXkpLloZdhTYIenlD4H",
+  "a": {
+    "i": "<vetter_aid>",
+    "ecc_targets": ["44", "1", "91"],
+    "jurisdiction_targets": ["GBR", "USA", "IND"],
+    "name": "Vetter Corp",
+    "certificationExpiry": "2026-12-31"
+  }
+}
+```
+
+#### 2. How Constraints Propagate Through the Credential Chain
+
+Each credential issued by a vetter (Identity, Brand, TN Allocation) contains an **edge** (backlink) to the vetter's Certification credential. Extended schemas already exist for this:
+
+- **Extended Legal Entity** (`EPknTwPpSZi379molapnuN4V5AyhCxz_6TLYdiVNWvbV`): Has `certification` edge + `country` attribute (ISO 3166-1 alpha-3 incorporation country)
+- **Extended Brand** (`EK7kPhs5YkPsq9mZgUfPYfU-zq5iSlU8XVYJWqrVPk6g`): Has `certification` edge + `assertionCountry` attribute (ISO 3166-1 alpha-3 where brand is asserted)
+- **Extended TNAlloc** (`EGUh_fVLbjfkYFb5zAsY2Rqq0NqwnD3r5jsdKWLTpU8_`): Has `certification` edge + `numbers` with E.164 TNs
+
+The edge format in each credential:
+```json
+{
+  "e": {
+    "certification": {
+      "n": "<VetterCertification_SAID>",
+      "s": "EOefmhWU2qTpMiEQhXohE6z3xRXkpLloZdhTYIenlD4H"
+    }
+  }
+}
+```
+
+Verifiers (and later, the issuer itself in Sprint 62) follow these edges to discover the vetter's authority scope and validate constraints.
+
+#### 3. Worked Example
+
+Suppose **Acme Space Travel** is incorporated in France and wants VVP calls from a UK number (+44xxx). Two vetters exist:
+
+**Vetter A** (CertificationA):
+- ECC Targets: `["44", "91", "33", "1", "34", "81", "66", "971"]`
+- Jurisdiction Targets: `["GBR", "ZAF", "THA", "BRA", "USA", "FRA"]`
+
+**Vetter B** (CertificationB):
+- ECC Targets: `["33", "91", "81", "66", "27", "971"]`
+- Jurisdiction Targets: `["FRA", "ZAF", "THA", "IND", "PAK", "USA", "CAN"]`
+
+If Acme uses Vetter B, the verifier finds:
+- Identity/Jurisdiction: France (FRA) IS in B's Jurisdiction Targets → **PASS**
+- TN/ECC: +44 country code (44) is NOT in B's ECC Targets → **FAIL**
+- Brand/Jurisdiction: Asserting brand in UK (GBR) is NOT in B's Jurisdiction Targets → **FAIL**
+
+Acme must switch to Vetter A, whose certification covers both ECC "44" and jurisdiction "GBR".
+
+#### 4. Multiple Enforcement Points
+
+The spec mandates: Enforcement at verification **MUST** occur (already implemented — Sprint 40). But enforcement SHOULD also happen at:
+- **Moment of issuance** — the issuer validates constraints before issuing credentials
+- **Dossier creation time** — the dossier builder validates constraints during assembly
+- **Signing time** — the signing service validates constraints before signing PASSporTs
+
+Sprint 62 will implement these three enforcement points. **This sprint (61)** provides the prerequisite: the data model and API that associates organizations with their vetter certifications, so that enforcement has something to check against.
+
+#### 5. Precision of Constraint Semantics
+
+"Vetter A can vet in the UK" is not precise enough. The constraints are specific:
+- **ECC Targets** constrain which *phone number country codes* a vetter can certify for TN right-to-use
+- **Jurisdiction Targets** constrain which *legal jurisdictions* a vetter can certify for incorporation and brand rights
+
+These are different dimensions. A vetter might be authorized for jurisdiction "GBR" (can attest UK incorporation and brand rights) but not ECC "44" (cannot attest right to use UK phone numbers), or vice versa.
+
+### Current State
+
+**What already exists:**
+
+| Component | Status | Location |
+|-----------|--------|----------|
+| VetterCertification schema (JSON) | Exists | `services/issuer/app/schema/schemas/vetter-certification-credential.json` |
+| Extended LE/Brand/TNAlloc schemas | Exist | `services/issuer/app/schema/schemas/extended-*.json` |
+| Schema SAIDs in registry | Registered | `common/common/vvp/schema/registry.py` |
+| Verifier constraint validation | Implemented (Sprint 40) | `services/verifier/app/vvp/vetter/` |
+| Verifier country code utilities | Implemented | `services/verifier/app/vvp/vetter/country_codes.py` |
+| Organization model | Exists (Sprint 41) | `services/issuer/app/db/models.py` — fields: `id`, `name`, `pseudo_lei`, `aid`, `le_credential_said`, `registry_key`, `enabled` |
+| User-Org association | Exists (Sprint 41) | `User.organization_id` FK → `Organization.id` |
+| Org roles | Exist (Sprint 41) | `UserOrgRole` join table — roles: `org:administrator`, `org:dossier_manager` |
+| Org API keys | Exist (Sprint 41) | `OrgAPIKey` + `OrgAPIKeyRole` tables |
+| ManagedCredential | Exists (Sprint 41) | Tracks credentials issued by/for an org |
+| Principal model | Exists | Carries `roles`, `organization_id` after authentication |
+
+**What's missing:**
+1. No way to issue VetterCertification credentials via the issuer API
+2. No association between Organization and VetterCertification — the Organization model has no reference to a vetter cert
+3. No way to query an org's constraints (ECC Targets, Jurisdiction Targets)
+4. No way for users/API keys to see what constraints apply to their org
+5. Bootstrap creates orgs and credentials but never provisions vetter certifications
+6. No automatic `certification` edge injection when issuing extended credentials
+
+### Deliverables
+
+#### Phase 1: VetterCertification Credential Lifecycle
+
+- [ ] **Issuer API: VetterCertification CRUD** — New endpoints under `/api/vetter-certifications`:
+  - `POST /` — Issue a VetterCertification ACDC credential specifying `ecc_targets` (list of E.164 country codes) and `jurisdiction_targets` (list of ISO 3166-1 alpha-3 codes). The credential is issued using the issuer's own KERI identity (this is a governance credential issued TO the org's vetter AID). Returns the credential SAID and full ACDC.
+  - `GET /` — List all VetterCertification credentials. Filterable by `organization_id`.
+  - `GET /{said}` — Get a specific certification by SAID, including parsed `ecc_targets` and `jurisdiction_targets`.
+  - `DELETE /{said}` — Revoke a VetterCertification credential via TEL revocation event.
+- [ ] **VetterCertification issuer-side model** — Pydantic request/response models:
+  - `VetterCertificationCreate`: `ecc_targets: list[str]`, `jurisdiction_targets: list[str]`, `name: str`, `organization_id: str`, optional `certificationExpiry: datetime`
+  - `VetterCertificationResponse`: SAID, issuer AID, vetter AID (org AID), ecc_targets, jurisdiction_targets, name, created_at, status
+  - Validation: ECC targets must be 1-3 digit strings matching E.164 country codes; jurisdiction targets must be 3-letter uppercase strings matching ISO 3166-1 alpha-3
+- [ ] **Track as ManagedCredential** — When a VetterCertification is issued, register it in the `ManagedCredential` table with `credential_type="VetterCertification"`, linked to the target organization. This is consistent with how TNAlloc credentials are tracked.
+
+#### Phase 2: Organization–Vetter Certification Association
+
+- [ ] **Organization.vetter_certification_said field** — Add an optional `vetter_certification_said` column (String(44), nullable) to the Organization model. This is the SAID of the org's active VetterCertification credential. An org can have at most one active certification (revoke the old, issue a new one to change scope).
+- [ ] **Auto-populate on issuance** — When a VetterCertification is issued for an org, automatically set `Organization.vetter_certification_said` to the new credential's SAID.
+- [ ] **Clear on revocation** — When a VetterCertification is revoked, clear the org's `vetter_certification_said` field.
+- [ ] **Organization API update** — Extend `GET /api/organizations/{org_id}` response to include:
+  - `vetter_certification_said: str | null` — SAID of the active cert
+  - `ecc_targets: list[str] | null` — Parsed from the active cert (convenience)
+  - `jurisdiction_targets: list[str] | null` — Parsed from the active cert (convenience)
+- [ ] **DB migration** — Alembic migration to add `vetter_certification_said` to the `organizations` table.
+
+#### Phase 3: Constraint Visibility API
+
+- [ ] **GET /api/organizations/{org_id}/constraints** — Returns the org's active constraints:
+  ```json
+  {
+    "organization_id": "...",
+    "vetter_certification_said": "EOefmh...",
+    "ecc_targets": ["44", "1"],
+    "jurisdiction_targets": ["GBR", "USA"],
+    "certification_status": "active",
+    "certificationExpiry": "2026-12-31T00:00:00Z"
+  }
+  ```
+  Returns 404 if org has no active VetterCertification. Auth: any org member or system admin.
+- [ ] **GET /api/users/me/constraints** — Returns the constraints inherited from the authenticated user's organization. Equivalent to fetching the user's `organization_id` then calling the org constraints endpoint. Returns 404 if user has no org or org has no cert.
+- [ ] **Constraint helper on Principal** — Add a method or utility function `get_org_constraints(organization_id) -> VetterConstraints | None` that the enforcement layer (Sprint 62) can call. Returns parsed `ecc_targets` and `jurisdiction_targets` from the org's active VetterCertification, or None if no cert exists.
+
+#### Phase 4: Automatic Certification Edge Injection
+
+- [ ] **Edge injection in credential issuance** — When issuing a credential using an extended schema (Extended LE, Extended Brand, Extended TNAlloc), and the issuing org has an active VetterCertification:
+  - Auto-populate the `certification` edge in the credential's `e` block, pointing to the org's `vetter_certification_said`
+  - If the caller already provided a `certification` edge, validate it matches the org's cert SAID (reject mismatches)
+  - If the org has no active cert and the schema requires a `certification` edge, return 400 with a descriptive error
+- [ ] **Schema detection** — Identify extended schemas by SAID to determine which credentials need certification edges:
+  - `EGUh_fVLbjfkYFb5zAsY2Rqq0NqwnD3r5jsdKWLTpU8_` (Extended TNAlloc)
+  - `EPknTwPpSZi379molapnuN4V5AyhCxz_6TLYdiVNWvbV` (Extended LE)
+  - `EK7kPhs5YkPsq9mZgUfPYfU-zq5iSlU8XVYJWqrVPk6g` (Extended Brand)
+
+#### Phase 5: Bootstrap & Tests
+
+- [ ] **Bootstrap: Provision VetterCertification** — Update `scripts/bootstrap-issuer.py`:
+  - After creating the test organization, issue a VetterCertification credential with `ecc_targets: ["44", "1"]` and `jurisdiction_targets: ["GBR", "USA"]` (covering test TN ranges +44192xxx and +1555xxx)
+  - The org's `vetter_certification_said` is set automatically
+  - Subsequent credential issuances (TNAlloc, Brand) get the `certification` edge auto-injected
+- [ ] **Bootstrap: Switch to extended schemas** — Update bootstrap to issue Extended TNAlloc, Extended LE, and Extended Brand credentials (with certification backlinks) instead of base schemas
+- [ ] **Unit tests: VetterCertification CRUD** — Create, list, get, revoke via API; verify ManagedCredential tracking
+- [ ] **Unit tests: Org association** — Verify `vetter_certification_said` is set on issue, cleared on revoke
+- [ ] **Unit tests: Constraint visibility** — Verify `/constraints` endpoints return correct data
+- [ ] **Unit tests: Edge injection** — Verify certification edge is auto-populated for extended schemas; verify 400 when org has no cert; verify mismatch rejection
+- [ ] **Unit tests: Constraint helper** — Verify `get_org_constraints()` returns parsed targets or None
+
+### Key Files to Create/Modify
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `services/issuer/app/api/vetter_certification.py` | Create | VetterCertification CRUD API router |
+| `services/issuer/app/vetter/__init__.py` | Create | Vetter package |
+| `services/issuer/app/vetter/models.py` | Create | Pydantic request/response models |
+| `services/issuer/app/vetter/service.py` | Create | Issuance, lookup, revocation, constraint helpers |
+| `services/issuer/app/db/models.py` | Modify | Add `vetter_certification_said` to Organization |
+| `services/issuer/app/api/organization.py` | Modify | Include constraints in org response |
+| `services/issuer/app/api/credential.py` | Modify | Add certification edge injection hook |
+| `services/issuer/app/main.py` | Modify | Register vetter_certification router |
+| `scripts/bootstrap-issuer.py` | Modify | Provision VetterCert + switch to extended schemas |
+| `services/issuer/tests/test_vetter_certification.py` | Create | CRUD + association tests |
+| `services/issuer/tests/test_vetter_constraints_visibility.py` | Create | Constraint visibility + edge injection tests |
+
+### Technical Notes
+
+- **One cert per org**: An organization has at most one active VetterCertification. To change scope, revoke the old cert and issue a new one. This keeps the model simple and avoids ambiguity about which cert's constraints apply. The `vetter_certification_said` column on Organization is the single source of truth.
+- **Credential vs. DB field**: The `ecc_targets` and `jurisdiction_targets` live inside the ACDC credential (immutable, cryptographically signed). The `vetter_certification_said` on Organization is just a pointer. To read the actual constraints, the service fetches the credential from `ManagedCredential` and parses its attributes. Consider caching the parsed constraints for performance.
+- **Edge injection and SAID recomputation**: When the issuer auto-populates the `certification` edge, it must pass the complete `edges` dict to keripy's `proving.credential()` at creation time. keripy computes the edge block SAID (`e.d`) as part of credential creation, so injection must happen BEFORE the credential is finalized.
+- **Shared country code utilities**: The verifier already has E.164 ↔ ISO 3166-1 mapping in `services/verifier/app/vvp/vetter/country_codes.py`. Consider extracting to `common/vvp/utils/country_codes.py` so both services can validate ECC/jurisdiction target values. Alternatively, duplicate the validation in the issuer since the lists are small.
+- **Auth for VetterCert issuance**: Only `issuer:admin` should be able to issue VetterCertification credentials (these are governance-level operations). Org admins (`org:administrator`) can VIEW their org's cert but not create/revoke one.
+- **Migration strategy**: The Alembic migration adds a nullable column, so existing orgs simply have `vetter_certification_said = NULL`. The bootstrap script provisions the cert for the test org on the next run.
+
+### Dependencies
+
+- Sprint 41 (User Management & Mock vLEI) — Organization model, user-org association, ManagedCredential
+- Sprint 40 (Vetter Certification Constraints — verifier side) — VetterCertification schema, constraint semantics
+
+### Exit Criteria
+
+- VetterCertification credentials can be issued, listed, retrieved, and revoked via API
+- Issuing a VetterCert for an org automatically sets `Organization.vetter_certification_said`
+- Revoking a VetterCert clears the org's `vetter_certification_said`
+- `GET /api/organizations/{org_id}/constraints` returns the org's ECC Targets and Jurisdiction Targets
+- `GET /api/users/me/constraints` returns the authenticated user's org constraints
+- Issuing an Extended LE/Brand/TNAlloc credential auto-injects the `certification` edge
+- Issuing an extended credential for an org without a VetterCert returns 400
+- Bootstrap provisions a VetterCertification and uses extended schemas with certification edges
+- All existing tests continue to pass (no regressions)
+- New tests cover CRUD, association lifecycle, constraint visibility, and edge injection
+
+---
+
+## Sprint 62: Multichannel Vetter Constraint Enforcement (TODO)
+
+**Goal:** Implement issuer-side enforcement of Vetter Certification constraints at credential issuance, dossier creation, and PASSporT signing time — completing the multi-layer defense described in the "How To Constrain Multichannel Vetters" specification.
+
+**Spec Reference:** `Documentation/Specs/How To Constrain Multichannel Vetters.pdf`
+
+### Specification: How To Constrain Multichannel Vetters (Full Text)
+
+The following is the complete normative specification that this sprint implements. The reviewer should treat this as the authoritative requirements document.
+
+#### 1. Vetter Certification Credential
+
+Vetters (entities authorized to attest facts about phone-number holders) receive a **Vetter Certification** credential. This credential has two constraint fields:
+
+- **ECC Targets** (E.164 Country Code Targets): A list of E.164 country codes (e.g., `"44"`, `"1"`, `"33"`) in which the target of this vetter's attention may possess a phone number for which the vetter is certified to attest right to use.
+- **Jurisdiction Targets**: A list of ISO 3166-1 alpha-3 country codes (e.g., `"GBR"`, `"FRA"`, `"USA"`) for which the vetter is certified to attest incorporation, legal correctness, and legal entitlement to use brand assets.
+
+#### 2. Worked Example: Two Vetters
+
+Suppose **CertificationA** (Vetter A's certification) has:
+- ECC Targets: `["44", "91", "33", "1", "34", "81", "66", "971"]`
+- Jurisdiction Targets: `["GBR", "ZAF", "THA", "BRA", "USA", "FRA"]`
+
+And **CertificationB** (Vetter B's certification) has:
+- ECC Targets: `["33", "91", "81", "66", "27", "971"]`
+- Jurisdiction Targets: `["FRA", "ZAF", "THA", "IND", "PAK", "USA", "CAN"]`
+
+#### 3. Credential Issuance with Backlinks
+
+Suppose **Acme Space Travel** is incorporated in France and wants a dossier to make VVP calls from a UK phone number (+44xxxxxxxxxx). Acme works with Vetter B, who issues 3 credentials:
+
+- **IdentityB**: Acme is incorporated in France with LEI value X.
+- **BrandB**: According to the laws of France, Acme has the legal right to use the brand name "SpaceMe!" with a logo.
+- **TNB**: In Vetter B's judgment, Acme has the right to use TN +44xxxxxxxxxx.
+
+**Critical**: Each of these credentials contains an **edge** (backlink) to **CertificationB**. This is how the verifier discovers which vetter certified each fact.
+
+#### 4. Dossier Assembly and Call Flow
+
+Acme puts these credentials into a dossier and begins emitting phone calls that reference the dossier. In a healthy ecosystem there are multiple enforcement points, but ultimately any party that has risk can do their own verification.
+
+#### 5. Verification Algorithm
+
+A verifier receives a call from +44xxxxxxxxxx accompanied by a PASSporT citing DossierB. The verifier fetches the dossier and all credentials it references (IdentityB, BrandB, TNB). Because of the backlink edge in each credential, the verifier also fetches CertificationB. It performs the following analysis:
+
+**Standard checks (pre-existing):**
+1. Is the dossier properly signed by Acme and unrevoked?
+2. Are all credentials directly referenced by the dossier properly signed and unexpired/unrevoked?
+3. Are all credentials indirectly referenced (CertificationB) properly signed and unexpired/unrevoked?
+4. Are the identity, brand, and TN credentials issued to the same party that signed the dossier?
+5. Does the asserted TN of the call (+44xxxxxxxxxx) correspond to the TN in the TN credential?
+6. Does the asserted brand of the call ("SpaceMe!" with logo) correspond to the brand data in the brand credential?
+
+**Vetter constraint checks (this sprint's focus):**
+
+7. **Identity/Jurisdiction check**: Does the identity credential say the caller (accountable party) is incorporated in a country that also appears in the **Jurisdiction Targets** field of the vetter's certification?
+   - *With Vetter B*: Incorporated in France; FRA IS in Jurisdiction Targets → **PASS**
+
+8. **TN/ECC check**: Does the TN credential say the caller has the right to use a TN whose E.164 country code also appears in the **ECC Targets** field of the vetter's certification?
+   - *With Vetter B*: TN is +44 (UK); 44 is NOT in ECC Targets → **FAIL**
+
+9. **Brand/Jurisdiction check**: Is the caller asserting the brand in a country that also appears in the **Jurisdiction Targets** field of the vetter's certification?
+   - *With Vetter B*: Asserting brand in UK; GBR is NOT in Jurisdiction Targets → **FAIL**
+
+#### 6. Status Reporting
+
+The answers to the last 2 questions are **No**. The dossier cites evidence that depends on a vetter who is NOT known to be certified to vet right to use +44 TNs, and who is NOT known to be certified to assert brand right-to-use in the UK. The verification service sets **status bits** in the evidence status code to communicate that the TN credential and brand credential statuses = "does not apply to this call". The client of the verification API decides whether it considers these bits to be errors (don't route the call), warnings (route but suppress brand), etc.
+
+#### 7. Resolution Path
+
+Acme realizes the problem and approaches **Vetter A** instead. It gets IdentityA, BrandA, and TNA. Acme builds DossierA and starts sending traffic. Now the verifier repeats the analysis:
+
+- Identity/Jurisdiction: Incorporated in France; FRA IS in Vetter A's Jurisdiction Targets → **PASS**
+- TN/ECC: TN is +44; 44 IS in Vetter A's ECC Targets → **PASS**
+- Brand/Jurisdiction: Asserting brand in UK; GBR IS in Vetter A's Jurisdiction Targets → **PASS**
+
+The verification returns an evidence status code indicating the evidence is solid.
+
+#### 8. Specification Notes
+
+1. **Precision of wording matters**: "Vetter A can vet in the UK" is not precise enough. The constraints are specific: ECC Targets constrain which *phone number country codes* a vetter can certify, and Jurisdiction Targets constrain which *legal jurisdictions* a vetter can certify for incorporation and brand rights.
+
+2. **Future granularity**: Could split Jurisdiction Targets into "Legal Entity Jurisdiction Targets" and "Brand Licensure Jurisdiction Targets". Could add constraints on company type, call purpose, and other dimensions. Not in scope for this sprint.
+
+3. **Granularity tradeoff**: More granular certifications = more expressive power but also more confusion and the need for companies to be vetted multiple times.
+
+4. **Multiple enforcement points**: Enforcement at verification **MUST** occur. But enforcement SHOULD also happen at:
+   - **Signing time** (PASSporT creation) — the signing service validates constraints before signing
+   - **Dossier creation time** — the dossier builder validates constraints during assembly
+   - **Moment of issuance** — the issuer validates constraints before issuing credentials
+
+   This sprint implements all three issuer-side enforcement points.
+
+### Current State
+
+**What already exists (Sprint 40 + 60b + 61):**
+- Verifier: `VetterCertification` model, `verify_vetter_constraints()`, edge traversal, country code utilities, 61 tests
+- Extended schemas: `extended-legal-entity-credential.json`, `extended-brand-credential.json`, `extended-tn-allocation-credential.json` — all with `certification` backlink edges
+- Vetter Certification schema: `vetter-certification-credential.json` (SAID `EOefmhWU2qTpMiEQhXohE6z3xRXkpLloZdhTYIenlD4H`)
+- Schema registry: all extended SAIDs registered in `KNOWN_SCHEMA_SAIDS`
+- **Sprint 61**: VetterCertification credential CRUD, org-cert association, constraint visibility API, bootstrap provisioning
+
+**What's missing (enforcement — this sprint):**
+1. No issuance-time validation — credentials issued with any scope regardless of vetter authority
+2. No dossier creation-time validation — dossier builder doesn't check constraints
+3. No signing-time validation — `/vvp/create` doesn't check constraints before signing
+
+### Deliverables
+
+#### Phase 1: Issuance-Time Constraint Enforcement
+
+- [ ] **Pre-issuance validation in `/credential/issue`** — When issuing an extended credential that uses a vetter-cert-linked schema:
+  - **Extended TNAlloc** (`EGUh_fVLbjfkYFb5zAsY2Rqq0NqwnD3r5jsdKWLTpU8_`): Extract E.164 country code from `numbers.tn` or `numbers.rangeStart` → validate against the org's VetterCertification `ecc_targets`
+  - **Extended LE** (`EPknTwPpSZi379molapnuN4V5AyhCxz_6TLYdiVNWvbV`): Extract `country` attribute → validate against `jurisdiction_targets`
+  - **Extended Brand** (`EK7kPhs5YkPsq9mZgUfPYfU-zq5iSlU8XVYJWqrVPk6g`): Extract `assertionCountry` attribute → validate against `jurisdiction_targets`
+- [ ] **Configurable enforcement** — `VVP_ENFORCE_VETTER_CONSTRAINTS` env var (default `false`, matching verifier). When `false`, log warnings but still issue. When `true`, reject with 403.
+- [ ] **Automatic certification edge injection** — When issuing extended credentials, auto-populate the `certification` edge reference to the org's VetterCertification SAID (so callers don't need to manually construct the backlink)
+
+#### Phase 3: Dossier & Signing-Time Enforcement
+
+- [ ] **Dossier builder constraint validation** — In `DossierBuilder.build()`, after collecting all credentials via edge walk:
+  - For each credential with a `certification` edge, resolve the VetterCertification
+  - Validate ECC/jurisdiction constraints against the credential's scope
+  - If `ENFORCE_VETTER_CONSTRAINTS=true`, raise error and refuse to build
+  - If `false`, log warnings and add constraint metadata to dossier response
+- [ ] **Signing-time validation in `/vvp/create`** — Before signing a PASSporT:
+  - Resolve the dossier's credential chain
+  - Check that all vetter constraints pass for the call's originating TN and brand assertion country
+  - If `ENFORCE_VETTER_CONSTRAINTS=true`, reject signing with descriptive error
+  - If `false`, log warnings and sign anyway (verifier will catch it downstream)
+
+#### Phase 3: E2E
+
+- [ ] **E2E test: Constraint pass** — Run `system-health-check.sh --e2e` and verify all constraint checks pass end-to-end (issuer constraint validation at issuance → dossier build → signing → verifier constraint validation)
+- [ ] **E2E test: Constraint fail** — Test that issuing a TN Allocation for a country code NOT in the vetter's `ecc_targets` is rejected (when enforcement is on)
+
+#### Phase 4: Tests
+
+- [ ] **Unit tests: Issuance-time validation** — ECC and jurisdiction constraint checks at issue time
+- [ ] **Unit tests: Dossier builder validation** — Constraint checking during dossier assembly
+- [ ] **Unit tests: Signing-time validation** — Constraint checking before PASSporT creation
+- [ ] **Unit tests: Automatic edge injection** — Verify certification edge is auto-populated
+- [ ] **Unit tests: Enforcement flag** — Verify soft-fail (warn) vs hard-fail (reject) behavior
+
+### Key Files to Create/Modify
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `services/issuer/app/vetter/constraints.py` | Create | Issuance-time constraint validator |
+| `services/issuer/app/api/credential.py` | Modify | Add pre-issuance constraint validation hook |
+| `services/issuer/app/dossier/builder.py` | Modify | Add constraint validation during build |
+| `services/issuer/app/api/vvp.py` | Modify | Add signing-time constraint validation |
+| `services/issuer/app/core/config.py` | Modify | Add `ENFORCE_VETTER_CONSTRAINTS` setting |
+| `services/issuer/tests/test_vetter_constraints.py` | Create | Constraint enforcement tests |
+
+### Technical Notes
+
+- **Shared logic opportunity**: The verifier's `vetter/certification.py`, `vetter/constraints.py`, and `vetter/country_codes.py` contain reusable parsing/validation logic. Consider extracting country code utilities into `common/vvp/utils/` and sharing between services.
+- **Edge injection**: When the issuer auto-populates the `certification` edge, it must recompute the edge block's SAID (`e.d`) since adding an edge changes the digest. keripy's `proving.credential()` handles this if edges are passed at creation time.
+- **Schema migration path**: Existing credentials issued under base schemas (TNAlloc `EFvnoHDY7I-...`, LE `ENPXp1vQ...`) lack certification edges. The verifier already handles this gracefully (returns `INDETERMINATE` if certification is missing). New issuances should use extended schemas; old credentials remain valid but produce weaker verification results.
+- **Bearer vs. subject-bound**: VetterCertification credentials have an `i` (issuee) field identifying the certified vetter AID. The issuer must look up which org holds a certification by matching the org's signing AID against the certification's issuee.
+- **Enforcement flag parity**: Both issuer and verifier should respect the same `VVP_ENFORCE_VETTER_CONSTRAINTS` env var semantics — `false` = log + allow, `true` = reject.
+
+### Dependencies
+
+- Sprint 61 (Organization Vetter Certification Association) — provides VetterCert CRUD, org association, constraint visibility
+- Sprint 40 (Vetter Certification Constraints — verifier side) — COMPLETE
+- Sprint 60b (TNAlloc in Dossier) — COMPLETE
+
+### Exit Criteria
+
+- Issuing an Extended TNAlloc with a TN country code outside the org's vetter ECC Targets is rejected (enforcement=true) or warned (enforcement=false)
+- Issuing an Extended Brand with an assertionCountry outside the org's vetter Jurisdiction Targets is rejected/warned
+- Dossier builder validates constraints during assembly
+- `/vvp/create` validates constraints before signing
+- Bootstrap provisions a VetterCertification and uses extended schemas
+- E2E test passes with full constraint chain: issuance → dossier → signing → verification
+- All existing tests continue to pass (no regressions)
+- New tests cover all constraint enforcement paths
+
+---
+
+## Sprint 63: Dossier Creation Wizard UI (TODO)
+
+**Goal:** Redesign the `/ui/dossier` page from a "select root credential and download" tool into a guided dossier creation wizard. The new workflow lets an SSO-authenticated admin select a dossier-owning organization (the Accountable Party), pick credentials matching each dossier schema edge slot, optionally name the dossier, and issue the dossier ACDC (`EH1jN4U4LMYHmPVI4FYdZ10bIPR7YWKp8TDdZ9Y9Al-P`) — then record which OSP (Originating Service Provider) organization is authorized to reference it.
+
+**Dependencies:** Sprint 41 (Multi-tenancy), Sprint 32 (Dossier Assembly), Sprint 60b (TNAlloc in Dossier)
+
+### Spec References
+
+- **VVP Spec §6.3.2 — Dossier**: *"The dossier is a compilation of all the permanent, backing evidence that justifies trust in the identity and authorization of the AP and OP. It is created and must be signed by the AP. It is CVD (§6.2.9) asserted to the world, not a credential (§6.2.10) issued to a specific party."*
+- **VVP Spec §3.1.4 — Accountable Party**: The AP prepares the dossier. Only the owner of a dossier can prove intent to initiate a VVP call citing it.
+- **VVP Spec §3.1.3 — Originating Party**: The OP controls the SBC and signs PASSporTs. The OP's identity is typically narrower than the organization's — it corresponds to specific automation/service. The OP is authorized via the `delsig` edge.
+- **VVP Spec §6.3.4 — Delegation Evidence**: *"The DE in the dossier MUST include a delegated signer credential that authorizes the OP to act on the AP's behalf."* If brand is included, a brand proxy credential MUST also be in the DE.
+- **VVP Spec §5.1 step 9**: *"If there is no delegation evidence, the AP and the OP MUST be identical... otherwise, the OP MUST be the issuee of a delegated signing credential for which the issuer is the AP."*
+
+### Schema Note
+
+Our dossier schema (`EH1jN4U4LMYHmPVI4FYdZ10bIPR7YWKp8TDdZ9Y9Al-P`) differs from the spec's sample dossier (§12.7, schema `EFv3_L64_...`). Key differences:
+
+| Aspect | Spec §12.7 Sample | Our Schema (`EH1jN4U4...`) |
+|--------|-------------------|----------------------------|
+| `alloc` edge | Points to TNAlloc credential (`EFvno...`) | Points to GCD allocator credential (`EL7ir...`) |
+| TN allocation | Included in `alloc` | Separate `tnalloc` edge |
+| Brand edge | `brand` with operator `I2I` | `bownr` with operator `NI2I` |
+| Edge count | 5 edges | 6 edges |
+
+Our schema is published at [DOSSIER-SCHEMA] and is the one deployed in the codebase. The spec sample is illustrative; the actual schema governs.
+
+### Background
+
+A dossier is an ACDC that serves as CVD (cryptographically verifiable data) — it is signed by the Accountable Party and asserted to the world (not issued to a specific issuee). Per VVP spec §6.3.2, it assembles all backing evidence via edges to supporting credentials. Our schema defines six edge slots (4 required, 2 optional):
+
+| Edge | Description | Schema Constraint | Operator | Required |
+|------|-------------|-------------------|----------|----------|
+| `vetting` | Identity credential (LE) proving AP's legal identity (§6.3.5) | flexible | NI2I | Yes |
+| `alloc` | Allocator authority credential (GCD) for TN management committee | `EL7irIKYJL9Io0hhKSGWI4OznhwC7qgJG5Qf4aEs6j0o` | I2I | Yes |
+| `tnalloc` | TN Allocation (RTU) credential proving right to use TNs (§6.3.6) | `EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ` | I2I | Yes |
+| `delsig` | Delegated signer credential authorizing OP to sign PASSporTs (§6.3.9) | `EL7irIKYJL9Io0hhKSGWI4OznhwC7qgJG5Qf4aEs6j0o` | NI2I | Yes |
+| `bownr` | Brand ownership credential (§6.3.7) — proves AP's right to brand | flexible | NI2I | No |
+| `bproxy` | Brand proxy credential (§6.3.8) — authorizes OP to project AP's brand | flexible | — | No |
+
+**Operators (per ACDC spec):**
+- `I2I` (Issuer-to-Issuee): The dossier's issuer AID (the AP) MUST be the issuee of the target credential. Filters to credentials issued TO the AP's org.
+- `NI2I` (Not-Issuer-to-Issuee): The dossier's issuer AID need NOT match the issuee. Permits credentials issued by third parties (e.g., a vetter issuing an LE credential TO the AP, or a brand vetter attesting brand rights).
+
+**Key spec constraints on edges:**
+- `delsig`: Per §5.1 step 9, the issuee (`a.i`) of the delegated signer credential MUST be the OP's AID, and the issuer MUST be the AP. This is the cryptographic link that authorizes the OP.
+- `bproxy`: Per §6.3.4, required if the dossier includes a brand credential AND the OP differs from the AP. Authorizes the OP to project the AP's brand.
+- `vetting`: Per §6.3.5, MUST include a JL to a credential that qualifies the issuer as a trusted vetter (e.g., QVI → LE chain).
+
+The current dossier page (`services/issuer/web/dossier.html`) is a flat list of all credentials with radio-select → build → download. It has no organization awareness, no schema-driven edge slot selection, and no ACDC issuance — it only serializes an existing credential chain.
+
+### Current State
+
+**What exists:**
+- `GET /credential` API — lists credentials, org-scoped for non-admins
+- `GET /api/organizations` API — lists orgs (admin only)
+- `POST /api/credentials/issue` API — issues ACDC with schema, attributes, edges, optional recipient
+- `POST /api/dossier/build` / `/build/info` — builds serialized dossier from a root credential SAID
+- `GET /api/dossier/{said}` — public dossier retrieval
+- Organization model with AID, name, registry, credentials relationship
+- ManagedCredential model linking credential SAIDs to organizations
+- Credentials page (`credentials.html`) with edge management UI patterns and schema-driven forms
+- `shared.js` with `authFetch()`, session management, schema utilities
+
+**What's missing:**
+1. No organization selector on the dossier page
+2. No filtering of credentials by schema type per edge slot
+3. No dossier ACDC creation — page only downloads existing dossier chains
+4. No OSP association step — no way to record which OSP organization will reference the dossier
+5. No dossier name input
+6. Credential list shows raw SAIDs without human-readable context (no org name, no schema type label)
+
+### Deliverables
+
+#### Phase 1: API Enhancements
+
+- [ ] **Organization list endpoint for non-admin users** — Currently `GET /api/organizations` requires `issuer:admin`. Add a lightweight `GET /api/organizations/names` endpoint that returns `[{id, name}]` for any authenticated user (needed for both owner and delegate selection). No sensitive fields exposed.
+- [ ] **Credential list filtering by schema** — Extend `GET /credential` with optional `?schema_said=...` query parameter so the UI can request only credentials matching a specific edge's required schema. Also add `?org_id=...` filter for admin users who need to see credentials scoped to a specific org (not their own).
+- [ ] **Dossier issuance endpoint** — `POST /api/dossier/create` that accepts:
+  ```json
+  {
+    "owner_org_id": "uuid (the Accountable Party org)",
+    "name": "My VVP Dossier (optional)",
+    "edges": {
+      "vetting": { "said": "SAID_of_LE_credential" },
+      "alloc": { "said": "SAID_of_GCD_credential" },
+      "tnalloc": { "said": "SAID_of_TNAlloc_credential" },
+      "delsig": { "said": "SAID_of_delegation_credential" },
+      "bownr": { "said": "SAID_of_brand_credential" },
+      "bproxy": { "said": "SAID_of_brand_proxy_credential" }
+    },
+    "osp_org_id": "uuid (optional — the OSP org that will reference this dossier)"
+  }
+  ```
+  This endpoint:
+  1. Resolves `owner_org_id` to the AP org's AID and registry — the dossier's `i` (issuer) field will be this AID
+  2. Looks up each edge credential's schema SAID to populate the `s` field
+  3. Sets the correct operator (`o`) per the dossier schema
+  4. Issues the dossier ACDC via the existing `issue_credential()` machinery with schema `EH1jN4U4LMYHmPVI4FYdZ10bIPR7YWKp8TDdZ9Y9Al-P`. Note: the dossier has no issuee (`a.i`) — it is CVD asserted to the world per §6.3.2, not a targeted credential.
+  5. If `osp_org_id` is provided, records the administrative OSP association (see Phase 2)
+  6. Returns the issued dossier SAID and dossier metadata
+- [ ] **Edge credential validation** — Before issuing, validate:
+  - Required edges (`vetting`, `alloc`, `tnalloc`, `delsig`) are all provided
+  - Each edge credential exists and is in `issued` (not revoked) status
+  - Schema-constrained edges (`alloc`, `tnalloc`, `delsig`) reference credentials with the correct schema SAID
+  - I2I edges (`alloc`, `tnalloc`) reference credentials whose issuee matches the owning org's AID
+
+#### Phase 2: OSP Association Model
+
+**Important spec distinction:** The VVP spec's "delegation" is exclusively through the `delsig` edge — a cryptographic delegated signer credential that authorizes the OP to sign PASSporTs (§6.3.9). The spec has no concept of "delegating a dossier" as an administrative act. The dossier is public CVD at an OOBI URL (the `evd` field in the PASSporT).
+
+However, in our multi-tenant issuer, we need an **administrative record** of which OSP organization is authorized to reference a dossier when creating TN mappings and signing PASSporTs. This is an operational convenience, not a protocol-level concept.
+
+- [ ] **Dossier-OSP association record** — Add a `dossier_osp_associations` table to track which OSP organization can use which dossier:
+  ```
+  dossier_said (FK → managed_credentials.said)
+  owner_org_id (FK → organizations.id)    -- the AP
+  osp_org_id (FK → organizations.id)      -- the OSP
+  created_at (datetime)
+  ```
+  This records that the AP org authorizes the OSP org to reference this dossier for TN mappings. The actual cryptographic authorization comes from the `delsig` edge within the dossier, which must contain the OP's AID as issuee (§5.1 step 9).
+- [ ] **OSP visibility** — The OSP org should be able to see dossiers associated with them via `GET /credential` or a new `GET /api/dossier/associated` endpoint. This enables the OSP to select from available dossiers when creating TN mappings.
+- [ ] **Validation**: When recording an OSP association, optionally validate that the `delsig` edge's issuee AID matches an AID owned by the OSP org (consistency check between administrative record and cryptographic delegation).
+
+#### Phase 3: UI Redesign (`dossier.html`)
+
+Replace the current flat credential list with a multi-step wizard:
+
+- [ ] **Step 1: Select Accountable Party Organization** — Dropdown of organizations (populated from `GET /api/organizations/names`). Admin users see all orgs; non-admin users see only their own org (pre-selected, dropdown disabled). This sets the AP (dossier owner/issuer) context for all subsequent steps. The selected org's AID will become the dossier's `i` field.
+
+- [ ] **Step 2: Select Edge Credentials** — For each of the 6 edge slots, show a credential picker:
+  - Section heading with edge name, description, required/optional badge
+  - Filterable table showing only credentials that match:
+    - The edge's required schema SAID (for constrained edges)
+    - The selected organization (for I2I edges: must be issued TO the org; for NI2I edges: show all accessible credentials with org's credentials highlighted)
+  - Each row shows: credential SAID (truncated), schema type label (human-readable from schema registry), issuance date, status badge, and key attributes (e.g., TN numbers for tnalloc, entity name for vetting)
+  - Radio-select for required edges, checkbox for optional edges (can be left empty)
+  - "No matching credentials" message with link to credentials page to issue one
+
+- [ ] **Step 3: Dossier Metadata** — Input fields:
+  - Dossier name (optional text input, maps to `a.name`)
+  - OSP Organization (optional dropdown from `GET /api/organizations/names`) — the Originating Service Provider org that will reference this dossier for signing PASSporTs. This is an administrative association, not a protocol-level field. Per §6.3.9, the actual cryptographic authorization comes from the `delsig` edge.
+  - Summary panel showing all selected edges with credential SAIDs
+
+- [ ] **Step 4: Review & Create** — Confirmation panel:
+  - Owner organization name
+  - Each edge slot with credential SAID and schema type
+  - Dossier name (if provided)
+  - OSP organization (if selected)
+  - "Create Dossier" button → `POST /api/dossier/create`
+  - Success: show issued dossier SAID, link to download, option to proceed to TN Mapping creation
+  - Error: show validation errors with links back to the relevant step
+
+#### Phase 4: Credential Display Enrichment
+
+- [ ] **Schema type labels** — Map schema SAIDs to human-readable labels in the UI (e.g., `EFvnoHDY7I-...` → "TN Allocation", `EL7irIKYJL9Io0...` → "Cooperative Delegation (GCD)"). Use the schema registry's `title` field from the embedded JSON schemas.
+- [ ] **Credential attribute preview** — When selecting a credential for an edge slot, show key attributes inline:
+  - Vetting (LE): entity name, country
+  - TNAlloc: phone numbers/ranges
+  - Brand: brand name, logo URL
+  - GCD (alloc/delsig): delegation target name
+- [ ] **Organization name display** — Show org names alongside AIDs wherever possible (already done in credentials page via GLEIF lookup; reuse pattern)
+
+#### Phase 5: Tests
+
+- [ ] **API tests: `POST /api/dossier/create`** — Happy path, missing required edges, invalid schema match, revoked credential rejection, I2I operator validation, no issuee in output ACDC, OSP association recording
+- [ ] **API tests: `GET /api/organizations/names`** — Auth required, returns minimal fields, accessible to non-admin
+- [ ] **API tests: `GET /credential?schema_said=...&org_id=...`** — Schema filtering, org filtering, combined filters
+- [ ] **API tests: OSP association model** — Create association, query associated dossiers, org scoping, `delsig` AID consistency check
+- [ ] **UI tests** — If existing UI test patterns exist, add wizard flow coverage; otherwise manual E2E verification
+
+### Key Files to Create/Modify
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `services/issuer/app/api/dossier.py` | Modify | Add `POST /api/dossier/create` endpoint |
+| `services/issuer/app/api/credential.py` | Modify | Add `schema_said` and `org_id` query filters to `GET /credential` |
+| `services/issuer/app/api/organization.py` | Modify | Add `GET /api/organizations/names` endpoint |
+| `services/issuer/app/db/models.py` | Modify | Add `DossierOspAssociation` model |
+| `services/issuer/web/dossier.html` | Rewrite | Multi-step wizard UI |
+| `services/issuer/tests/test_dossier_create.py` | Create | Dossier creation + delegation tests |
+| `services/issuer/tests/test_credential_filters.py` | Create | Schema/org filter tests |
+| `knowledge/api-reference.md` | Update | Document new endpoints |
+| `knowledge/data-models.md` | Update | Document DossierOspAssociation model |
+
+### Technical Notes
+
+- **Dossier is CVD, not a targeted credential**: Per VVP spec §6.3.2, the dossier is "CVD asserted to the world, not a credential issued to a specific party." It has no issuee field (`a.i`). Our schema confirms this — the attributes block only has `d`, `dt`, and optional `name`. The ACDC's `i` field is the AP's AID (the issuer/signer), not an issuee.
+- **Dossier ACDC issuance**: The `POST /api/dossier/create` endpoint internally calls the same `issue_credential()` path used by `POST /api/credentials/issue`. It constructs the ACDC with schema `EH1jN4U4LMYHmPVI4FYdZ10bIPR7YWKp8TDdZ9Y9Al-P`, populates edges with the correct `n` (SAID), `s` (schema SAID), and `o` (operator) per the schema, and computes SAID-based digests via keripy. No `recipient_aid` is passed (no issuee).
+- **Edge schema SAID lookup**: For edges with `const` schema SAIDs (`alloc`, `tnalloc`, `delsig`), the endpoint hardcodes the expected value. For flexible edges (`vetting`, `bownr`, `bproxy`), the endpoint looks up the target credential's actual schema SAID.
+- **Operator auto-population**: The operators are fixed per the dossier schema (`I2I` for alloc/tnalloc, `NI2I` for vetting/delsig/bownr). The UI does not need to expose operator selection — they are set automatically by the backend.
+- **OSP association vs. `delsig` edge**: The OSP association in this sprint is an **administrative record** (AP org authorizes OSP org to reference the dossier in TN mappings). This is distinct from the `delsig` edge, which is a cryptographic GCD credential proving the OP's AID is authorized to sign PASSporTs on behalf of the AP (§6.3.9, §5.1 step 9). The `delsig` edge is protocol-level; the OSP association is an operational convenience for the multi-tenant issuer.
+- **`delsig` edge semantics**: Per §5.1 step 9, the `delsig` credential's issuer (`i`) MUST be the AP, and its issuee (`a.i`) MUST be the OP's AID. When the UI shows candidates for the `delsig` slot, it should indicate which AID will be authorized as the signer.
+- **`bproxy` conditional requirement**: Per §6.3.4, if the dossier includes a brand credential (`bownr`) AND the OP differs from the AP, then a brand proxy credential (`bproxy`) MUST also be included. The wizard should warn if `bownr` is selected but `bproxy` is left empty.
+- **Build & download preserved**: The existing "build & download" functionality (CESR/JSON serialization) should remain available. After creating a dossier, the user can still download the serialized form. The new wizard adds the creation step before the existing build step.
+- **SSO context**: The logged-in user's session determines available organizations. System admins (`issuer:admin`) can create dossiers for any org; org users (`org:dossier_manager`) can only create for their own org.
+
+### Exit Criteria
+
+- Admin can select an Accountable Party organization from a dropdown on the dossier page
+- Credentials are filtered per edge slot, showing only schema-compatible and org-appropriate credentials
+- All 4 required dossier edges must be filled before creation is allowed
+- Optional edges (bownr, bproxy) can be left empty; wizard warns if bownr is selected without bproxy (per §6.3.4)
+- Dossier ACDC is successfully issued with correct schema, attributes, edges, and no issuee field (CVD per §6.3.2)
+- The dossier's `i` field is the AP org's AID
+- Optional dossier name is included in the ACDC attributes (`a.name`)
+- Optional OSP organization association is recorded and queryable (administrative, not protocol-level)
+- Existing "build & download" functionality continues to work for all dossiers (old and new)
+- All new API endpoints have tests
+- All existing tests continue to pass (no regressions)
