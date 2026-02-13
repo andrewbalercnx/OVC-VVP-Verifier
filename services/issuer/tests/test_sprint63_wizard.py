@@ -1101,22 +1101,27 @@ class TestOspConsistency:
         finally:
             db.close()
 
-        response = await client_with_auth.post(
-            "/dossier/create",
-            json={
-                "owner_org_id": ap_id,
-                "edges": {
-                    "vetting": "Ev",
-                    "alloc": "Ea",
-                    "tnalloc": "Et",
-                    "delsig": "Ed",
+        # Mock edge validation to pass — isolate OSP validation
+        mock_edges = ({"vetting": {"n": "Ev"}}, f"E{uuid.uuid4().hex[:43]}")
+        with patch("app.api.dossier._validate_dossier_edges", new_callable=AsyncMock, return_value=mock_edges):
+            response = await client_with_auth.post(
+                "/dossier/create",
+                json={
+                    "owner_org_id": ap_id,
+                    "edges": {
+                        "vetting": "Ev",
+                        "alloc": "Ea",
+                        "tnalloc": "Et",
+                        "delsig": "Ed",
+                    },
+                    "osp_org_id": osp_id,
                 },
-                "osp_org_id": osp_id,
-            },
-            headers=admin_headers,
-        )
-        # Should fail at edge validation (404 for credential) or at OSP AID check (400)
-        assert response.status_code in (400, 404)
+                headers=admin_headers,
+            )
+        # OSP validation runs before credential issuance, so we get a clean 400
+        # (OSP has no AID), not a side-effect-producing error later
+        assert response.status_code == 400
+        assert "AID" in response.json()["detail"] or "aid" in response.json()["detail"].lower()
 
 
 # =============================================================================
@@ -1181,5 +1186,338 @@ class TestDossierCreateEdgeValidationAPI:
             },
             headers=admin_headers,
         )
-        # Should fail at edge validation (unknown edge or credential not found)
-        assert response.status_code in (400, 404)
+        # Unknown edge name is caught in fast-fail validation before KERI init
+        assert response.status_code == 400
+        assert "unknown" in response.json()["detail"].lower()
+
+
+# =============================================================================
+# Happy-Path Tests (reviewer-requested: successful creation, OSP, witness fail)
+# =============================================================================
+
+
+class TestDossierCreateHappyPath:
+    """End-to-end happy-path tests for POST /dossier/create with mocked KERI."""
+
+    def _setup_org(self, db, *, aid=None, registry_key=None, enabled=True):
+        """Create and persist an Organization, returning it."""
+        org = Organization(
+            id=str(uuid.uuid4()),
+            name=f"HappyOrg {uuid.uuid4().hex[:8]}",
+            pseudo_lei=f"54930{uuid.uuid4().hex[:15]}",
+            aid=aid or f"E{uuid.uuid4().hex[:43]}",
+            registry_key=registry_key or f"E{uuid.uuid4().hex[:43]}",
+            enabled=enabled,
+        )
+        db.add(org)
+        db.commit()
+        db.refresh(org)
+        return org
+
+    def _mock_cred_info(self, said, issuer_aid):
+        """Build a mock CredentialInfo matching issue_credential return."""
+        from app.keri.issuer import CredentialInfo
+        return CredentialInfo(
+            said=said,
+            issuer_aid=issuer_aid,
+            recipient_aid=None,
+            registry_key=f"E{uuid.uuid4().hex[:43]}",
+            schema_said=DOSSIER_SCHEMA_SAID,
+            issuance_dt="2026-01-01T00:00:00.000000+00:00",
+            status="issued",
+            revocation_dt=None,
+            attributes={"d": "", "dt": "2026-01-01T00:00:00.000000+00:00"},
+            edges=None,
+            rules=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_required_edges_only(self, client_with_auth, admin_headers):
+        """Successful dossier creation with 4 required edges, no optional."""
+        _init_app_db()
+        from app.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            ap = self._setup_org(db)
+            ap_id, ap_aid = ap.id, ap.aid
+        finally:
+            db.close()
+
+        dossier_said = f"E{uuid.uuid4().hex[:43]}"
+        mock_edges = (
+            {
+                "vetting": {"n": "Ev"},
+                "alloc": {"n": "Ea"},
+                "tnalloc": {"n": "Et"},
+                "delsig": {"n": "Ed"},
+            },
+            None,  # delsig_issuee_aid
+        )
+        mock_cred = self._mock_cred_info(dossier_said, ap_aid)
+
+        mock_issuer = AsyncMock()
+        mock_issuer.issue_credential = AsyncMock(return_value=(mock_cred, b"\x00"))
+        mock_issuer.get_anchor_ixn_bytes = AsyncMock(return_value=b"\x00")
+
+        mock_registry_info = MagicMock()
+        mock_registry_info.name = "test-registry"
+        mock_reg_mgr = AsyncMock()
+        mock_reg_mgr.get_registry = AsyncMock(return_value=mock_registry_info)
+
+        with (
+            patch("app.api.dossier._validate_dossier_edges", new_callable=AsyncMock, return_value=mock_edges),
+            patch("app.api.dossier.get_credential_issuer", new_callable=AsyncMock, return_value=mock_issuer),
+            patch("app.keri.registry.get_registry_manager", new_callable=AsyncMock, return_value=mock_reg_mgr),
+            patch("app.api.dossier.WITNESS_IURLS", []),  # no witnesses
+        ):
+            response = await client_with_auth.post(
+                "/dossier/create",
+                json={
+                    "owner_org_id": ap_id,
+                    "edges": {
+                        "vetting": "Ev", "alloc": "Ea",
+                        "tnalloc": "Et", "delsig": "Ed",
+                    },
+                    "name": "Test Dossier",
+                },
+                headers=admin_headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["dossier_said"] == dossier_said
+        assert body["issuer_aid"] == ap_aid
+        assert body["schema_said"] == DOSSIER_SCHEMA_SAID
+        assert body["edge_count"] == 4
+        assert body["name"] == "Test Dossier"
+        assert body["osp_org_id"] is None
+        assert body["publish_results"] is None  # no witnesses configured
+
+        # Verify ManagedCredential persisted in DB
+        db2 = SessionLocal()
+        try:
+            mc = db2.query(ManagedCredential).filter(ManagedCredential.said == dossier_said).first()
+            assert mc is not None
+            assert mc.organization_id == ap_id
+            assert mc.schema_said == DOSSIER_SCHEMA_SAID
+        finally:
+            db2.close()
+
+    @pytest.mark.asyncio
+    async def test_create_with_optional_edges(self, client_with_auth, admin_headers):
+        """Successful dossier creation with all 6 edges (4 required + 2 optional)."""
+        _init_app_db()
+        from app.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            ap = self._setup_org(db)
+            ap_id, ap_aid = ap.id, ap.aid
+        finally:
+            db.close()
+
+        dossier_said = f"E{uuid.uuid4().hex[:43]}"
+        mock_edges = (
+            {
+                "vetting": {"n": "Ev"}, "alloc": {"n": "Ea"},
+                "tnalloc": {"n": "Et"}, "delsig": {"n": "Ed"},
+                "bownr": {"n": "Eb"}, "bproxy": {"n": "Ep"},
+            },
+            f"E{uuid.uuid4().hex[:43]}",  # delsig issuee AID
+        )
+        mock_cred = self._mock_cred_info(dossier_said, ap_aid)
+
+        mock_issuer = AsyncMock()
+        mock_issuer.issue_credential = AsyncMock(return_value=(mock_cred, b"\x00"))
+
+        mock_registry_info = MagicMock()
+        mock_registry_info.name = "test-registry"
+        mock_reg_mgr = AsyncMock()
+        mock_reg_mgr.get_registry = AsyncMock(return_value=mock_registry_info)
+
+        with (
+            patch("app.api.dossier._validate_dossier_edges", new_callable=AsyncMock, return_value=mock_edges),
+            patch("app.api.dossier.get_credential_issuer", new_callable=AsyncMock, return_value=mock_issuer),
+            patch("app.keri.registry.get_registry_manager", new_callable=AsyncMock, return_value=mock_reg_mgr),
+            patch("app.api.dossier.WITNESS_IURLS", []),
+        ):
+            response = await client_with_auth.post(
+                "/dossier/create",
+                json={
+                    "owner_org_id": ap_id,
+                    "edges": {
+                        "vetting": "Ev", "alloc": "Ea", "tnalloc": "Et",
+                        "delsig": "Ed", "bownr": "Eb", "bproxy": "Ep",
+                    },
+                },
+                headers=admin_headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["edge_count"] == 6
+        assert body["dossier_said"] == dossier_said
+
+    @pytest.mark.asyncio
+    async def test_create_with_osp_association(self, client_with_auth, admin_headers):
+        """Successful creation + OSP association persists DossierOspAssociation."""
+        _init_app_db()
+        from app.db.session import SessionLocal
+
+        osp_aid = f"E{uuid.uuid4().hex[:43]}"
+        db = SessionLocal()
+        try:
+            ap = self._setup_org(db)
+            osp = self._setup_org(db, aid=osp_aid)
+            ap_id, ap_aid = ap.id, ap.aid
+            osp_id = osp.id
+        finally:
+            db.close()
+
+        dossier_said = f"E{uuid.uuid4().hex[:43]}"
+        mock_edges = (
+            {"vetting": {"n": "Ev"}, "alloc": {"n": "Ea"},
+             "tnalloc": {"n": "Et"}, "delsig": {"n": "Ed"}},
+            osp_aid,  # delsig issuee matches OSP AID
+        )
+        mock_cred = self._mock_cred_info(dossier_said, ap_aid)
+
+        mock_issuer = AsyncMock()
+        mock_issuer.issue_credential = AsyncMock(return_value=(mock_cred, b"\x00"))
+
+        mock_registry_info = MagicMock()
+        mock_registry_info.name = "test-registry"
+        mock_reg_mgr = AsyncMock()
+        mock_reg_mgr.get_registry = AsyncMock(return_value=mock_registry_info)
+
+        with (
+            patch("app.api.dossier._validate_dossier_edges", new_callable=AsyncMock, return_value=mock_edges),
+            patch("app.api.dossier.get_credential_issuer", new_callable=AsyncMock, return_value=mock_issuer),
+            patch("app.keri.registry.get_registry_manager", new_callable=AsyncMock, return_value=mock_reg_mgr),
+            patch("app.api.dossier.WITNESS_IURLS", []),
+        ):
+            response = await client_with_auth.post(
+                "/dossier/create",
+                json={
+                    "owner_org_id": ap_id,
+                    "edges": {
+                        "vetting": "Ev", "alloc": "Ea",
+                        "tnalloc": "Et", "delsig": "Ed",
+                    },
+                    "osp_org_id": osp_id,
+                },
+                headers=admin_headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["osp_org_id"] == osp_id
+        assert body["dossier_said"] == dossier_said
+
+        # Verify DossierOspAssociation persisted
+        db2 = SessionLocal()
+        try:
+            assoc = db2.query(DossierOspAssociation).filter(
+                DossierOspAssociation.dossier_said == dossier_said
+            ).first()
+            assert assoc is not None
+            assert assoc.owner_org_id == ap_id
+            assert assoc.osp_org_id == osp_id
+        finally:
+            db2.close()
+
+    @pytest.mark.asyncio
+    async def test_witness_publish_failure_nonfatal(self, client_with_auth, admin_headers):
+        """Witness publish failure does not block dossier creation."""
+        _init_app_db()
+        from app.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            ap = self._setup_org(db)
+            ap_id, ap_aid = ap.id, ap.aid
+        finally:
+            db.close()
+
+        dossier_said = f"E{uuid.uuid4().hex[:43]}"
+        mock_edges = (
+            {"vetting": {"n": "Ev"}, "alloc": {"n": "Ea"},
+             "tnalloc": {"n": "Et"}, "delsig": {"n": "Ed"}},
+            None,
+        )
+        mock_cred = self._mock_cred_info(dossier_said, ap_aid)
+
+        mock_issuer = AsyncMock()
+        mock_issuer.issue_credential = AsyncMock(return_value=(mock_cred, b"\x00"))
+        mock_issuer.get_anchor_ixn_bytes = AsyncMock(side_effect=Exception("IXN bytes not found"))
+
+        mock_registry_info = MagicMock()
+        mock_registry_info.name = "test-registry"
+        mock_reg_mgr = AsyncMock()
+        mock_reg_mgr.get_registry = AsyncMock(return_value=mock_registry_info)
+
+        with (
+            patch("app.api.dossier._validate_dossier_edges", new_callable=AsyncMock, return_value=mock_edges),
+            patch("app.api.dossier.get_credential_issuer", new_callable=AsyncMock, return_value=mock_issuer),
+            patch("app.keri.registry.get_registry_manager", new_callable=AsyncMock, return_value=mock_reg_mgr),
+            patch("app.api.dossier.WITNESS_IURLS", ["http://witness:5642"]),
+        ):
+            response = await client_with_auth.post(
+                "/dossier/create",
+                json={
+                    "owner_org_id": ap_id,
+                    "edges": {
+                        "vetting": "Ev", "alloc": "Ea",
+                        "tnalloc": "Et", "delsig": "Ed",
+                    },
+                },
+                headers=admin_headers,
+            )
+
+        # Dossier creation succeeds despite witness publish failure
+        assert response.status_code == 200
+        body = response.json()
+        assert body["dossier_said"] == dossier_said
+        assert body["publish_results"] is None  # failure path logs error, returns None
+
+    @pytest.mark.asyncio
+    async def test_osp_aid_mismatch_rejected(self, client_with_auth, admin_headers):
+        """OSP AID differing from delsig issuee AID returns 400."""
+        _init_app_db()
+        from app.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            ap = self._setup_org(db)
+            osp = self._setup_org(db, aid=f"E{uuid.uuid4().hex[:43]}")
+            ap_id = ap.id
+            osp_id = osp.id
+        finally:
+            db.close()
+
+        # Edge validation returns a delsig_issuee_aid that does NOT match OSP
+        different_aid = f"E{uuid.uuid4().hex[:43]}"
+        mock_edges = (
+            {"vetting": {"n": "Ev"}, "alloc": {"n": "Ea"},
+             "tnalloc": {"n": "Et"}, "delsig": {"n": "Ed"}},
+            different_aid,  # different from osp.aid
+        )
+
+        with patch("app.api.dossier._validate_dossier_edges", new_callable=AsyncMock, return_value=mock_edges):
+            response = await client_with_auth.post(
+                "/dossier/create",
+                json={
+                    "owner_org_id": ap_id,
+                    "edges": {
+                        "vetting": "Ev", "alloc": "Ea",
+                        "tnalloc": "Et", "delsig": "Ed",
+                    },
+                    "osp_org_id": osp_id,
+                },
+                headers=admin_headers,
+            )
+
+        assert response.status_code == 400
+        assert "delsig" in response.json()["detail"].lower()
+        assert "AID" in response.json()["detail"]

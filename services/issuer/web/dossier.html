@@ -648,14 +648,12 @@
         let filteredCreds = creds;
         if (slot.i2i) {
           filteredCreds = creds.filter(c => c.relationship === 'subject');
-          if (filteredCreds.length === 0) {
-            // Fall back to all creds with a note
+          if (filteredCreds.length === 0 && creds.length > 0) {
+            // Fall back to all creds with a note (rendered BEFORE the table, not inside tbody)
             filteredCreds = creds;
-            if (creds.length > 0) {
-              html += `<div class="info" style="margin:0.25rem 0;font-size:0.85em;">
-                Note: This edge requires a credential issued <strong>to</strong> the AP org.
-              </div>`;
-            }
+            html += `<p class="info" style="margin:0.25rem 0;font-size:0.85em;">
+              Note: This edge requires a credential issued <strong>to</strong> the AP org.
+            </p>`;
           }
         }
 

@@ -80,26 +80,29 @@ async def _validate_dossier_edges(
     Raises:
         HTTPException: If validation fails.
     """
-    issuer = await get_credential_issuer()
     edges = {"d": ""}
     delsig_issuee_aid: str | None = None
 
-    # Check required edges
+    # Fast-fail: check required edges and unknown names before KERI initialization
     for edge_name, edge_def in DOSSIER_EDGE_DEFS.items():
         if edge_def["required"] and edge_name not in edge_selections:
             raise HTTPException(
                 status_code=400,
                 detail=f"Required edge '{edge_name}' not provided",
             )
-
-    # Validate each provided edge
-    for edge_name, cred_said in edge_selections.items():
+    for edge_name in edge_selections:
         if edge_name not in DOSSIER_EDGE_DEFS:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown edge '{edge_name}'",
             )
-        edge_def = DOSSIER_EDGE_DEFS[edge_name]
+
+    # Initialize KERI issuer only after all fast validation passes
+    issuer = await get_credential_issuer()
+
+    # Validate each provided edge credential
+    for edge_name, cred_said in edge_selections.items():
+        edge_def = DOSSIER_EDGE_DEFS[edge_name]  # safe — unknown names rejected above
 
         # Get credential info
         cred_info = await issuer.get_credential(cred_said)
@@ -239,13 +242,33 @@ async def create_dossier(
         db, principal, owner_org, body.edges
     )
 
-    # Step 4: Build attributes
+    # Step 4: Validate OSP org (BEFORE issuance — all 4xx errors must be side-effect free)
+    osp_org_id_result: str | None = None
+    if body.osp_org_id:
+        osp_org = db.query(Organization).filter(Organization.id == body.osp_org_id).first()
+        if not osp_org:
+            raise HTTPException(status_code=404, detail="OSP organization not found")
+        if not osp_org.enabled:
+            raise HTTPException(status_code=400, detail="OSP organization is disabled")
+        if not osp_org.aid:
+            raise HTTPException(
+                status_code=400,
+                detail="OSP organization has no AID — cannot verify delegation target",
+            )
+        if delsig_issuee_aid and delsig_issuee_aid != osp_org.aid:
+            raise HTTPException(
+                status_code=400,
+                detail="delsig issuee AID does not match OSP organization AID",
+            )
+        osp_org_id_result = body.osp_org_id
+
+    # Step 5: Build attributes
     from keri.help import nowIso8601
     attributes = {"d": "", "dt": nowIso8601()}
     if body.name:
         attributes["name"] = body.name
 
-    # Step 5: Resolve registry name from stored key
+    # Step 6: Resolve registry name from stored key
     from app.keri.registry import get_registry_manager
     registry_mgr = await get_registry_manager()
     registry_info = await registry_mgr.get_registry(owner_org.registry_key)
@@ -256,7 +279,7 @@ async def create_dossier(
         )
     registry_name = registry_info.name
 
-    # Step 6: Issue the dossier ACDC
+    # Step 7: Issue the dossier ACDC (after all validation — no orphaned credentials)
     issuer = await get_credential_issuer()
     try:
         cred_info, acdc_bytes = await issuer.issue_credential(
@@ -273,7 +296,7 @@ async def create_dossier(
 
     dossier_said = cred_info.said
 
-    # Step 7: Stage SQL writes (no commit yet)
+    # Step 8: Stage SQL writes (no commit yet)
     managed_cred = ManagedCredential(
         said=dossier_said,
         organization_id=owner_org.id,
@@ -282,36 +305,15 @@ async def create_dossier(
     )
     db.add(managed_cred)
 
-    osp_org_id_result: str | None = None
     if body.osp_org_id:
-        # Validate OSP org
-        osp_org = db.query(Organization).filter(Organization.id == body.osp_org_id).first()
-        if not osp_org:
-            raise HTTPException(status_code=404, detail="OSP organization not found")
-        if not osp_org.enabled:
-            raise HTTPException(status_code=400, detail="OSP organization is disabled")
-
-        # Consistency check: OSP org must have an AID, and delsig issuee must match it
-        if not osp_org.aid:
-            raise HTTPException(
-                status_code=400,
-                detail="OSP organization has no AID — cannot verify delegation target",
-            )
-        if delsig_issuee_aid and delsig_issuee_aid != osp_org.aid:
-            raise HTTPException(
-                status_code=400,
-                detail="delsig issuee AID does not match OSP organization AID",
-            )
-
         assoc = DossierOspAssociation(
             dossier_said=dossier_said,
             owner_org_id=owner_org.id,
             osp_org_id=body.osp_org_id,
         )
         db.add(assoc)
-        osp_org_id_result = body.osp_org_id
 
-    # Step 8: Witness publish (best-effort, non-fatal)
+    # Step 9: Witness publish (best-effort, non-fatal)
     publish_results: list[WitnessPublishResult] | None = None
     if WITNESS_IURLS:
         try:
@@ -330,7 +332,7 @@ async def create_dossier(
         except Exception as e:
             log.error(f"Failed to publish dossier anchor ixn to witnesses: {e}")
 
-    # Step 9: Commit SQL (atomic: ManagedCredential + optional DossierOspAssociation)
+    # Step 10: Commit SQL (atomic: ManagedCredential + optional DossierOspAssociation)
     try:
         db.commit()
     except Exception as e:
@@ -338,7 +340,7 @@ async def create_dossier(
         log.error(f"SQL commit failed for dossier {dossier_said}: {e}. Orphaned KERI credential.")
         raise HTTPException(status_code=500, detail="Failed to register dossier")
 
-    # Step 10: Audit logging
+    # Step 11: Audit logging
     audit.log_access(
         action="dossier.create",
         principal_id=principal.key_id,
