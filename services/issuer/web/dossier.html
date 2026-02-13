@@ -644,10 +644,24 @@
             <th>Issued</th>
           </tr></thead><tbody>`;
 
-        for (const c of creds) {
+        // For I2I edges, filter to show only credentials issued TO the AP org
+        let filteredCreds = creds;
+        if (slot.i2i) {
+          filteredCreds = creds.filter(c => c.relationship === 'subject');
+          if (filteredCreds.length === 0) {
+            // Fall back to all creds with a note
+            filteredCreds = creds;
+            if (creds.length > 0) {
+              html += `<div class="info" style="margin:0.25rem 0;font-size:0.85em;">
+                Note: This edge requires a credential issued <strong>to</strong> the AP org.
+              </div>`;
+            }
+          }
+        }
+
+        for (const c of filteredCreds) {
           const isSelected = selected === c.said;
           const schemaLabel = SCHEMA_LABELS[c.schema_said] || c.schema_said.substring(0, 16) + '...';
-          const rel = c.relationship || '-';
           const relBadge = c.relationship === 'issued'
             ? '<span class="status-badge" style="background:#e2e3f0;color:#3c3c8a;font-size:0.75rem;">Issued</span>'
             : c.relationship === 'subject'
@@ -666,6 +680,18 @@
             <td>${relBadge}</td>
             <td>${c.issuance_dt ? new Date(c.issuance_dt).toLocaleDateString() : '-'}</td>
           </tr>`;
+
+          // Show attribute preview for selected credential
+          if (isSelected && credDetailCache[c.said]) {
+            const detail = credDetailCache[c.said];
+            const attrs = detail.attributes || {};
+            const attrKeys = Object.keys(attrs).filter(k => k !== 'd' && k !== 'dt');
+            if (attrKeys.length > 0) {
+              const attrStr = attrKeys.map(k => `<strong>${esc(k)}</strong>: ${esc(JSON.stringify(attrs[k]))}`).join(', ');
+              html += `<tr class="cred-detail-row"><td colspan="5" style="padding:0.25rem 1rem 0.5rem;background:#f8f9fa;font-size:0.85em;">
+                ${attrStr}</td></tr>`;
+            }
+          }
         }
 
         html += '</tbody></table>';
@@ -678,7 +704,7 @@
         container.innerHTML = html;
       }
 
-      function selectEdgeCredential(edgeName, said) {
+      async function selectEdgeCredential(edgeName, said) {
         edgeSelections[edgeName] = said;
         // Re-render the picker to show selection
         const slot = EDGE_SLOTS.find(s => s.name === edgeName);
@@ -687,6 +713,18 @@
         const check = document.getElementById('edge-check-' + edgeName);
         if (check) check.style.display = 'inline';
         updateStep2Validation();
+
+        // Fetch and cache credential detail for preview
+        if (!credDetailCache[said]) {
+          try {
+            const resp = await authFetch(`/credential/${said}`);
+            if (resp.ok) {
+              credDetailCache[said] = await resp.json();
+              // Re-render to show detail
+              if (slot) renderEdgeCredentialPicker(slot);
+            }
+          } catch (e) { /* detail is optional */ }
+        }
       }
 
       function clearEdgeSelection(edgeName) {

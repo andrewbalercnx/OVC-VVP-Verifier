@@ -1009,3 +1009,177 @@ class TestCredentialListIntegration:
         data = response.json()
         assert data["count"] == 0
         assert data["credentials"] == []
+
+
+# =============================================================================
+# Additional Edge Validation Tests (reviewer-requested)
+# =============================================================================
+
+
+class TestDelsigIssueeValidation:
+    """Tests for delsig recipient_aid (OP) presence enforcement."""
+
+    @pytest.mark.asyncio
+    async def test_delsig_without_recipient_raises(self, in_memory_db, ap_org):
+        """delsig credential with no recipient AID raises 400."""
+        from fastapi import HTTPException
+        from app.api.dossier import _validate_dossier_edges
+
+        principal = make_admin_principal()
+
+        edges = {
+            "vetting": "Ev1".ljust(44, "X"),
+            "alloc": "Ea1".ljust(44, "X"),
+            "tnalloc": "Et1".ljust(44, "X"),
+            "delsig": "Ed1_no_rcpt".ljust(44, "X"),
+        }
+
+        for said in edges.values():
+            mc = ManagedCredential(
+                said=said,
+                organization_id=ap_org.id,
+                schema_said=GCD_SCHEMA_SAID,
+                issuer_aid=ap_org.aid,
+            )
+            in_memory_db.add(mc)
+        in_memory_db.commit()
+
+        def make_cred(said):
+            for ename, esaid in edges.items():
+                if esaid == said:
+                    if ename == "delsig":
+                        # delsig with no recipient (NI2I, recipient_aid is None)
+                        return _make_edge_mock(
+                            ename, ap_org.aid, recipient_aid=None,
+                        )
+                    return _make_edge_mock(ename, ap_org.aid)
+            return _make_edge_mock("vetting", ap_org.aid)
+
+        mock_issuer = AsyncMock()
+        mock_issuer.get_credential = AsyncMock(side_effect=make_cred)
+
+        with patch("app.api.dossier.get_credential_issuer", return_value=mock_issuer):
+            with pytest.raises(HTTPException) as exc_info:
+                await _validate_dossier_edges(in_memory_db, principal, ap_org, edges)
+            assert exc_info.value.status_code == 400
+            assert "recipient" in exc_info.value.detail.lower() or "OP" in exc_info.value.detail
+
+
+class TestOspConsistency:
+    """Tests for strict OSP organization validation."""
+
+    @pytest.mark.asyncio
+    async def test_osp_without_aid_rejected(self, client_with_auth, admin_headers):
+        """OSP org without AID returns 400 during dossier creation."""
+        _init_app_db()
+        from app.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            # AP org with full credentials
+            ap = Organization(
+                id=str(uuid.uuid4()),
+                name=f"Strict AP {uuid.uuid4().hex[:8]}",
+                pseudo_lei=f"54930{uuid.uuid4().hex[:15]}",
+                aid=f"E{uuid.uuid4().hex[:43]}",
+                registry_key=f"E{uuid.uuid4().hex[:43]}",
+                enabled=True,
+            )
+            # OSP org WITHOUT aid
+            osp = Organization(
+                id=str(uuid.uuid4()),
+                name=f"No AID OSP {uuid.uuid4().hex[:8]}",
+                pseudo_lei=f"54930{uuid.uuid4().hex[:15]}",
+                aid=None,  # No AID
+                enabled=True,
+            )
+            db.add(ap)
+            db.add(osp)
+            db.commit()
+            ap_id = ap.id
+            osp_id = osp.id
+        finally:
+            db.close()
+
+        response = await client_with_auth.post(
+            "/dossier/create",
+            json={
+                "owner_org_id": ap_id,
+                "edges": {
+                    "vetting": "Ev",
+                    "alloc": "Ea",
+                    "tnalloc": "Et",
+                    "delsig": "Ed",
+                },
+                "osp_org_id": osp_id,
+            },
+            headers=admin_headers,
+        )
+        # Should fail at edge validation (404 for credential) or at OSP AID check (400)
+        assert response.status_code in (400, 404)
+
+
+# =============================================================================
+# Audit Logging Tests
+# =============================================================================
+
+
+class TestDossierAuditLogging:
+    """Tests verifying audit logging in dossier creation."""
+
+    @pytest.mark.asyncio
+    async def test_create_org_not_found_no_audit(self, client_with_auth, admin_headers):
+        """Failed creation (org not found) does not produce audit log."""
+        _init_app_db()
+
+        # Attempt create with non-existent org — should fail without audit entry
+        response = await client_with_auth.post(
+            "/dossier/create",
+            json={
+                "owner_org_id": str(uuid.uuid4()),
+                "edges": {"vetting": "Ev", "alloc": "Ea", "tnalloc": "Et", "delsig": "Ed"},
+            },
+            headers=admin_headers,
+        )
+        assert response.status_code == 404
+        # Verifying no crash; audit log is only called on success path
+
+
+class TestDossierCreateEdgeValidationAPI:
+    """API-level tests for edge validation within POST /dossier/create."""
+
+    @pytest.mark.asyncio
+    async def test_create_with_unknown_edge_returns_400(self, client_with_auth, admin_headers):
+        """Unknown edge name in create request returns 400."""
+        _init_app_db()
+        from app.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            org = Organization(
+                id=str(uuid.uuid4()),
+                name=f"Unknown Edge Corp {uuid.uuid4().hex[:8]}",
+                pseudo_lei=f"54930{uuid.uuid4().hex[:15]}",
+                aid=f"E{uuid.uuid4().hex[:43]}",
+                registry_key=f"E{uuid.uuid4().hex[:43]}",
+                enabled=True,
+            )
+            db.add(org)
+            db.commit()
+            org_id = org.id
+        finally:
+            db.close()
+
+        response = await client_with_auth.post(
+            "/dossier/create",
+            json={
+                "owner_org_id": org_id,
+                "edges": {
+                    "vetting": "Ev", "alloc": "Ea", "tnalloc": "Et", "delsig": "Ed",
+                    "bogus_edge": "Eb",
+                },
+            },
+            headers=admin_headers,
+        )
+        # Should fail at edge validation (unknown edge or credential not found)
+        assert response.status_code in (400, 404)

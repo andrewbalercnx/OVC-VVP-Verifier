@@ -152,12 +152,17 @@ async def _validate_dossier_edges(
                     detail=f"I2I edge '{edge_name}': credential issuee does not match org AID",
                 )
 
-        # delsig-specific: issuer must be AP, record issuee as OP
+        # delsig-specific: issuer must be AP, issuee (OP) must be present
         if edge_name == "delsig":
             if cred_info.issuer_aid != owner_org.aid:
                 raise HTTPException(
                     status_code=400,
                     detail="delsig credential issuer must be the Accountable Party",
+                )
+            if not cred_info.recipient_aid:
+                raise HTTPException(
+                    status_code=400,
+                    detail="delsig credential must have a recipient (OP AID) — §5.1 step 9",
                 )
             delsig_issuee_aid = cred_info.recipient_aid
 
@@ -168,9 +173,9 @@ async def _validate_dossier_edges(
         edges[edge_name] = edge_entry
 
     # bproxy enforcement (§6.3.4): required when bownr present AND OP ≠ AP
+    # delsig_issuee_aid is guaranteed non-None (validated above), so check is unconditional
     if "bownr" in edge_selections and delsig_issuee_aid:
-        op_is_ap = delsig_issuee_aid == owner_org.aid
-        if not op_is_ap and "bproxy" not in edge_selections:
+        if delsig_issuee_aid != owner_org.aid and "bproxy" not in edge_selections:
             raise HTTPException(
                 status_code=400,
                 detail="bproxy is required when brand ownership (bownr) is present and OP differs from AP (§6.3.4)",
@@ -286,8 +291,13 @@ async def create_dossier(
         if not osp_org.enabled:
             raise HTTPException(status_code=400, detail="OSP organization is disabled")
 
-        # Consistency check: delsig issuee AID must match OSP org AID
-        if delsig_issuee_aid and osp_org.aid and delsig_issuee_aid != osp_org.aid:
+        # Consistency check: OSP org must have an AID, and delsig issuee must match it
+        if not osp_org.aid:
+            raise HTTPException(
+                status_code=400,
+                detail="OSP organization has no AID — cannot verify delegation target",
+            )
+        if delsig_issuee_aid and delsig_issuee_aid != osp_org.aid:
             raise HTTPException(
                 status_code=400,
                 detail="delsig issuee AID does not match OSP organization AID",
