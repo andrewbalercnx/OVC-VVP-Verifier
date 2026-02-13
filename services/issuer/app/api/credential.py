@@ -34,7 +34,7 @@ from app.auth.scoping import (
     get_user_organization,
     register_credential,
 )
-from app.db.models import Organization
+from app.db.models import ManagedCredential, Organization
 from app.audit import get_audit_logger
 from app.config import WITNESS_IURLS
 from app.db.session import get_db
@@ -162,6 +162,8 @@ async def issue_credential(
 async def list_credentials(
     registry_key: Optional[str] = None,
     status: Optional[str] = None,
+    schema_said: Optional[str] = None,
+    org_id: Optional[str] = None,
     principal: Principal = require_auth,
     db: Session = Depends(get_db),
 ) -> CredentialListResponse:
@@ -170,10 +172,29 @@ async def list_credentials(
     **Sprint 41:** Non-admin users only see credentials owned by their organization.
     System admins can see all credentials.
 
+    **Sprint 63:** Added ``schema_said`` and ``org_id`` query filters.
+    ``org_id`` is admin-only and returns credentials visible to the specified org
+    (issued by or targeted to that org).
+
     Requires: issuer:readonly+ OR org:dossier_manager+ role
     """
     # Sprint 41: Check role access (system readonly+ OR org dossier_manager+)
     check_credential_access_role(principal)
+
+    # Sprint 63: Validate org_id parameter
+    if org_id is not None:
+        if not principal.is_system_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="org_id filter requires admin role",
+            )
+        # Validate org_id format and existence
+        import re
+        if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', org_id, re.I):
+            raise HTTPException(status_code=400, detail="Invalid org_id format")
+        target_org = db.query(Organization).filter(Organization.id == org_id).first()
+        if not target_org:
+            raise HTTPException(status_code=404, detail="Organization not found")
 
     issuer = await get_credential_issuer()
 
@@ -188,7 +209,28 @@ async def list_credentials(
         issued_saids: set[str] = set()
         org_aid: str | None = None
 
-        if principal.is_system_admin:
+        if org_id and principal.is_system_admin:
+            # Sprint 63: Admin filtering by specific org — show that org's universe
+            target_org = db.query(Organization).filter(Organization.id == org_id).first()
+            target_org_aid = target_org.aid if target_org else None
+
+            org_managed = get_org_credentials(db, principal, schema_said=None)
+            # Filter to target org's managed credentials
+            target_managed = [
+                m for m in db.query(ManagedCredential)
+                .filter(ManagedCredential.organization_id == org_id)
+                .all()
+            ]
+            issued_saids = {m.said for m in target_managed}
+            org_aid = target_org_aid
+
+            # Dual-visibility: issued by OR targeted to the specified org
+            credentials = [
+                c for c in all_credentials
+                if c.said in issued_saids
+                or (org_aid and c.recipient_aid == org_aid)
+            ]
+        elif principal.is_system_admin and not org_id:
             credentials = all_credentials
         else:
             # Credentials the org ISSUED (via ManagedCredential)
@@ -204,6 +246,10 @@ async def list_credentials(
                 if c.said in issued_saids
                 or (org_aid and c.recipient_aid == org_aid)
             ]
+
+        # Sprint 63: Apply schema_said filter
+        if schema_said:
+            credentials = [c for c in credentials if c.schema_said == schema_said]
 
         # Batch AID-to-org-name lookup
         aids_to_resolve = set()
@@ -222,13 +268,18 @@ async def list_credentials(
                 pass  # Organizations table may not exist in test environments
 
         # Build response with relationship tagging and org names
+        # Sprint 63: When org_id is provided, tag from perspective of that org
+        perspective_org_id = org_id if org_id else principal.organization_id
+        perspective_issued_saids = issued_saids
+        perspective_org_aid = org_aid
+
         result = []
         for c in credentials:
             relationship = None
-            if not principal.is_system_admin and principal.organization_id:
-                if c.said in issued_saids:
+            if perspective_org_id:
+                if c.said in perspective_issued_saids:
                     relationship = "issued"
-                elif org_aid and c.recipient_aid == org_aid:
+                elif perspective_org_aid and c.recipient_aid == perspective_org_aid:
                     relationship = "subject"
 
             result.append(CredentialResponse(
@@ -249,6 +300,8 @@ async def list_credentials(
             credentials=result,
             count=len(result),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         log.exception(f"Failed to list credentials: {e}")
         raise HTTPException(status_code=500, detail="Internal error listing credentials")

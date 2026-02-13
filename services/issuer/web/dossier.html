@@ -6,6 +6,226 @@
     <title>VVP Issuer - Dossiers</title>
     <link rel="stylesheet" href="/static/styles.css">
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <style>
+      /* Wizard step indicator */
+      .wizard-steps {
+        display: flex;
+        gap: 0;
+        margin-bottom: 2rem;
+        counter-reset: step;
+      }
+      .wizard-step {
+        flex: 1;
+        text-align: center;
+        padding: 0.75rem 0.5rem;
+        position: relative;
+        color: var(--vvp-muted);
+        font-size: 0.9rem;
+        cursor: default;
+      }
+      .wizard-step::before {
+        content: counter(step);
+        counter-increment: step;
+        display: block;
+        width: 2rem;
+        height: 2rem;
+        line-height: 2rem;
+        border-radius: 50%;
+        background: #e0e0e0;
+        color: #999;
+        margin: 0 auto 0.4rem;
+        font-weight: 600;
+      }
+      .wizard-step.active {
+        color: var(--vvp-dark);
+        font-weight: 600;
+      }
+      .wizard-step.active::before {
+        background: var(--vvp-primary);
+        color: white;
+      }
+      .wizard-step.completed {
+        color: var(--vvp-success);
+      }
+      .wizard-step.completed::before {
+        background: var(--vvp-success);
+        color: white;
+        content: "\2713";
+      }
+      /* Connector lines between steps */
+      .wizard-step:not(:last-child)::after {
+        content: '';
+        position: absolute;
+        top: 1.35rem;
+        left: calc(50% + 1.2rem);
+        right: calc(-50% + 1.2rem);
+        height: 2px;
+        background: #e0e0e0;
+      }
+      .wizard-step.completed:not(:last-child)::after {
+        background: var(--vvp-success);
+      }
+
+      /* Wizard panel visibility */
+      .wizard-panel { display: none; }
+      .wizard-panel.active { display: block; }
+
+      /* Wizard nav buttons */
+      .wizard-nav {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 1.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--vvp-border);
+      }
+      .wizard-nav .spacer { flex: 1; }
+
+      /* Edge slot card */
+      .edge-slot {
+        border: 1px solid var(--vvp-border);
+        border-radius: 6px;
+        margin-bottom: 1rem;
+        overflow: hidden;
+      }
+      .edge-slot-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 1rem;
+        background: var(--vvp-light);
+        cursor: pointer;
+        user-select: none;
+      }
+      .edge-slot-header:hover {
+        background: #e8f0ed;
+      }
+      .edge-slot-title {
+        font-weight: 600;
+        color: var(--vvp-dark);
+      }
+      .edge-slot-desc {
+        color: var(--vvp-text-muted);
+        font-size: 0.85rem;
+        margin-left: 0.5rem;
+      }
+      .edge-badge-required {
+        background: #ffeeba;
+        color: #856404;
+        padding: 0.15rem 0.5rem;
+        border-radius: 10px;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+      .edge-badge-optional {
+        background: #d4edda;
+        color: #155724;
+        padding: 0.15rem 0.5rem;
+        border-radius: 10px;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+      .edge-slot-body {
+        padding: 0 1rem 1rem;
+        display: none;
+      }
+      .edge-slot.open .edge-slot-body {
+        display: block;
+      }
+      .edge-slot .edge-slot-header .chevron {
+        transition: transform 0.2s;
+        font-size: 0.8rem;
+        color: var(--vvp-muted);
+      }
+      .edge-slot.open .edge-slot-header .chevron {
+        transform: rotate(90deg);
+      }
+      .edge-selected-indicator {
+        color: var(--vvp-success);
+        font-weight: 600;
+        font-size: 0.85rem;
+      }
+
+      /* Credential picker within edge slots */
+      .cred-picker-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.5rem;
+        font-size: 0.9rem;
+      }
+      .cred-picker-table th {
+        font-size: 0.8rem;
+        padding: 0.5rem;
+      }
+      .cred-picker-table td {
+        padding: 0.5rem;
+        border-bottom: 1px solid #f0f0f0;
+      }
+      .cred-picker-table tr.cred-row {
+        cursor: pointer;
+      }
+      .cred-picker-table tr.cred-row:hover {
+        background: #f0f8f5;
+      }
+      .cred-picker-table tr.cred-row.selected {
+        background: #cce5ff;
+      }
+
+      /* Review summary */
+      .review-section {
+        margin-bottom: 1rem;
+      }
+      .review-section h4 {
+        margin: 0 0 0.5rem 0;
+        color: var(--vvp-dark);
+      }
+      .review-row {
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.4rem 0;
+        border-bottom: 1px solid #f0f0f0;
+      }
+      .review-label {
+        font-weight: 500;
+        min-width: 120px;
+        color: var(--vvp-text-muted);
+      }
+      .review-value {
+        font-family: monospace;
+        font-size: 0.9rem;
+        word-break: break-all;
+      }
+
+      /* Result panel */
+      .result-panel {
+        margin-top: 1rem;
+      }
+      .result-panel .result-field {
+        margin: 0.5rem 0;
+      }
+
+      /* Spinner */
+      .spinner-inline {
+        display: inline-block;
+        width: 1rem;
+        height: 1rem;
+        border: 2px solid #ccc;
+        border-top-color: var(--vvp-primary);
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+        vertical-align: middle;
+        margin-right: 0.5rem;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      /* Section divider for existing functionality */
+      .section-divider {
+        margin: 3rem 0 2rem;
+        padding-top: 1rem;
+        border-top: 2px solid var(--vvp-border);
+      }
+    </style>
   </head>
   <body>
     <header class="site-header">
@@ -27,26 +247,127 @@
         <a href="/ui/help">Help</a>
         <a href="/ui/admin">Admin</a>
         <a href="/organizations/ui" style="display:none">Organizations</a>
-        <a href="https://vvp-verifier.rcnx.io" class="verifier-link" target="_blank">Verifier ↗</a>
+        <a href="https://vvp-verifier.rcnx.io" class="verifier-link" target="_blank">Verifier &#x2197;</a>
       </nav>
     </header>
 
-    <h1>Dossier Assembly</h1>
-    <p class="subtitle">Build verifiable dossiers from credential chains</p>
+    <h1>Dossier Creation Wizard</h1>
+    <p class="subtitle">Create a VVP dossier ACDC with guided edge selection</p>
 
-    <!-- Credential Selection -->
+    <!-- Wizard Step Indicators -->
+    <div class="wizard-steps">
+      <div class="wizard-step active" data-step="1">Select AP Org</div>
+      <div class="wizard-step" data-step="2">Select Edges</div>
+      <div class="wizard-step" data-step="3">Metadata</div>
+      <div class="wizard-step" data-step="4">Review &amp; Create</div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- Step 1: Select Accountable Party Organization                      -->
+    <!-- ================================================================== -->
+    <div class="card wizard-panel active" id="step1">
+      <h2>Select Accountable Party (AP) Organization</h2>
+      <p>The AP is the organization that issues and signs the dossier.</p>
+
+      <div class="form-group">
+        <label for="apOrgSelect">Organization</label>
+        <select id="apOrgSelect">
+          <option value="">Loading organizations...</option>
+        </select>
+      </div>
+
+      <div id="step1Status"></div>
+
+      <div class="wizard-nav">
+        <span class="spacer"></span>
+        <button id="step1Next" onclick="goToStep(2)" disabled>Next &rarr;</button>
+      </div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- Step 2: Select Edge Credentials                                     -->
+    <!-- ================================================================== -->
+    <div class="card wizard-panel" id="step2">
+      <h2>Select Edge Credentials</h2>
+      <p>Select credentials for each dossier edge slot. Required edges must be filled.</p>
+
+      <div id="edgeSlotsContainer"></div>
+
+      <div id="step2Status"></div>
+
+      <div class="wizard-nav">
+        <button onclick="goToStep(1)" class="secondary">&larr; Back</button>
+        <button id="step2Next" onclick="goToStep(3)" disabled>Next &rarr;</button>
+      </div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- Step 3: Dossier Metadata                                           -->
+    <!-- ================================================================== -->
+    <div class="card wizard-panel" id="step3">
+      <h2>Dossier Metadata</h2>
+
+      <div class="form-group">
+        <label for="dossierName">Dossier Name (optional)</label>
+        <input type="text" id="dossierName" placeholder="e.g., ACME Corp Production Dossier">
+      </div>
+
+      <div class="form-group">
+        <label for="ospOrgSelect">OSP Organization (optional)</label>
+        <p style="font-size:0.85rem;color:var(--vvp-text-muted);margin-top:0;">
+          Associate this dossier with an Originating Service Provider organization for discovery.
+        </p>
+        <select id="ospOrgSelect">
+          <option value="">None (no OSP association)</option>
+        </select>
+      </div>
+
+      <div class="review-section">
+        <h4>Selected Edges Summary</h4>
+        <div id="edgesSummary"></div>
+      </div>
+
+      <div class="wizard-nav">
+        <button onclick="goToStep(2)" class="secondary">&larr; Back</button>
+        <button id="step3Next" onclick="goToStep(4)">Next &rarr;</button>
+      </div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- Step 4: Review & Create                                            -->
+    <!-- ================================================================== -->
+    <div class="card wizard-panel" id="step4">
+      <h2>Review &amp; Create</h2>
+      <p>Review your selections and create the dossier ACDC.</p>
+
+      <div id="reviewPanel"></div>
+
+      <div id="createResult"></div>
+
+      <div class="wizard-nav" id="step4Nav">
+        <button onclick="goToStep(3)" class="secondary">&larr; Back</button>
+        <button id="createBtn" onclick="createDossier()">Create Dossier</button>
+      </div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- Existing: Build & Download (preserved from original)               -->
+    <!-- ================================================================== -->
+    <div class="section-divider"></div>
+
+    <h2>Build &amp; Download Existing Dossier</h2>
+    <p class="subtitle">Download a serialized dossier from an existing credential chain</p>
+
     <div class="card">
-      <h2>1. Select Root Credential</h2>
-      <p>Select a credential to use as the dossier root. All credentials in its chain will be included.</p>
+      <h3>Select Root Credential</h3>
 
       <div id="credentialList">
         <p>Loading credentials...</p>
       </div>
     </div>
 
-    <!-- Build Options -->
     <div class="card">
-      <h2>2. Build Options</h2>
+      <h3>Build Options</h3>
 
       <div class="form-group">
         <label for="format">Output Format</label>
@@ -63,102 +384,556 @@
 
       <div class="button-row">
         <button id="previewBtn" onclick="previewDossier()" disabled>Preview</button>
-        <button id="buildBtn" onclick="buildDossier()" disabled>Build & Download</button>
+        <button id="buildBtn" onclick="buildDossier()" disabled>Build &amp; Download</button>
       </div>
 
       <div id="buildResult"></div>
     </div>
 
-    <!-- Preview -->
     <div class="card" id="previewCard" style="display: none;">
-      <h2>3. Dossier Preview</h2>
-
+      <h3>Dossier Preview</h3>
       <div id="previewStats"></div>
-
       <div class="dossier-preview">
         <pre id="previewContent"></pre>
       </div>
     </div>
 
-    <!-- Existing Credentials (potential dossier roots) -->
-    <div class="card">
-      <h2>Existing Credentials</h2>
-      <p class="subtitle">Manage credentials that can be used as dossier roots</p>
-      <button id="refreshCredentialsBtn" style="margin-bottom: 1rem; background: #6c757d;">Refresh List</button>
-      <div id="allCredentialsList">
-        <em>Loading...</em>
-      </div>
-    </div>
-
     <script src="/static/shared.js"></script>
     <script>
+      // =================================================================
+      // Constants
+      // =================================================================
+
+      const DOSSIER_SCHEMA_SAID = 'EH1jN4U4LMYHmPVI4FYdZ10bIPR7YWKp8TDdZ9Y9Al-P';
+      const GCD_SCHEMA_SAID = 'EL7irIKYJL9Io0hhKSGWI4OznhwC7qgJG5Qf4aEs6j0o';
+      const TNALLOC_SCHEMA_SAID = 'EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ';
+      const LE_SCHEMA_SAID = 'ENPXp1vQzRF6JwIuS-mp2U8Uf1MoADoP_GqQ62VsDZWY';
+
+      const SCHEMA_LABELS = {
+        [DOSSIER_SCHEMA_SAID]: 'VVP Dossier',
+        [GCD_SCHEMA_SAID]: 'Cooperative Delegation (GCD)',
+        [TNALLOC_SCHEMA_SAID]: 'TN Allocation (RTU)',
+        [LE_SCHEMA_SAID]: 'Legal Entity (LE)',
+      };
+
+      // Edge slot definitions matching server-side DOSSIER_EDGE_DEFS
+      const EDGE_SLOTS = [
+        { name: 'vetting',  label: 'Vetting (LE)',       desc: 'Legal Entity credential verifying the AP', required: true,  schema: null,               i2i: false },
+        { name: 'alloc',    label: 'Allocation (GCD)',    desc: 'Cooperative Delegation credential allocating authority to AP', required: true,  schema: GCD_SCHEMA_SAID,    i2i: true },
+        { name: 'tnalloc',  label: 'TN Allocation (RTU)', desc: 'Telephone Number allocation credential', required: true,  schema: TNALLOC_SCHEMA_SAID, i2i: true },
+        { name: 'delsig',   label: 'Delegation Signing',  desc: 'Delegation from AP to OP for call signing', required: true,  schema: GCD_SCHEMA_SAID,    i2i: false },
+        { name: 'bownr',    label: 'Brand Ownership',     desc: 'Brand ownership credential (optional)', required: false, schema: null,               i2i: false },
+        { name: 'bproxy',   label: 'Brand Proxy',         desc: 'Brand proxy delegation (required if brand + OP differs from AP)', required: false, schema: null,               i2i: false },
+      ];
+
+      // =================================================================
+      // State
+      // =================================================================
+
+      let currentStep = 1;
+      let selectedApOrgId = '';
+      let selectedApOrgName = '';
+      let edgeSelections = {};     // { edgeName: credSaid }
+      let edgeCredentials = {};    // { edgeName: [credentials] } — loaded from API
+      let credDetailCache = {};    // { said: credDetail }
+
+      // Build & Download state (existing)
       let credentials = [];
       let selectedSaid = null;
 
-      // Load credentials on page load
-      document.addEventListener('DOMContentLoaded', loadCredentials);
+      // =================================================================
+      // Initialization
+      // =================================================================
+
+      document.addEventListener('DOMContentLoaded', async () => {
+        await loadApOrganizations();
+        loadCredentials(); // for build & download section
+        renderEdgeSlots();
+      });
+
+      // =================================================================
+      // Step Navigation
+      // =================================================================
+
+      function goToStep(step) {
+        // Validate before advancing
+        if (step > currentStep) {
+          if (currentStep === 1 && !selectedApOrgId) return;
+          if (currentStep === 2 && !allRequiredEdgesSelected()) return;
+        }
+
+        // Update step indicators
+        document.querySelectorAll('.wizard-step').forEach(el => {
+          const s = parseInt(el.dataset.step);
+          el.classList.remove('active', 'completed');
+          if (s < step) el.classList.add('completed');
+          if (s === step) el.classList.add('active');
+        });
+
+        // Show/hide panels
+        document.querySelectorAll('.wizard-panel').forEach(p => p.classList.remove('active'));
+        document.getElementById('step' + step).classList.add('active');
+
+        // Step-specific setup
+        if (step === 2 && currentStep === 1) {
+          loadEdgeCredentials();
+        }
+        if (step === 3) {
+          renderEdgesSummary();
+          loadOspOrganizations();
+        }
+        if (step === 4) {
+          renderReviewPanel();
+        }
+
+        currentStep = step;
+      }
+
+      // =================================================================
+      // Step 1: AP Organization Selection
+      // =================================================================
+
+      async function loadApOrganizations() {
+        const select = document.getElementById('apOrgSelect');
+        try {
+          const resp = await authFetch('/organizations/names?purpose=ap');
+          if (!resp.ok) throw new Error('Failed to load organizations');
+          const data = await resp.json();
+
+          if (data.organizations.length === 0) {
+            select.innerHTML = '<option value="">No organizations available</option>';
+            return;
+          }
+
+          // If only one org, pre-select and disable
+          if (data.organizations.length === 1) {
+            const org = data.organizations[0];
+            select.innerHTML = `<option value="${esc(org.id)}">${esc(org.name)}</option>`;
+            select.disabled = true;
+            selectedApOrgId = org.id;
+            selectedApOrgName = org.name;
+            document.getElementById('step1Next').disabled = false;
+            document.getElementById('step1Status').innerHTML =
+              '<div class="info">Your organization is pre-selected.</div>';
+          } else {
+            let html = '<option value="">-- Select an organization --</option>';
+            for (const org of data.organizations) {
+              html += `<option value="${esc(org.id)}">${esc(org.name)}</option>`;
+            }
+            select.innerHTML = html;
+            select.disabled = false;
+          }
+        } catch (err) {
+          select.innerHTML = '<option value="">Failed to load</option>';
+          document.getElementById('step1Status').innerHTML =
+            `<div class="error">Failed to load organizations: ${esc(err.message)}</div>`;
+        }
+
+        select.addEventListener('change', () => {
+          selectedApOrgId = select.value;
+          selectedApOrgName = select.options[select.selectedIndex]?.text || '';
+          document.getElementById('step1Next').disabled = !selectedApOrgId;
+          // Reset edge selections when org changes
+          edgeSelections = {};
+          edgeCredentials = {};
+          credDetailCache = {};
+          updateStep2Validation();
+        });
+      }
+
+      // =================================================================
+      // Step 2: Edge Credential Selection
+      // =================================================================
+
+      function renderEdgeSlots() {
+        const container = document.getElementById('edgeSlotsContainer');
+        let html = '';
+
+        for (const slot of EDGE_SLOTS) {
+          const badgeClass = slot.required ? 'edge-badge-required' : 'edge-badge-optional';
+          const badgeText = slot.required ? 'Required' : 'Optional';
+
+          html += `
+            <div class="edge-slot" id="edge-${slot.name}" data-edge="${slot.name}">
+              <div class="edge-slot-header" onclick="toggleEdgeSlot('${slot.name}')">
+                <div>
+                  <span class="edge-slot-title">${esc(slot.label)}</span>
+                  <span class="edge-slot-desc">${esc(slot.desc)}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:0.5rem;">
+                  <span class="edge-selected-indicator" id="edge-check-${slot.name}" style="display:none;">&#x2713;</span>
+                  <span class="${badgeClass}">${badgeText}</span>
+                  <span class="chevron">&#x25B6;</span>
+                </div>
+              </div>
+              <div class="edge-slot-body" id="edge-body-${slot.name}">
+                <div id="edge-creds-${slot.name}"><em>Select an AP organization first.</em></div>
+              </div>
+            </div>
+          `;
+        }
+
+        container.innerHTML = html;
+      }
+
+      function toggleEdgeSlot(name) {
+        const el = document.getElementById('edge-' + name);
+        el.classList.toggle('open');
+      }
+
+      async function loadEdgeCredentials() {
+        if (!selectedApOrgId) return;
+
+        for (const slot of EDGE_SLOTS) {
+          const container = document.getElementById('edge-creds-' + slot.name);
+          container.innerHTML = '<em>Loading credentials...</em>';
+
+          try {
+            let url = `/credential?org_id=${selectedApOrgId}&status=issued`;
+            if (slot.schema) {
+              url += `&schema_said=${slot.schema}`;
+            }
+            const resp = await authFetch(url);
+
+            if (resp.status === 403) {
+              // Non-admin can't use org_id filter — fall back to unfiltered
+              const resp2 = await authFetch('/credential?status=issued' +
+                (slot.schema ? `&schema_said=${slot.schema}` : ''));
+              if (!resp2.ok) throw new Error('Failed to load credentials');
+              const data = await resp2.json();
+              edgeCredentials[slot.name] = data.credentials || [];
+            } else if (!resp.ok) {
+              throw new Error('Failed to load credentials');
+            } else {
+              const data = await resp.json();
+              edgeCredentials[slot.name] = data.credentials || [];
+            }
+
+            renderEdgeCredentialPicker(slot);
+          } catch (err) {
+            container.innerHTML =
+              `<div class="error">Failed to load: ${esc(err.message)}</div>`;
+          }
+        }
+      }
+
+      function renderEdgeCredentialPicker(slot) {
+        const container = document.getElementById('edge-creds-' + slot.name);
+        const creds = edgeCredentials[slot.name] || [];
+        const selected = edgeSelections[slot.name];
+
+        if (creds.length === 0) {
+          container.innerHTML =
+            `<div class="info" style="margin-top:0.5rem;">No matching credentials found.
+             <a href="/ui/credentials">Issue credentials</a> first.</div>`;
+
+          // For optional edges, allow clearing
+          if (!slot.required && selected) {
+            container.innerHTML += `<button class="small secondary" style="margin-top:0.5rem;"
+              onclick="clearEdgeSelection('${slot.name}')">Clear selection</button>`;
+          }
+          return;
+        }
+
+        let html = `<table class="cred-picker-table">
+          <thead><tr>
+            <th></th>
+            <th>SAID</th>
+            <th>Type</th>
+            <th>Relationship</th>
+            <th>Issued</th>
+          </tr></thead><tbody>`;
+
+        for (const c of creds) {
+          const isSelected = selected === c.said;
+          const schemaLabel = SCHEMA_LABELS[c.schema_said] || c.schema_said.substring(0, 16) + '...';
+          const rel = c.relationship || '-';
+          const relBadge = c.relationship === 'issued'
+            ? '<span class="status-badge" style="background:#e2e3f0;color:#3c3c8a;font-size:0.75rem;">Issued</span>'
+            : c.relationship === 'subject'
+            ? '<span class="status-badge" style="background:#dff0d8;color:#3c763d;font-size:0.75rem;">Subject</span>'
+            : '-';
+          const names = [];
+          if (c.issuer_name) names.push('by ' + c.issuer_name);
+          if (c.recipient_name) names.push('to ' + c.recipient_name);
+          const nameInfo = names.length ? ' (' + esc(names.join(', ')) + ')' : '';
+
+          html += `<tr class="cred-row ${isSelected ? 'selected' : ''}"
+            onclick="selectEdgeCredential('${slot.name}', '${c.said}')">
+            <td><input type="radio" name="edge-${slot.name}" ${isSelected ? 'checked' : ''}></td>
+            <td class="said-cell" title="${c.said}">${c.said.substring(0, 20)}...</td>
+            <td>${esc(schemaLabel)}${nameInfo}</td>
+            <td>${relBadge}</td>
+            <td>${c.issuance_dt ? new Date(c.issuance_dt).toLocaleDateString() : '-'}</td>
+          </tr>`;
+        }
+
+        html += '</tbody></table>';
+
+        if (!slot.required) {
+          html += `<button class="small secondary" style="margin-top:0.5rem;"
+            onclick="clearEdgeSelection('${slot.name}')">Clear selection</button>`;
+        }
+
+        container.innerHTML = html;
+      }
+
+      function selectEdgeCredential(edgeName, said) {
+        edgeSelections[edgeName] = said;
+        // Re-render the picker to show selection
+        const slot = EDGE_SLOTS.find(s => s.name === edgeName);
+        if (slot) renderEdgeCredentialPicker(slot);
+        // Update check indicator
+        const check = document.getElementById('edge-check-' + edgeName);
+        if (check) check.style.display = 'inline';
+        updateStep2Validation();
+      }
+
+      function clearEdgeSelection(edgeName) {
+        delete edgeSelections[edgeName];
+        const slot = EDGE_SLOTS.find(s => s.name === edgeName);
+        if (slot) renderEdgeCredentialPicker(slot);
+        const check = document.getElementById('edge-check-' + edgeName);
+        if (check) check.style.display = 'none';
+        updateStep2Validation();
+      }
+
+      function allRequiredEdgesSelected() {
+        return EDGE_SLOTS.filter(s => s.required).every(s => edgeSelections[s.name]);
+      }
+
+      function updateStep2Validation() {
+        document.getElementById('step2Next').disabled = !allRequiredEdgesSelected();
+      }
+
+      // =================================================================
+      // Step 3: Metadata
+      // =================================================================
+
+      async function loadOspOrganizations() {
+        const select = document.getElementById('ospOrgSelect');
+        // Keep the "None" option and add orgs
+        try {
+          const resp = await authFetch('/organizations/names?purpose=osp');
+          if (!resp.ok) throw new Error('Failed to load');
+          const data = await resp.json();
+
+          let html = '<option value="">None (no OSP association)</option>';
+          for (const org of data.organizations) {
+            // Don't show AP org as OSP
+            if (org.id === selectedApOrgId) continue;
+            html += `<option value="${esc(org.id)}">${esc(org.name)}</option>`;
+          }
+          select.innerHTML = html;
+        } catch (err) {
+          // Non-fatal — OSP is optional
+          console.warn('Failed to load OSP organizations:', err);
+        }
+      }
+
+      function renderEdgesSummary() {
+        const container = document.getElementById('edgesSummary');
+        let html = '';
+        for (const slot of EDGE_SLOTS) {
+          const said = edgeSelections[slot.name];
+          if (!said && !slot.required) continue;
+          const statusIcon = said ? '<span style="color:var(--vvp-success);">&#x2713;</span>' : '<span style="color:var(--vvp-danger);">&#x2717;</span>';
+          html += `<div class="review-row">
+            <span class="review-label">${statusIcon} ${esc(slot.label)}</span>
+            <span class="review-value">${said ? said.substring(0, 24) + '...' : '(not selected)'}</span>
+          </div>`;
+        }
+        container.innerHTML = html || '<em>No edges selected</em>';
+      }
+
+      // =================================================================
+      // Step 4: Review & Create
+      // =================================================================
+
+      function renderReviewPanel() {
+        const panel = document.getElementById('reviewPanel');
+        const dossierName = document.getElementById('dossierName').value.trim();
+        const ospSelect = document.getElementById('ospOrgSelect');
+        const ospOrgId = ospSelect.value;
+        const ospOrgName = ospSelect.options[ospSelect.selectedIndex]?.text || '';
+
+        let html = '<div class="review-section"><h4>Organization</h4>';
+        html += `<div class="review-row">
+          <span class="review-label">AP Organization</span>
+          <span class="review-value">${esc(selectedApOrgName)}</span>
+        </div>`;
+        if (ospOrgId) {
+          html += `<div class="review-row">
+            <span class="review-label">OSP Organization</span>
+            <span class="review-value">${esc(ospOrgName)}</span>
+          </div>`;
+        }
+        if (dossierName) {
+          html += `<div class="review-row">
+            <span class="review-label">Dossier Name</span>
+            <span class="review-value">${esc(dossierName)}</span>
+          </div>`;
+        }
+        html += '</div>';
+
+        html += '<div class="review-section"><h4>Edge Credentials</h4>';
+        for (const slot of EDGE_SLOTS) {
+          const said = edgeSelections[slot.name];
+          if (!said) continue;
+          const cred = (edgeCredentials[slot.name] || []).find(c => c.said === said);
+          const schemaLabel = cred ? (SCHEMA_LABELS[cred.schema_said] || cred.schema_said.substring(0, 16) + '...') : '';
+          html += `<div class="review-row">
+            <span class="review-label">${esc(slot.label)}</span>
+            <span class="review-value">${said.substring(0, 24)}... <span style="color:var(--vvp-text-muted);font-family:inherit;font-size:0.8rem;">${esc(schemaLabel)}</span></span>
+          </div>`;
+        }
+        html += '</div>';
+
+        panel.innerHTML = html;
+
+        // Reset result area and re-enable button
+        document.getElementById('createResult').innerHTML = '';
+        document.getElementById('createBtn').disabled = false;
+        document.getElementById('createBtn').textContent = 'Create Dossier';
+      }
+
+      async function createDossier() {
+        const btn = document.getElementById('createBtn');
+        const resultEl = document.getElementById('createResult');
+
+        // Double-submit prevention
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-inline"></span> Creating...';
+        resultEl.innerHTML = '';
+
+        const edges = {};
+        for (const [name, said] of Object.entries(edgeSelections)) {
+          edges[name] = said;
+        }
+
+        const body = {
+          owner_org_id: selectedApOrgId,
+          edges: edges,
+        };
+
+        const dossierName = document.getElementById('dossierName').value.trim();
+        if (dossierName) body.name = dossierName;
+
+        const ospOrgId = document.getElementById('ospOrgSelect').value;
+        if (ospOrgId) body.osp_org_id = ospOrgId;
+
+        try {
+          const resp = await authFetch('/dossier/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+
+          const data = await resp.json();
+
+          if (!resp.ok) {
+            throw new Error(data.detail || 'Dossier creation failed');
+          }
+
+          // Success!
+          let html = '<div class="success"><strong>Dossier Created Successfully</strong></div>';
+          html += '<div class="result-panel">';
+          html += `<div class="result-field"><strong>Dossier SAID:</strong>
+            <code>${esc(data.dossier_said)}</code></div>`;
+          html += `<div class="result-field"><strong>Issuer AID:</strong>
+            <code>${esc(data.issuer_aid)}</code></div>`;
+          html += `<div class="result-field"><strong>Dossier URL:</strong>
+            <code><a href="${esc(data.dossier_url)}" target="_blank">${esc(data.dossier_url)}</a></code></div>`;
+          html += `<div class="result-field"><strong>Edge Count:</strong> ${data.edge_count}</div>`;
+
+          if (data.publish_results) {
+            const ok = data.publish_results.filter(r => r.success).length;
+            const total = data.publish_results.length;
+            html += `<div class="result-field"><strong>Witness Publish:</strong> ${ok}/${total} succeeded</div>`;
+          }
+
+          html += '</div>';
+          html += '<div class="button-row" style="margin-top:1rem;">';
+          html += `<button onclick="window.location.href='/ui/tn-mappings'">Create TN Mapping &rarr;</button>`;
+          html += `<button class="secondary" onclick="resetWizard()">Create Another</button>`;
+          html += '</div>';
+
+          resultEl.innerHTML = html;
+
+          // Hide back/create buttons
+          document.getElementById('step4Nav').style.display = 'none';
+
+          // Refresh build & download credential list
+          loadCredentials();
+
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = 'Create Dossier';
+          resultEl.innerHTML = `<div class="error"><strong>Creation Failed</strong><br>${esc(err.message)}</div>`;
+        }
+      }
+
+      function resetWizard() {
+        edgeSelections = {};
+        edgeCredentials = {};
+        credDetailCache = {};
+        document.getElementById('dossierName').value = '';
+        document.getElementById('createResult').innerHTML = '';
+        document.getElementById('step4Nav').style.display = '';
+        goToStep(1);
+      }
+
+      // =================================================================
+      // Build & Download (preserved from original)
+      // =================================================================
 
       async function loadCredentials() {
         try {
           const response = await authFetch('/credential');
           if (!response.ok) throw new Error('Failed to fetch credentials');
-
           const data = await response.json();
           credentials = data.credentials || [];
           renderCredentialTable();
         } catch (error) {
           document.getElementById('credentialList').innerHTML =
-            `<div class="error">Failed to load credentials: ${error.message}</div>`;
+            `<div class="error">Failed to load credentials: ${esc(error.message)}</div>`;
         }
       }
 
       function renderCredentialTable() {
         if (credentials.length === 0) {
           document.getElementById('credentialList').innerHTML =
-            '<div class="info">No credentials found. <a href="/credentials/ui">Issue some credentials</a> first.</div>';
+            '<div class="info">No credentials found. <a href="/ui/credentials">Issue some credentials</a> first.</div>';
           return;
         }
 
-        // Filter to show only issued credentials
         const issued = credentials.filter(c => c.status === 'issued');
 
-        let html = `
-          <table>
-            <thead>
-              <tr>
-                <th></th>
-                <th>SAID</th>
-                <th>Schema</th>
-                <th>Status</th>
-                <th>Issued</th>
-              </tr>
-            </thead>
-            <tbody>
-        `;
+        let html = `<table>
+          <thead><tr>
+            <th></th><th>SAID</th><th>Schema</th><th>Status</th><th>Issued</th>
+          </tr></thead><tbody>`;
 
         for (const cred of issued) {
           const isSelected = selectedSaid === cred.said;
-          html += `
-            <tr class="${isSelected ? 'selected' : ''}" onclick="selectCredential('${cred.said}')">
-              <td><input type="radio" name="rootCred" ${isSelected ? 'checked' : ''} onchange="selectCredential('${cred.said}')"></td>
-              <td class="said-cell" title="${cred.said}">${cred.said}</td>
-              <td class="said-cell" title="${cred.schema_said}">${cred.schema_said.substring(0, 16)}...</td>
-              <td><span class="status-badge status-${cred.status}">${cred.status}</span></td>
-              <td>${cred.issuance_dt ? new Date(cred.issuance_dt).toLocaleString() : '-'}</td>
-            </tr>
-          `;
+          const schemaLabel = SCHEMA_LABELS[cred.schema_said] || cred.schema_said.substring(0, 16) + '...';
+          html += `<tr class="${isSelected ? 'selected' : ''}" onclick="selectRootCredential('${cred.said}')">
+            <td><input type="radio" name="rootCred" ${isSelected ? 'checked' : ''}></td>
+            <td class="said-cell" title="${cred.said}">${cred.said}</td>
+            <td>${esc(schemaLabel)}</td>
+            <td><span class="status-badge status-${cred.status}">${cred.status}</span></td>
+            <td>${cred.issuance_dt ? new Date(cred.issuance_dt).toLocaleString() : '-'}</td>
+          </tr>`;
         }
 
         html += '</tbody></table>';
-
         if (issued.length === 0) {
-          html = '<div class="info">No issued credentials available. Revoked credentials cannot be used as dossier roots.</div>';
+          html = '<div class="info">No issued credentials available.</div>';
         }
-
         document.getElementById('credentialList').innerHTML = html;
       }
 
-      function selectCredential(said) {
+      function selectRootCredential(said) {
         selectedSaid = said;
         renderCredentialTable();
         document.getElementById('previewBtn').disabled = false;
@@ -168,7 +943,6 @@
 
       async function previewDossier() {
         if (!selectedSaid) return;
-
         const format = document.getElementById('format').value;
         const includeTel = document.getElementById('includeTel').checked;
 
@@ -176,29 +950,18 @@
         document.getElementById('buildResult').innerHTML = '<p>Building preview...</p>';
 
         try {
-          // Get info first
           const infoResponse = await authFetch('/dossier/build/info', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
-            },
-            body: JSON.stringify({
-              root_said: selectedSaid,
-              format: format,
-              include_tel: includeTel
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ root_said: selectedSaid, format, include_tel: includeTel })
           });
-
           if (!infoResponse.ok) {
             const error = await infoResponse.json();
             throw new Error(error.detail || 'Build failed');
           }
-
           const info = await infoResponse.json();
           const dossier = info.dossier;
 
-          // Show stats
           let statsHtml = `
             <div class="stat-box"><strong>Credentials:</strong> ${dossier.credential_count}</div>
             <div class="stat-box"><strong>Format:</strong> ${dossier.format.toUpperCase()}</div>
@@ -210,23 +973,12 @@
           }
           document.getElementById('previewStats').innerHTML = statsHtml;
 
-          // Get actual content
           const contentResponse = await authFetch('/dossier/build', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
-            },
-            body: JSON.stringify({
-              root_said: selectedSaid,
-              format: format,
-              include_tel: includeTel
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ root_said: selectedSaid, format, include_tel: includeTel })
           });
-
-          if (!contentResponse.ok) {
-            throw new Error('Failed to build dossier content');
-          }
+          if (!contentResponse.ok) throw new Error('Failed to build dossier content');
 
           let content;
           if (format === 'json') {
@@ -240,10 +992,9 @@
           document.getElementById('previewCard').style.display = 'block';
           document.getElementById('buildResult').innerHTML =
             '<div class="success">Preview generated successfully.</div>';
-
         } catch (error) {
           document.getElementById('buildResult').innerHTML =
-            `<div class="error">Preview failed: ${error.message}</div>`;
+            `<div class="error">Preview failed: ${esc(error.message)}</div>`;
         } finally {
           document.getElementById('previewBtn').disabled = false;
         }
@@ -251,7 +1002,6 @@
 
       async function buildDossier() {
         if (!selectedSaid) return;
-
         const format = document.getElementById('format').value;
         const includeTel = document.getElementById('includeTel').checked;
 
@@ -261,23 +1011,14 @@
         try {
           const response = await authFetch('/dossier/build', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
-            },
-            body: JSON.stringify({
-              root_said: selectedSaid,
-              format: format,
-              include_tel: includeTel
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ root_said: selectedSaid, format, include_tel: includeTel })
           });
-
           if (!response.ok) {
             const error = await response.json();
             throw new Error(error.detail || 'Build failed');
           }
 
-          // Get blob and download
           const blob = await response.blob();
           const extension = format === 'json' ? 'json' : 'cesr';
           const filename = `dossier-${selectedSaid.substring(0, 16)}.${extension}`;
@@ -292,14 +1033,24 @@
           URL.revokeObjectURL(url);
 
           document.getElementById('buildResult').innerHTML =
-            `<div class="success">Dossier downloaded as ${filename}</div>`;
-
+            `<div class="success">Dossier downloaded as ${esc(filename)}</div>`;
         } catch (error) {
           document.getElementById('buildResult').innerHTML =
-            `<div class="error">Build failed: ${error.message}</div>`;
+            `<div class="error">Build failed: ${esc(error.message)}</div>`;
         } finally {
           document.getElementById('buildBtn').disabled = false;
         }
+      }
+
+      // =================================================================
+      // Utilities
+      // =================================================================
+
+      function esc(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
       }
 
       function formatBytes(bytes) {
@@ -307,179 +1058,6 @@
         if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
       }
-
-      // Load all credentials for management
-      async function loadAllCredentials() {
-        const list = document.getElementById('allCredentialsList');
-        list.innerHTML = '<em>Loading...</em>';
-
-        try {
-          const response = await authFetch('/credential');
-          if (!response.ok) throw new Error('Failed to fetch credentials');
-
-          const data = await response.json();
-          const allCreds = data.credentials || [];
-
-          if (allCreds.length === 0) {
-            list.innerHTML = '<div class="info">No credentials found. <a href="/ui/credentials">Issue some credentials</a> first.</div>';
-            return;
-          }
-
-          let html = `
-            <table>
-              <thead>
-                <tr>
-                  <th>SAID</th>
-                  <th>Schema</th>
-                  <th>Status</th>
-                  <th>Issued</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-          `;
-
-          for (const cred of allCreds) {
-            const statusClass = cred.status === 'revoked' ? 'status-revoked' : 'status-issued';
-            html += `
-              <tr>
-                <td class="said-cell" title="${cred.said}">${cred.said}</td>
-                <td class="said-cell" title="${cred.schema_said}">${cred.schema_said.substring(0, 16)}...</td>
-                <td><span class="status-badge ${statusClass}">${cred.status}</span></td>
-                <td>${cred.issuance_dt ? new Date(cred.issuance_dt).toLocaleString() : '-'}</td>
-                <td>
-                  ${cred.status === 'issued' ? `<button onclick="revokeCredential('${cred.said}')" style="padding:0.25rem 0.5rem;font-size:0.85rem;background:#ffc107;color:#000;margin-right:0.5rem;">Revoke</button>` : ''}
-                  <button onclick="deleteCredential('${cred.said}')" style="padding:0.25rem 0.5rem;font-size:0.85rem;background:#dc3545;">Delete</button>
-                </td>
-              </tr>
-            `;
-          }
-
-          html += '</tbody></table>';
-          list.innerHTML = html;
-
-        } catch (error) {
-          list.innerHTML = `<div class="error">Failed to load credentials: ${error.message}</div>`;
-        }
-      }
-
-      // Revoke a credential
-      async function revokeCredential(said) {
-        if (!confirm(`Are you sure you want to revoke this credential?\n\nSAID: ${said.substring(0, 24)}...\n\nThis creates a TEL revocation event and cannot be undone.`)) {
-          return;
-        }
-
-        const modal = document.createElement('div');
-        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;z-index:1000;';
-        modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;text-align:center;">
-          <span class="spinner"></span> Revoking credential...
-        </div>`;
-        document.body.appendChild(modal);
-
-        try {
-          const res = await authFetch(`/credential/${said}/revoke`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
-            },
-            body: JSON.stringify({ publish_to_witnesses: true })
-          });
-
-          const data = await res.json();
-
-          if (!res.ok) {
-            modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
-              <div class="error">
-                <strong>Revocation Failed</strong><br>
-                ${data.detail || 'Unknown error'}
-              </div>
-              <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
-            </div>`;
-            return;
-          }
-
-          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
-            <div class="success">
-              <strong>Credential Revoked</strong><br>
-              TEL revocation event created.
-            </div>
-            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
-          </div>`;
-
-          loadCredentials();
-          loadAllCredentials();
-
-        } catch (err) {
-          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
-            <div class="error">Network error: ${err.message}</div>
-            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
-          </div>`;
-        }
-      }
-
-      // Delete a credential
-      async function deleteCredential(said) {
-        if (!confirm(`Are you sure you want to delete this credential?\n\nSAID: ${said.substring(0, 24)}...\n\nThis removes it from local storage only. The credential still exists in the KERI ecosystem.`)) {
-          return;
-        }
-
-        const modal = document.createElement('div');
-        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;z-index:1000;';
-        modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;text-align:center;">
-          <span class="spinner"></span> Deleting credential...
-        </div>`;
-        document.body.appendChild(modal);
-
-        try {
-          const res = await authFetch(`/credential/${said}`, {
-            method: 'DELETE',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest'
-            }
-          });
-
-          const data = await res.json();
-
-          if (!res.ok) {
-            modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
-              <div class="error">
-                <strong>Deletion Failed</strong><br>
-                ${data.detail || 'Unknown error'}
-              </div>
-              <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
-            </div>`;
-            return;
-          }
-
-          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
-            <div class="success">
-              <strong>Credential Deleted</strong><br>
-              ${data.message || 'Credential removed from local storage.'}
-            </div>
-            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
-          </div>`;
-
-          loadCredentials();
-          loadAllCredentials();
-
-        } catch (err) {
-          modal.innerHTML = `<div style="background:white;padding:1.5rem;border-radius:8px;max-width:600px;">
-            <div class="error">Network error: ${err.message}</div>
-            <button onclick="this.closest('div').parentElement.remove()" style="margin-top:1rem;background:#6c757d;">Close</button>
-          </div>`;
-        }
-      }
-
-      // Refresh button
-      document.getElementById('refreshCredentialsBtn').addEventListener('click', () => {
-        loadCredentials();
-        loadAllCredentials();
-      });
-
-      // Load all credentials on page load
-      loadAllCredentials();
     </script>
   </body>
 </html>

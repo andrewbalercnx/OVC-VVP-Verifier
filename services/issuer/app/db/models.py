@@ -281,6 +281,46 @@ class TNMapping(Base):
         return f"<TNMapping(id={self.id!r}, tn={self.tn!r}, org={self.organization_id[:8] if self.organization_id else None!r}...)>"
 
 
+class DossierOspAssociation(Base):
+    """Administrative record: which OSP org can reference which dossier.
+
+    Sprint 63: This is NOT a protocol-level concept and does NOT gate TN mapping
+    authorization. The actual cryptographic authorization comes from the delsig
+    edge within the dossier. This association is for VISIBILITY ONLY — it allows
+    OSP orgs to discover dossiers associated with them via GET /api/dossier/associated.
+
+    Lifecycle:
+    - Org deletion: CASCADE on both FK columns removes associations automatically.
+    - Dossier revocation: Associations remain (KERI credentials can't be deleted,
+      only revoked; the association metadata remains historically meaningful).
+    """
+
+    __tablename__ = "dossier_osp_associations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dossier_said = Column(String(44), nullable=False, index=True)
+    owner_org_id = Column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+    osp_org_id = Column(
+        String(36),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("dossier_said", "osp_org_id", name="uq_dossier_osp"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<DossierOspAssociation(dossier={self.dossier_said!r}, "
+            f"owner={self.owner_org_id!r}, osp={self.osp_org_id!r})>"
+        )
+
+
 # Event listener to normalize email to lowercase before insert/update
 @event.listens_for(User.email, "set", propagate=True)
 def normalize_email(target: User, value: str, oldvalue: str, initiator) -> str:

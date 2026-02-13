@@ -1,7 +1,7 @@
 """Dossier API endpoints for VVP Issuer.
 
 Sprint 41: Updated with organization scoping for multi-tenant isolation.
-Provides endpoints to build dossiers from credential chains.
+Sprint 63: Added dossier ACDC creation and OSP association endpoints.
 """
 
 import logging
@@ -13,10 +13,15 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.api.models import (
+    AssociatedDossierEntry,
+    AssociatedDossierListResponse,
     BuildDossierRequest,
     BuildDossierResponse,
+    CreateDossierRequest,
+    CreateDossierResponse,
     DossierInfoResponse,
     ErrorResponse,
+    WitnessPublishResult,
 )
 from app.auth.api_key import Principal
 from app.auth.roles import (
@@ -25,12 +30,418 @@ from app.auth.roles import (
     check_credential_write_role,
 )
 from app.auth.scoping import can_access_credential, filter_credentials_by_org, validate_dossier_chain_access
+from app.audit import get_audit_logger
+from app.config import WITNESS_IURLS, VVP_ISSUER_BASE_URL
+from app.db.models import DossierOspAssociation, ManagedCredential, Organization
 from app.db.session import get_db
 from app.dossier import DossierBuildError, DossierFormat, get_dossier_builder, serialize_dossier
+from app.keri.issuer import get_credential_issuer
+from app.keri.witness import get_witness_publisher
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dossier", tags=["dossier"])
+
+# =============================================================================
+# Sprint 63: Dossier Schema & Edge Constants
+# =============================================================================
+
+DOSSIER_SCHEMA_SAID = "EH1jN4U4LMYHmPVI4FYdZ10bIPR7YWKp8TDdZ9Y9Al-P"
+GCD_SCHEMA_SAID = "EL7irIKYJL9Io0hhKSGWI4OznhwC7qgJG5Qf4aEs6j0o"
+TNALLOC_SCHEMA_SAID = "EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ"
+
+DOSSIER_EDGE_DEFS = {
+    "vetting": {"required": True, "schema": None, "operator": "NI2I", "i2i": False, "access": "ap_org"},
+    "alloc": {"required": True, "schema": GCD_SCHEMA_SAID, "operator": "I2I", "i2i": True, "access": "ap_org"},
+    "tnalloc": {"required": True, "schema": TNALLOC_SCHEMA_SAID, "operator": "I2I", "i2i": True, "access": "ap_org"},
+    "delsig": {"required": True, "schema": GCD_SCHEMA_SAID, "operator": "NI2I", "i2i": False, "access": "ap_org"},
+    "bownr": {"required": False, "schema": None, "operator": "NI2I", "i2i": False, "access": "ap_org"},
+    "bproxy": {"required": False, "schema": None, "operator": None, "i2i": False, "access": "principal"},
+}
+
+
+# =============================================================================
+# Sprint 63: Edge Validation Helper
+# =============================================================================
+
+
+async def _validate_dossier_edges(
+    db: Session,
+    principal: Principal,
+    owner_org: Organization,
+    edge_selections: dict[str, str],
+) -> tuple[dict, str | None]:
+    """Validate edge credentials and build the ACDC edges dict.
+
+    Returns:
+        (edges_dict, delsig_issuee_aid) — edges dict for issue_credential(),
+        and the delsig issuee AID (OP) for bproxy enforcement.
+
+    Raises:
+        HTTPException: If validation fails.
+    """
+    issuer = await get_credential_issuer()
+    edges = {"d": ""}
+    delsig_issuee_aid: str | None = None
+
+    # Check required edges
+    for edge_name, edge_def in DOSSIER_EDGE_DEFS.items():
+        if edge_def["required"] and edge_name not in edge_selections:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Required edge '{edge_name}' not provided",
+            )
+
+    # Validate each provided edge
+    for edge_name, cred_said in edge_selections.items():
+        if edge_name not in DOSSIER_EDGE_DEFS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown edge '{edge_name}'",
+            )
+        edge_def = DOSSIER_EDGE_DEFS[edge_name]
+
+        # Get credential info
+        cred_info = await issuer.get_credential(cred_said)
+        if cred_info is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Credential {cred_said} not found",
+            )
+
+        # Check status
+        if cred_info.status != "issued":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Credential {cred_said} for edge '{edge_name}' is revoked",
+            )
+
+        # Access enforcement (per-edge policy)
+        if edge_def["access"] == "ap_org":
+            # Must be issued by or targeted to the AP org
+            managed = db.query(ManagedCredential).filter(
+                ManagedCredential.said == cred_said
+            ).first()
+            is_issued_by_org = managed and managed.organization_id == owner_org.id
+            is_subject_of_org = owner_org.aid and cred_info.recipient_aid == owner_org.aid
+            if not is_issued_by_org and not is_subject_of_org:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Access denied to credential {cred_said} for organization {owner_org.name}",
+                )
+        elif edge_def["access"] == "principal":
+            # Must be accessible to the requesting principal
+            if not can_access_credential(db, principal, cred_said, recipient_aid=cred_info.recipient_aid):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Access denied to credential {cred_said}",
+                )
+
+        # Schema constraint check
+        if edge_def["schema"] and cred_info.schema_said != edge_def["schema"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Edge '{edge_name}' requires schema {edge_def['schema']}, got {cred_info.schema_said}",
+            )
+
+        # I2I check: credential's recipient AID must match owner org's AID
+        if edge_def["i2i"]:
+            if not owner_org.aid or cred_info.recipient_aid != owner_org.aid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"I2I edge '{edge_name}': credential issuee does not match org AID",
+                )
+
+        # delsig-specific: issuer must be AP, record issuee as OP
+        if edge_name == "delsig":
+            if cred_info.issuer_aid != owner_org.aid:
+                raise HTTPException(
+                    status_code=400,
+                    detail="delsig credential issuer must be the Accountable Party",
+                )
+            delsig_issuee_aid = cred_info.recipient_aid
+
+        # Build edge entry
+        edge_entry: dict = {"n": cred_said, "s": cred_info.schema_said}
+        if edge_def["operator"]:
+            edge_entry["o"] = edge_def["operator"]
+        edges[edge_name] = edge_entry
+
+    # bproxy enforcement (§6.3.4): required when bownr present AND OP ≠ AP
+    if "bownr" in edge_selections and delsig_issuee_aid:
+        op_is_ap = delsig_issuee_aid == owner_org.aid
+        if not op_is_ap and "bproxy" not in edge_selections:
+            raise HTTPException(
+                status_code=400,
+                detail="bproxy is required when brand ownership (bownr) is present and OP differs from AP (§6.3.4)",
+            )
+
+    return edges, delsig_issuee_aid
+
+
+# =============================================================================
+# Sprint 63: Dossier Creation Endpoint
+# =============================================================================
+
+
+@router.post(
+    "/create",
+    response_model=CreateDossierResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Validation error"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Organization or credential not found"},
+    },
+)
+async def create_dossier(
+    body: CreateDossierRequest,
+    http_request: Request,
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
+) -> CreateDossierResponse:
+    """Create a new dossier ACDC with edge validation and optional OSP association.
+
+    Sprint 63: Guided dossier creation with schema-driven edge slots. Issues a
+    dossier ACDC (CVD, no issuee) with validated edges, registers it as managed,
+    and optionally associates it with an OSP organization.
+
+    **Authentication:** Requires ``issuer:operator+`` OR ``org:dossier_manager+`` role.
+    """
+    check_credential_write_role(principal)
+    audit = get_audit_logger()
+
+    # Step 1: Resolve owner org
+    owner_org = db.query(Organization).filter(Organization.id == body.owner_org_id).first()
+    if not owner_org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if not owner_org.enabled:
+        raise HTTPException(status_code=400, detail="Organization is disabled")
+    if not owner_org.aid:
+        raise HTTPException(status_code=400, detail="Organization has no AID")
+    if not owner_org.registry_key:
+        raise HTTPException(status_code=400, detail="Organization has no credential registry")
+
+    # Step 2: Cross-org access policy (admin-only)
+    if not principal.is_system_admin:
+        if principal.organization_id != body.owner_org_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: can only create dossiers for your own organization",
+            )
+
+    # Step 3: Validate edges
+    edges, delsig_issuee_aid = await _validate_dossier_edges(
+        db, principal, owner_org, body.edges
+    )
+
+    # Step 4: Build attributes
+    from keri.help import nowIso8601
+    attributes = {"d": "", "dt": nowIso8601()}
+    if body.name:
+        attributes["name"] = body.name
+
+    # Step 5: Resolve registry name from stored key
+    from app.keri.registry import get_registry_manager
+    registry_mgr = await get_registry_manager()
+    registry_info = await registry_mgr.get_registry(owner_org.registry_key)
+    if not registry_info:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not resolve registry for key {owner_org.registry_key[:16]}...",
+        )
+    registry_name = registry_info.name
+
+    # Step 6: Issue the dossier ACDC
+    issuer = await get_credential_issuer()
+    try:
+        cred_info, acdc_bytes = await issuer.issue_credential(
+            registry_name=registry_name,
+            schema_said=DOSSIER_SCHEMA_SAID,
+            attributes=attributes,
+            recipient_aid=None,  # CVD, no issuee
+            edges=edges,
+            private=False,
+        )
+    except Exception as e:
+        log.exception(f"Failed to issue dossier ACDC: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to issue dossier: {e}")
+
+    dossier_said = cred_info.said
+
+    # Step 7: Stage SQL writes (no commit yet)
+    managed_cred = ManagedCredential(
+        said=dossier_said,
+        organization_id=owner_org.id,
+        schema_said=DOSSIER_SCHEMA_SAID,
+        issuer_aid=cred_info.issuer_aid,
+    )
+    db.add(managed_cred)
+
+    osp_org_id_result: str | None = None
+    if body.osp_org_id:
+        # Validate OSP org
+        osp_org = db.query(Organization).filter(Organization.id == body.osp_org_id).first()
+        if not osp_org:
+            raise HTTPException(status_code=404, detail="OSP organization not found")
+        if not osp_org.enabled:
+            raise HTTPException(status_code=400, detail="OSP organization is disabled")
+
+        # Consistency check: delsig issuee AID must match OSP org AID
+        if delsig_issuee_aid and osp_org.aid and delsig_issuee_aid != osp_org.aid:
+            raise HTTPException(
+                status_code=400,
+                detail="delsig issuee AID does not match OSP organization AID",
+            )
+
+        assoc = DossierOspAssociation(
+            dossier_said=dossier_said,
+            owner_org_id=owner_org.id,
+            osp_org_id=body.osp_org_id,
+        )
+        db.add(assoc)
+        osp_org_id_result = body.osp_org_id
+
+    # Step 8: Witness publish (best-effort, non-fatal)
+    publish_results: list[WitnessPublishResult] | None = None
+    if WITNESS_IURLS:
+        try:
+            ixn_bytes = await issuer.get_anchor_ixn_bytes(dossier_said)
+            publisher = get_witness_publisher()
+            result = await publisher.publish_event(cred_info.issuer_aid, ixn_bytes)
+            publish_results = [
+                WitnessPublishResult(url=wr.url, success=wr.success, error=wr.error)
+                for wr in result.witnesses
+            ]
+            if not result.threshold_met:
+                log.warning(
+                    f"Witness threshold not met for dossier {dossier_said[:16]}...: "
+                    f"{result.success_count}/{result.total_count}"
+                )
+        except Exception as e:
+            log.error(f"Failed to publish dossier anchor ixn to witnesses: {e}")
+
+    # Step 9: Commit SQL (atomic: ManagedCredential + optional DossierOspAssociation)
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        log.error(f"SQL commit failed for dossier {dossier_said}: {e}. Orphaned KERI credential.")
+        raise HTTPException(status_code=500, detail="Failed to register dossier")
+
+    # Step 10: Audit logging
+    audit.log_access(
+        action="dossier.create",
+        principal_id=principal.key_id,
+        resource=dossier_said,
+        details={
+            "owner_org_id": body.owner_org_id,
+            "osp_org_id": osp_org_id_result,
+            "edge_count": len(body.edges),
+            "name": body.name,
+        },
+        request=http_request,
+    )
+    if osp_org_id_result:
+        audit.log_access(
+            action="dossier.osp_associate",
+            principal_id=principal.key_id,
+            resource=dossier_said,
+            details={"osp_org_id": osp_org_id_result},
+            request=http_request,
+        )
+
+    # Build dossier URL
+    base_url = VVP_ISSUER_BASE_URL.rstrip("/") if VVP_ISSUER_BASE_URL else ""
+    dossier_url = f"{base_url}/api/dossier/{dossier_said}"
+
+    log.info(
+        f"Created dossier {dossier_said[:16]}... for org {owner_org.name} "
+        f"(edges: {len(body.edges)}, osp: {osp_org_id_result or 'none'})"
+    )
+
+    return CreateDossierResponse(
+        dossier_said=dossier_said,
+        issuer_aid=cred_info.issuer_aid,
+        schema_said=DOSSIER_SCHEMA_SAID,
+        edge_count=len(body.edges),
+        name=body.name,
+        osp_org_id=osp_org_id_result,
+        dossier_url=dossier_url,
+        publish_results=publish_results,
+    )
+
+
+# =============================================================================
+# Sprint 63: Associated Dossiers Endpoint
+# =============================================================================
+
+
+@router.get("/associated", response_model=AssociatedDossierListResponse)
+async def list_associated_dossiers(
+    org_id: Optional[str] = Query(None, description="Filter by OSP org ID (admin only)"),
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
+) -> AssociatedDossierListResponse:
+    """List dossier-OSP associations visible to the current principal.
+
+    Sprint 63: OSP orgs can discover dossiers associated with them.
+
+    - **System admins:** See all associations. Optional ``org_id`` filter.
+    - **Org-scoped principals:** See associations where their org is the OSP.
+    - **Principals without org:** Empty list.
+
+    **Authentication:** Requires ``issuer:readonly+`` OR ``org:dossier_manager+`` role.
+    """
+    check_credential_access_role(principal)
+
+    query = db.query(DossierOspAssociation)
+
+    if principal.is_system_admin:
+        if org_id:
+            query = query.filter(DossierOspAssociation.osp_org_id == org_id)
+    elif principal.organization_id:
+        query = query.filter(
+            DossierOspAssociation.osp_org_id == principal.organization_id
+        )
+    else:
+        return AssociatedDossierListResponse(associations=[], count=0)
+
+    associations = query.order_by(DossierOspAssociation.created_at.desc()).all()
+
+    # Batch org name lookups
+    org_ids_to_resolve = set()
+    for a in associations:
+        org_ids_to_resolve.add(a.owner_org_id)
+        org_ids_to_resolve.add(a.osp_org_id)
+
+    org_name_map: dict[str, str] = {}
+    if org_ids_to_resolve:
+        orgs = db.query(Organization.id, Organization.name).filter(
+            Organization.id.in_(org_ids_to_resolve)
+        ).all()
+        org_name_map = {o.id: o.name for o in orgs}
+
+    entries = [
+        AssociatedDossierEntry(
+            dossier_said=a.dossier_said,
+            owner_org_id=a.owner_org_id,
+            owner_org_name=org_name_map.get(a.owner_org_id),
+            osp_org_id=a.osp_org_id,
+            osp_org_name=org_name_map.get(a.osp_org_id),
+            created_at=a.created_at.isoformat(),
+        )
+        for a in associations
+    ]
+
+    return AssociatedDossierListResponse(
+        associations=entries,
+        count=len(entries),
+    )
+
+
+# =============================================================================
+# Existing Endpoints (Sprint 41)
+# =============================================================================
 
 
 @router.post(

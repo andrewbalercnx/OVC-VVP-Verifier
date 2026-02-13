@@ -347,6 +347,72 @@ class CredentialListResponse(BaseModel):
 # =============================================================================
 
 
+class CreateDossierRequest(BaseModel):
+    """Request to create a new dossier ACDC via the wizard."""
+
+    owner_org_id: str = Field(..., description="Organization that owns the dossier (AP)")
+    edges: dict[str, str] = Field(
+        ...,
+        description="Edge slot name to credential SAID mapping. "
+        "Required: vetting, alloc, tnalloc, delsig. Optional: bownr, bproxy.",
+    )
+    name: Optional[str] = Field(None, description="Optional dossier name")
+    osp_org_id: Optional[str] = Field(
+        None, description="OSP organization to associate (administrative)"
+    )
+
+
+class CreateDossierResponse(BaseModel):
+    """Response from dossier creation."""
+
+    dossier_said: str = Field(..., description="SAID of the created dossier ACDC")
+    issuer_aid: str = Field(..., description="AID of the AP that issued the dossier")
+    schema_said: str = Field(..., description="Dossier schema SAID")
+    edge_count: int = Field(..., description="Number of edges in the dossier")
+    name: Optional[str] = Field(None, description="Dossier name if provided")
+    osp_org_id: Optional[str] = Field(None, description="Associated OSP org ID")
+    dossier_url: str = Field(..., description="Public URL for dossier access")
+    publish_results: Optional[list["WitnessPublishResult"]] = Field(
+        None, description="Witness publish results (null if not attempted or failed)"
+    )
+
+
+class AssociatedDossierEntry(BaseModel):
+    """An individual dossier-OSP association entry."""
+
+    dossier_said: str = Field(..., description="Dossier credential SAID")
+    owner_org_id: str = Field(..., description="AP organization that owns the dossier")
+    owner_org_name: Optional[str] = Field(None, description="AP organization name")
+    osp_org_id: str = Field(..., description="OSP organization ID")
+    osp_org_name: Optional[str] = Field(None, description="OSP organization name")
+    created_at: str = Field(..., description="Association creation timestamp")
+
+
+class AssociatedDossierListResponse(BaseModel):
+    """Response listing dossier-OSP associations."""
+
+    associations: list[AssociatedDossierEntry] = Field(
+        default_factory=list, description="Dossier associations"
+    )
+    count: int = Field(..., description="Total number of associations")
+
+
+class OrganizationNameResponse(BaseModel):
+    """Lightweight org name response (id + name only)."""
+
+    id: str = Field(..., description="Organization ID")
+    name: str = Field(..., description="Organization name")
+
+
+class OrganizationNameListResponse(BaseModel):
+    """Response listing organization names."""
+
+    organizations: list[OrganizationNameResponse] = Field(
+        default_factory=list, description="Organization names"
+    )
+    count: int = Field(..., description="Total number of organizations")
+
+
 class BuildDossierRequest(BaseModel):
     """Request to build a dossier from credential chain."""
 

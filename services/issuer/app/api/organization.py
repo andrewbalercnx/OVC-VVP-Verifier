@@ -7,12 +7,13 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth.api_key import Principal
 from app.auth.roles import require_admin, require_auth
+from app.api.models import OrganizationNameListResponse, OrganizationNameResponse
 from app.audit import get_audit_logger
 from app.db.session import get_db
 from app.db.models import Organization, ManagedCredential
@@ -227,6 +228,51 @@ async def list_organizations(
             )
             for org in orgs
         ],
+    )
+
+
+@router.get("/names", response_model=OrganizationNameListResponse)
+async def list_organization_names(
+    purpose: str = Query("ap", description="Purpose: 'ap' for AP selection, 'osp' for OSP selection"),
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
+) -> OrganizationNameListResponse:
+    """List organization names (lightweight, id + name only).
+
+    Sprint 63: Used by the dossier creation wizard for org dropdowns.
+
+    Scoping depends on purpose:
+    - ``purpose=ap`` (default): Admin sees all enabled orgs; non-admin sees own org only.
+    - ``purpose=osp``: All authenticated users see all enabled orgs (org names are not
+      sensitive; server-side validation enforces association consistency).
+
+    **Authentication:** Any authenticated user.
+    """
+    if purpose not in ("ap", "osp"):
+        raise HTTPException(status_code=400, detail=f"Invalid purpose: {purpose}. Use 'ap' or 'osp'.")
+
+    if purpose == "osp" or principal.is_system_admin:
+        orgs = (
+            db.query(Organization.id, Organization.name)
+            .filter(Organization.enabled == True)  # noqa: E712
+            .order_by(Organization.name)
+            .all()
+        )
+    else:
+        orgs = (
+            db.query(Organization.id, Organization.name)
+            .filter(
+                Organization.id == principal.organization_id,
+                Organization.enabled == True,  # noqa: E712
+            )
+            .all()
+        )
+
+    return OrganizationNameListResponse(
+        organizations=[
+            OrganizationNameResponse(id=o.id, name=o.name) for o in orgs
+        ],
+        count=len(orgs),
     )
 
 
