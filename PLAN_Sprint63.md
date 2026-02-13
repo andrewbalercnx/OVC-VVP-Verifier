@@ -696,11 +696,27 @@ User (Admin) → Wizard UI
 - Mock credential helper `_make_edge_mock()` returns correct schema per edge definition (EDGE_SCHEMAS map), preventing test-setup schema mismatches
 - API tests use uuid-based pseudo_lei values to avoid unique constraint violations in shared SQLite databases
 
+### Review Fixes (Rounds 1-2)
+
+**Round 1 fixes:**
+- Added delsig recipient_aid validation (`§5.1 step 9`)
+- Added OSP org AID existence check
+- Implemented I2I filtering in UI edge picker (filter to `subject` relationship)
+- Added credential attribute preview on selection via credDetailCache
+- 4 new tests: delsig-no-recipient, OSP-no-AID, audit, unknown-edge API
+
+**Round 2 fixes:**
+- Moved OSP validation to step 4 (before ACDC issuance at step 7) — all 4xx errors now side-effect free
+- Reordered `_validate_dossier_edges()` to fast-fail required/unknown edge checks before KERI init
+- Fixed invalid `<div>` inside `<tbody>` — changed to `<p>` before table
+- Tightened assertions from `in (400, 404)` to exact status codes with detail checks
+- Added 5 happy-path tests: required-edges-only, all-6-edges, OSP association + DB persistence, witness failure non-fatal, OSP AID mismatch
+
 ### Test Results
 
 ```
-31 tests in test_sprint63_wizard.py — all pass
-482 tests total in issuer test suite — all pass (5 skipped, 3 deselected)
+40 tests in test_sprint63_wizard.py — all pass
+491 tests total in issuer test suite — all pass (5 skipped, 3 deselected)
 ```
 
 ### Files Changed
@@ -713,4 +729,4 @@ User (Admin) → Wizard UI
 | `services/issuer/app/api/organization.py` | +48 | GET /organizations/names with purpose=ap/osp |
 | `services/issuer/app/db/models.py` | +40 | DossierOspAssociation model |
 | `services/issuer/web/dossier.html` | +1124/-280 | 4-step wizard UI rewrite |
-| `services/issuer/tests/test_sprint63_wizard.py` | +1012 | 31 tests across 8 test classes |
+| `services/issuer/tests/test_sprint63_wizard.py` | +1400 | 40 tests across 13 test classes |
