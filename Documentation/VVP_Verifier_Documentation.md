@@ -92,7 +92,7 @@ relies on managed identity and OIDC.
 
   Public FQDN         URL              vvp-verifier.wittytree-2a937ccd.uksouth.azurecontainerapps.io   Stable endpoint
 
-  GitHub Repo         Owner/Repo       andrewbalercnx/vvp-verifier                                     Source of truth
+  GitHub Repo         Owner/Repo       Rich-Connexions-Ltd/VVP                                         Source of truth
 
   GitHub Branch       Deployment       main                                                            Triggers CI/CD
                       Branch                                                                           

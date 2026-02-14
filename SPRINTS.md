@@ -51,7 +51,7 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 61 | Organization Vetter Certification Association | TODO | Sprint 41, 40 |
 | 62 | Multichannel Vetter Constraint Enforcement | TODO | Sprint 61 |
 | 63 | Dossier Creation Wizard UI | TODO | Sprint 41, 32, 60b |
-| 64 | Repository Migration to Rich-Connexions-Ltd | TODO | - |
+| 64 | Repository Migration to Rich-Connexions-Ltd | IN PROGRESS | - |
 
 ---
 
@@ -4029,7 +4029,7 @@ Replace the current flat credential list with a multi-step wizard:
 
 ### 1. GitHub Repository Setup
 - [ ] Create `Rich-Connexions-Ltd/VVP` repository (or rename existing `OVC-VVP-Verifier`)
-- [ ] Push full history (all branches, tags) to new repo
+- [ ] Push `main` branch and tags to new repo (other branches are stale ephemeral Claude Code branches — intentionally excluded)
 - [ ] Configure repository settings (branch protection, default branch)
 - [ ] Migrate GitHub Actions secrets from old repo to new org:
   - `ACR_LOGIN_SERVER`, `AZURE_CLIENT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID`

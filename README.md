@@ -72,8 +72,8 @@ The system consists of multiple services that work together: an **Issuer** for c
 
 ```bash
 # Clone
-git clone https://github.com/andrewbalercnx/vvp-verifier.git
-cd vvp-verifier
+git clone https://github.com/Rich-Connexions-Ltd/VVP.git
+cd VVP
 
 # Create virtual environment
 python3 -m venv .venv && source .venv/bin/activate
