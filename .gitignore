@@ -48,6 +48,9 @@ htmlcov/
 PLAN_Sprint*.md
 REVIEW_Sprint*.md
 
+# Generated context packs (transient)
+codex/context/
+
 # Logs
 *_debug.log
 *.log
