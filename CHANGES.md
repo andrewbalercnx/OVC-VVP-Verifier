@@ -1,5 +1,50 @@
 # VVP Verifier Change Log
 
+## Sprint 65: Schema-Aware Credential Management
+
+**Date:** 2026-02-14
+**Status:** Complete
+
+### Summary
+
+Transformed credential creation from a generic "pick a schema and fill in JSON" workflow into a guided, schema-driven process. Schema edge definitions are automatically parsed and rendered, with candidate matching, deep links, and a dossier readiness dashboard.
+
+### Key Changes
+
+- **SchemaEdgeParser (credentials.html)**: Client-side JS class that parses ACDC schema JSON `properties.e.oneOf` to extract edge slot definitions (name, description, required/optional, schema constraint, operator)
+- **Schema-driven edge UI**: Automatic edge slot rendering with candidate loading, I2I filtering, selection management, and checkmark indicators
+- **Credential type quick-create cards**: One-click schema templates with deep link support (`?schema=&context=dossier&edge=&org=`)
+- **Dossier readiness endpoint (GET /dossier/readiness)**: Per-slot evaluation with shared validation helpers (`_check_edge_status`, `_check_edge_schema`, `_check_edge_i2i`, `_check_delsig_semantics`)
+- **Readiness panel (dossier.html)**: Visual readiness checklist with status icons, counts, and quick-create links
+- **Organization AID exposure**: `/organizations/names` returns `aid` for `purpose=ap` only (not `purpose=osp`)
+- **XSS hardening**: All inline onclick handlers replaced with `data-*` attributes + `addEventListener` event delegation; `sanitizeEdgeName()` for DOM IDs
+- **Status classifications**: `ready`, `missing`, `invalid`, `optional_missing`, `optional_unconstrained` (for schema=None optional edges)
+- **Revoked credential handling**: Revoked credentials excluded from `total_count` — revoked-only slots show "missing" not "invalid"
+- **Non-admin fix**: Edge candidate loading only sends `org_id` for admin users (backend auto-scopes for org users)
+- **bproxy gate deferred**: Conditional bproxy advisory removed from readiness (unreliable for unconstrained edges); enforced at POST /dossier/create
+
+### Files Changed
+
+| File | Action | Summary |
+|------|--------|---------|
+| `services/issuer/web/credentials.html` | Modified | SchemaEdgeParser, edge UI, type cards, deep links, XSS fixes |
+| `services/issuer/app/api/dossier.py` | Modified | GET /dossier/readiness endpoint, shared validation helpers |
+| `services/issuer/app/api/models.py` | Modified | DossierSlotStatus, DossierReadinessResponse, OrganizationNameResponse |
+| `services/issuer/app/api/organization.py` | Modified | AID in /organizations/names (ap purpose only) |
+| `services/issuer/web/dossier.html` | Modified | Readiness panel with status icons and quick-create links |
+| `services/issuer/tests/test_dossier_readiness.py` | Created | 25 tests (12 unit + 13 integration) |
+| `services/issuer/tests/test_schema_edge_parsing.py` | Created | 25 tests for schema edge parsing |
+| `services/issuer/tests/test_credential_edge_integration.py` | Created | 5 edge payload/filtering tests |
+| `services/issuer/tests/test_sprint63_wizard.py` | Modified | Updated org names tests for AID + OSP purpose |
+
+### Test Results
+
+- Issuer: 555 passed, 5 skipped
+- Verifier: 1844 passed, 9 skipped
+- Code review: APPROVED (Codex, 11 rounds)
+
+---
+
 ## Sprint 64: Repository Migration to Rich-Connexions-Ltd
 
 **Date:** 2026-02-14

@@ -19,6 +19,8 @@ from app.api.models import (
     CreateDossierRequest,
     CreateDossierResponse,
     DossierInfoResponse,
+    DossierReadinessResponse,
+    DossierSlotStatus,
     ErrorResponse,
     WitnessPublishResult,
 )
@@ -57,6 +59,51 @@ DOSSIER_EDGE_DEFS = {
     "bownr": {"required": False, "schema": None, "operator": "NI2I", "i2i": False, "access": "ap_org"},
     "bproxy": {"required": False, "schema": None, "operator": None, "i2i": False, "access": "principal"},
 }
+
+
+# Human-readable labels for dossier edge slots
+DOSSIER_EDGE_LABELS = {
+    "vetting": "Vetting Credential",
+    "alloc": "Service Provider Allocation",
+    "tnalloc": "TN Allocation",
+    "delsig": "Delegated Signer",
+    "bownr": "Brand Ownership",
+    "bproxy": "Brand Proxy",
+}
+
+
+# =============================================================================
+# Sprint 65: Shared Edge Validation Helpers
+# =============================================================================
+
+
+def _check_edge_schema(cred_schema_said: str, edge_def: dict) -> bool:
+    """Check if credential matches edge schema constraint."""
+    if edge_def.get("schema") and cred_schema_said != edge_def["schema"]:
+        return False
+    return True
+
+
+def _check_edge_i2i(cred_recipient_aid: str | None, org_aid: str | None, edge_def: dict) -> bool:
+    """Check I2I: credential recipient_aid must match org AID."""
+    if edge_def.get("i2i"):
+        if not org_aid or cred_recipient_aid != org_aid:
+            return False
+    return True
+
+
+def _check_edge_status(cred_status: str) -> bool:
+    """Check credential is not revoked."""
+    return cred_status != "revoked"
+
+
+def _check_delsig_semantics(cred_issuer_aid: str, cred_recipient_aid: str | None, org_aid: str | None) -> bool:
+    """Check delsig-specific rules: issuer must be AP, recipient (OP) must exist."""
+    if not org_aid or cred_issuer_aid != org_aid:
+        return False
+    if not cred_recipient_aid:
+        return False
+    return True
 
 
 # =============================================================================
@@ -111,8 +158,8 @@ async def _validate_dossier_edges(
                 detail=f"Credential {cred_said} not found",
             )
 
-        # Check status
-        if cred_info.status != "issued":
+        # Check status (shared helper)
+        if not _check_edge_status(cred_info.status):
             raise HTTPException(
                 status_code=400,
                 detail=f"Credential {cred_said} for edge '{edge_name}' is revoked",
@@ -139,29 +186,28 @@ async def _validate_dossier_edges(
                     detail=f"Access denied to credential {cred_said}",
                 )
 
-        # Schema constraint check
-        if edge_def["schema"] and cred_info.schema_said != edge_def["schema"]:
+        # Schema constraint check (shared helper)
+        if not _check_edge_schema(cred_info.schema_said, edge_def):
             raise HTTPException(
                 status_code=400,
                 detail=f"Edge '{edge_name}' requires schema {edge_def['schema']}, got {cred_info.schema_said}",
             )
 
-        # I2I check: credential's recipient AID must match owner org's AID
-        if edge_def["i2i"]:
-            if not owner_org.aid or cred_info.recipient_aid != owner_org.aid:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"I2I edge '{edge_name}': credential issuee does not match org AID",
-                )
+        # I2I check (shared helper)
+        if not _check_edge_i2i(cred_info.recipient_aid, owner_org.aid, edge_def):
+            raise HTTPException(
+                status_code=400,
+                detail=f"I2I edge '{edge_name}': credential issuee does not match org AID",
+            )
 
-        # delsig-specific: issuer must be AP, issuee (OP) must be present
+        # delsig-specific checks (shared helper)
         if edge_name == "delsig":
-            if cred_info.issuer_aid != owner_org.aid:
-                raise HTTPException(
-                    status_code=400,
-                    detail="delsig credential issuer must be the Accountable Party",
-                )
-            if not cred_info.recipient_aid:
+            if not _check_delsig_semantics(cred_info.issuer_aid, cred_info.recipient_aid, owner_org.aid):
+                if not owner_org.aid or cred_info.issuer_aid != owner_org.aid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="delsig credential issuer must be the Accountable Party",
+                    )
                 raise HTTPException(
                     status_code=400,
                     detail="delsig credential must have a recipient (OP AID) — §5.1 step 9",
@@ -448,6 +494,159 @@ async def list_associated_dossiers(
     return AssociatedDossierListResponse(
         associations=entries,
         count=len(entries),
+    )
+
+
+# =============================================================================
+# Sprint 65: Dossier Readiness Endpoint
+# =============================================================================
+
+
+@router.get(
+    "/readiness",
+    response_model=DossierReadinessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Organization disabled, no AID, or no registry"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Organization not found"},
+    },
+)
+async def dossier_readiness(
+    org_id: str = Query(..., description="Organization ID to check readiness for"),
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
+) -> DossierReadinessResponse:
+    """Check dossier creation readiness for an organization.
+
+    Sprint 65: Evaluates each dossier edge slot against the same validation
+    constraints that POST /dossier/create would enforce. Returns per-slot
+    status and overall readiness flag.
+
+    **Authentication:** Requires ``issuer:readonly+`` OR ``org:dossier_manager+`` role.
+    Non-admin users can only check their own organization.
+    """
+    check_credential_access_role(principal)
+
+    # Access control: non-admin can only check own org
+    if not principal.is_system_admin:
+        if principal.organization_id != org_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: can only check readiness for your own organization",
+            )
+
+    # Resolve org (mirror /dossier/create preconditions)
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if not org.enabled:
+        raise HTTPException(status_code=400, detail="Organization is disabled")
+    if not org.aid:
+        raise HTTPException(status_code=400, detail="Organization has no AID")
+    if not org.registry_key:
+        raise HTTPException(status_code=400, detail="Organization has no credential registry")
+
+    # Get all credentials visible to this org from KERI
+    issuer = await get_credential_issuer()
+    all_credentials = await issuer.list_credentials()
+
+    # Build org credential universe: issued by org OR targeted to org
+    managed = db.query(ManagedCredential).filter(
+        ManagedCredential.organization_id == org_id
+    ).all()
+    issued_saids = {m.said for m in managed}
+
+    org_credentials = [
+        c for c in all_credentials
+        if c.said in issued_saids or (org.aid and c.recipient_aid == org.aid)
+    ]
+
+    # For bproxy (principal-scoped): all credentials the principal can access
+    principal_credentials = all_credentials if principal.is_system_admin else [
+        c for c in all_credentials
+        if can_access_credential(db, principal, c.said, recipient_aid=c.recipient_aid)
+    ]
+
+    # Evaluate each edge slot
+    slots: list[DossierSlotStatus] = []
+
+    for edge_name, edge_def in DOSSIER_EDGE_DEFS.items():
+        # Select credential pool based on access policy
+        if edge_def["access"] == "principal":
+            pool = principal_credentials
+        else:
+            pool = org_credentials
+
+        # Schema filter + exclude revoked (total_count: non-revoked schema matches)
+        if edge_def["schema"]:
+            schema_pool = [c for c in pool if c.schema_said == edge_def["schema"] and _check_edge_status(c.status)]
+        else:
+            schema_pool = [c for c in pool if _check_edge_status(c.status)]
+        total_count = len(schema_pool)
+
+        # Full validation (available_count: passes all checks)
+        valid_candidates = []
+        for cred in schema_pool:
+            if not _check_edge_schema(cred.schema_said, edge_def):
+                continue
+            if not _check_edge_i2i(cred.recipient_aid, org.aid, edge_def):
+                continue
+            if edge_name == "delsig":
+                if not _check_delsig_semantics(cred.issuer_aid, cred.recipient_aid, org.aid):
+                    continue
+            valid_candidates.append(cred)
+
+        available_count = len(valid_candidates)
+
+        # Determine status
+        if available_count > 0:
+            if not edge_def["required"] and edge_def["schema"] is None:
+                # Unconstrained optional edge — candidates exist but suitability
+                # can't be automatically assessed (any credential matches)
+                status = "optional_unconstrained"
+            else:
+                status = "ready"
+        elif total_count > 0:
+            # Candidates exist but fail validation — invalid regardless of required/optional
+            status = "invalid"
+        elif not edge_def["required"]:
+            status = "optional_missing"
+        else:
+            status = "missing"
+
+        slots.append(DossierSlotStatus(
+            edge=edge_name,
+            label=DOSSIER_EDGE_LABELS.get(edge_name, edge_name),
+            required=edge_def["required"],
+            schema_constraint=edge_def.get("schema"),
+            available_count=available_count,
+            total_count=total_count,
+            status=status,
+        ))
+
+    # Compute overall readiness
+    blocking_reason: str | None = None
+    ready = True
+
+    # Check required slots
+    for slot in slots:
+        if slot.required and slot.status != "ready":
+            ready = False
+            blocking_reason = f"Required edge '{slot.edge}' is not satisfied"
+            break
+
+    # Note: bproxy conditional gate (§6.3.4) is NOT applied at readiness level.
+    # bownr/bproxy are unconstrained optional edges (schema=None), so readiness
+    # cannot reliably detect actual brand ownership/proxy credentials.
+    # The actual enforcement happens at POST /dossier/create when the user
+    # selects specific edges.
+
+    return DossierReadinessResponse(
+        org_id=org_id,
+        org_name=org.name,
+        ready=ready,
+        slots=slots,
+        blocking_reason=blocking_reason,
     )
 
 

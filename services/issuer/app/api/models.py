@@ -397,11 +397,48 @@ class AssociatedDossierListResponse(BaseModel):
     count: int = Field(..., description="Total number of associations")
 
 
+class DossierSlotStatus(BaseModel):
+    """Status of a single dossier edge slot for readiness check."""
+
+    edge: str = Field(..., description="Edge slot name (e.g., 'vetting', 'alloc')")
+    label: str = Field(..., description="Human-readable label")
+    required: bool = Field(..., description="Whether this edge is required for dossier creation")
+    schema_constraint: Optional[str] = Field(None, description="Schema SAID constraint (null if any)")
+    available_count: int = Field(..., description="Credentials passing all validation checks")
+    total_count: int = Field(..., description="Total credentials matching schema (before validation)")
+    status: str = Field(
+        ...,
+        description=(
+            "Slot status: ready (valid candidates found), missing (required, none exist), "
+            "invalid (candidates exist but fail validation), optional_missing (optional, none exist), "
+            "or optional_unconstrained (optional with no schema constraint — candidates exist but "
+            "suitability requires manual assessment)"
+        ),
+    )
+
+
+class DossierReadinessResponse(BaseModel):
+    """Response from dossier readiness check."""
+
+    org_id: str = Field(..., description="Organization ID checked")
+    org_name: str = Field(..., description="Organization name")
+    ready: bool = Field(
+        ..., description="True when all required edge slots are satisfied"
+    )
+    slots: list[DossierSlotStatus] = Field(
+        default_factory=list, description="Per-edge slot status"
+    )
+    blocking_reason: Optional[str] = Field(
+        None, description="Human-readable reason when not ready (e.g., 'Required edge tnalloc is not satisfied')"
+    )
+
+
 class OrganizationNameResponse(BaseModel):
-    """Lightweight org name response (id + name only)."""
+    """Lightweight org name response (id + name + optional AID)."""
 
     id: str = Field(..., description="Organization ID")
     name: str = Field(..., description="Organization name")
+    aid: Optional[str] = Field(None, description="Organization KERI AID (if provisioned)")
 
 
 class OrganizationNameListResponse(BaseModel):

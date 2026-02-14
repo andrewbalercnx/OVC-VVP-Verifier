@@ -225,6 +225,59 @@
         padding-top: 1rem;
         border-top: 2px solid var(--vvp-border);
       }
+
+      /* Readiness panel */
+      .readiness-org-row {
+        display: flex;
+        gap: 1rem;
+        align-items: flex-end;
+        margin-bottom: 1.5rem;
+      }
+      .readiness-org-row .form-group { flex: 1; margin-bottom: 0; }
+      .readiness-org-row button { flex-shrink: 0; }
+      .readiness-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1rem;
+      }
+      .readiness-slot {
+        border: 1px solid var(--vvp-border);
+        border-radius: 6px;
+        padding: 1rem;
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+      }
+      .readiness-slot.slot-ready { border-left: 4px solid var(--vvp-success); }
+      .readiness-slot.slot-missing { border-left: 4px solid var(--vvp-danger); }
+      .readiness-slot.slot-invalid { border-left: 4px solid #ffc107; }
+      .readiness-slot.slot-optional { border-left: 4px solid #6c757d; }
+      .readiness-icon {
+        font-size: 1.4rem;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+      .readiness-slot-info { flex: 1; }
+      .readiness-slot-info .slot-name {
+        font-weight: 600;
+        color: var(--vvp-dark);
+      }
+      .readiness-slot-info .slot-counts {
+        font-size: 0.85rem;
+        color: var(--vvp-text-muted);
+        margin-top: 0.2rem;
+      }
+      .readiness-slot-info .slot-action {
+        margin-top: 0.4rem;
+      }
+      .readiness-summary {
+        margin-top: 1.5rem;
+        padding: 1rem;
+        border-radius: 6px;
+        font-weight: 500;
+      }
+      .readiness-summary.ready-true { background: #d4edda; color: #155724; }
+      .readiness-summary.ready-false { background: #f8d7da; color: #721c24; }
     </style>
   </head>
   <body>
@@ -351,6 +404,28 @@
     </div>
 
     <!-- ================================================================== -->
+    <!-- Sprint 65: Dossier Readiness Check                                 -->
+    <!-- ================================================================== -->
+    <div class="section-divider"></div>
+
+    <h2>Dossier Readiness</h2>
+    <p class="subtitle">Check if your organization has all the credentials needed to create a dossier</p>
+
+    <div class="card">
+      <div class="readiness-org-row">
+        <div class="form-group">
+          <label for="readinessOrgSelect">Organization</label>
+          <select id="readinessOrgSelect">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <button id="checkReadinessBtn" onclick="checkReadiness()" disabled>Check Readiness</button>
+      </div>
+
+      <div id="readinessResult"></div>
+    </div>
+
+    <!-- ================================================================== -->
     <!-- Existing: Build & Download (preserved from original)               -->
     <!-- ================================================================== -->
     <div class="section-divider"></div>
@@ -449,6 +524,7 @@
         await loadApOrganizations();
         loadCredentials(); // for build & download section
         renderEdgeSlots();
+        initReadinessOrgs(); // Sprint 65: readiness panel
       });
 
       // =================================================================
@@ -932,6 +1008,135 @@
         document.getElementById('createResult').innerHTML = '';
         document.getElementById('step4Nav').style.display = '';
         goToStep(1);
+      }
+
+      // =================================================================
+      // Sprint 65: Dossier Readiness
+      // =================================================================
+
+      async function initReadinessOrgs() {
+        const select = document.getElementById('readinessOrgSelect');
+        try {
+          const resp = await authFetch('/organizations/names?purpose=ap');
+          if (!resp.ok) throw new Error('Failed to load organizations');
+          const data = await resp.json();
+
+          if (data.organizations.length === 0) {
+            select.innerHTML = '<option value="">No organizations available</option>';
+            return;
+          }
+
+          let html = '<option value="">-- Select an organization --</option>';
+          for (const org of data.organizations) {
+            html += `<option value="${esc(org.id)}">${esc(org.name)}</option>`;
+          }
+          select.innerHTML = html;
+
+          // If only one org, pre-select
+          if (data.organizations.length === 1) {
+            select.value = data.organizations[0].id;
+            document.getElementById('checkReadinessBtn').disabled = false;
+          }
+        } catch (err) {
+          select.innerHTML = '<option value="">Failed to load</option>';
+        }
+
+        select.addEventListener('change', () => {
+          document.getElementById('checkReadinessBtn').disabled = !select.value;
+          document.getElementById('readinessResult').innerHTML = '';
+        });
+      }
+
+      async function checkReadiness() {
+        const orgId = document.getElementById('readinessOrgSelect').value;
+        if (!orgId) return;
+
+        const btn = document.getElementById('checkReadinessBtn');
+        const resultEl = document.getElementById('readinessResult');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-inline"></span> Checking...';
+        resultEl.innerHTML = '';
+
+        try {
+          const resp = await authFetch(`/dossier/readiness?org_id=${orgId}`);
+          if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || 'Readiness check failed');
+          }
+          const data = await resp.json();
+          renderReadinessResult(data, orgId);
+        } catch (err) {
+          resultEl.innerHTML = `<div class="error">${esc(err.message)}</div>`;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Check Readiness';
+        }
+      }
+
+      function renderReadinessResult(data, orgId) {
+        const container = document.getElementById('readinessResult');
+        let html = '<div class="readiness-grid">';
+
+        for (const slot of data.slots) {
+          let slotClass, icon;
+          switch (slot.status) {
+            case 'ready':
+              slotClass = 'slot-ready'; icon = '<span class="readiness-icon" style="color:var(--vvp-success);">&#x2713;</span>'; break;
+            case 'missing':
+              slotClass = 'slot-missing'; icon = '<span class="readiness-icon" style="color:var(--vvp-danger);">&#x2717;</span>'; break;
+            case 'invalid':
+              slotClass = 'slot-invalid'; icon = '<span class="readiness-icon" style="color:#ffc107;">&#x26A0;</span>'; break;
+            case 'optional_missing':
+              slotClass = 'slot-optional'; icon = '<span class="readiness-icon" style="color:#6c757d;">&#x2014;</span>'; break;
+            case 'optional_unconstrained':
+              slotClass = 'slot-optional'; icon = '<span class="readiness-icon" style="color:#17a2b8;">&#x2139;</span>'; break;
+            default:
+              slotClass = ''; icon = '';
+          }
+
+          const badge = slot.required
+            ? '<span class="edge-badge-required" style="font-size:0.7rem;">Required</span>'
+            : '<span class="edge-badge-optional" style="font-size:0.7rem;">Optional</span>';
+
+          let action = '';
+          if (slot.status === 'missing' || slot.status === 'invalid') {
+            const createUrl = `/ui/credentials?context=dossier&org=${orgId}` +
+              (slot.schema_constraint ? `&schema=${slot.schema_constraint}` : '') +
+              `&edge=${slot.edge}`;
+            action = `<div class="slot-action"><a href="${createUrl}" class="small">Create credential &rarr;</a></div>`;
+          } else if (slot.status === 'optional_unconstrained') {
+            action = `<div class="slot-action"><span class="small" style="color:#17a2b8;">Manual selection required (no schema constraint)</span></div>`;
+          }
+
+          html += `
+            <div class="readiness-slot ${slotClass}">
+              ${icon}
+              <div class="readiness-slot-info">
+                <div class="slot-name">${esc(slot.label)} ${badge}</div>
+                <div class="slot-counts">${slot.available_count} valid / ${slot.total_count} total</div>
+                ${action}
+              </div>
+            </div>`;
+        }
+
+        html += '</div>';
+
+        // Summary
+        const summaryClass = data.ready ? 'ready-true' : 'ready-false';
+        const summaryIcon = data.ready ? '&#x2713;' : '&#x2717;';
+        let summaryText;
+        if (data.ready) {
+          summaryText = `Ready to create a dossier for ${esc(data.org_name)}`;
+          // Show advisory blocking_reason (e.g., bproxy dependency warning)
+          if (data.blocking_reason) {
+            summaryText += `<div style="font-size:0.8rem; color:#e67e22; margin-top:0.3rem;">${esc(data.blocking_reason)}</div>`;
+          }
+        } else {
+          summaryText = `Not ready: ${esc(data.blocking_reason || 'missing required credentials')}`;
+        }
+        html += `<div class="readiness-summary ${summaryClass}">${summaryIcon} ${summaryText}</div>`;
+
+        container.innerHTML = html;
       }
 
       // =================================================================

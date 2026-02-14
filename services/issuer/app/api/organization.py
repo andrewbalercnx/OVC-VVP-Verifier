@@ -237,9 +237,10 @@ async def list_organization_names(
     principal: Principal = require_auth,
     db: Session = Depends(get_db),
 ) -> OrganizationNameListResponse:
-    """List organization names (lightweight, id + name only).
+    """List organization names (lightweight: id, name, and AID).
 
     Sprint 63: Used by the dossier creation wizard for org dropdowns.
+    Sprint 65: Added AID field for recipient-org selection in credential edge UI.
 
     Scoping depends on purpose:
     - ``purpose=ap`` (default): Admin sees all enabled orgs; non-admin sees own org only.
@@ -253,14 +254,14 @@ async def list_organization_names(
 
     if purpose == "osp" or principal.is_system_admin:
         orgs = (
-            db.query(Organization.id, Organization.name)
+            db.query(Organization.id, Organization.name, Organization.aid)
             .filter(Organization.enabled == True)  # noqa: E712
             .order_by(Organization.name)
             .all()
         )
     else:
         orgs = (
-            db.query(Organization.id, Organization.name)
+            db.query(Organization.id, Organization.name, Organization.aid)
             .filter(
                 Organization.id == principal.organization_id,
                 Organization.enabled == True,  # noqa: E712
@@ -268,9 +269,15 @@ async def list_organization_names(
             .all()
         )
 
+    # AID is only exposed for 'ap' purpose (needed for recipient-org selection
+    # in credential edge UI). OSP purpose returns id + name only.
+    include_aid = purpose == "ap"
     return OrganizationNameListResponse(
         organizations=[
-            OrganizationNameResponse(id=o.id, name=o.name) for o in orgs
+            OrganizationNameResponse(
+                id=o.id, name=o.name, aid=o.aid if include_aid else None
+            )
+            for o in orgs
         ],
         count=len(orgs),
     )

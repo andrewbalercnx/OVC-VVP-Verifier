@@ -120,22 +120,22 @@ Base URL: `https://vvp-issuer.rcnx.io`
 | `GET` | `/api/organizations/{id}` | Get organization details |
 | `PATCH` | `/api/organizations/{id}` | Update organization |
 
-#### GET /api/organizations/names (Sprint 63)
+#### GET /api/organizations/names (Sprint 63, updated Sprint 65)
 
 Lightweight org name list for any authenticated user. Used by dossier wizard for AP and OSP dropdowns.
 
 **Query Parameters:**
 - `purpose` (optional): `ap` (default) or `osp`
-  - `ap`: Non-admins see only their own org; admins see all
-  - `osp`: All authenticated users see all enabled orgs
+  - `ap`: Non-admins see only their own org; admins see all. Returns `aid` field.
+  - `osp`: All authenticated users see all enabled orgs. No `aid` field.
 
 **Response:** `OrganizationNameListResponse`
 ```json
 {
   "count": 2,
   "organizations": [
-    {"id": "uuid", "name": "ACME Corp"},
-    {"id": "uuid", "name": "Example Inc"}
+    {"id": "uuid", "name": "ACME Corp", "aid": "E..." /* only when purpose=ap */},
+    {"id": "uuid", "name": "Example Inc", "aid": "E..."}
   ]
 }
 ```
@@ -194,6 +194,7 @@ Lightweight org name list for any authenticated user. Used by dossier wizard for
 | `POST` | `/api/dossier/build/info` | Build info (credential count, format) |
 | `GET` | `/api/dossier/associated` | List dossiers associated with principal's org as OSP (Sprint 63) |
 | `GET` | `/api/dossier/{said}` | Get public dossier by SAID |
+| `GET` | `/api/dossier/readiness` | Pre-flight readiness assessment for dossier creation (Sprint 65) |
 
 #### POST /api/dossier/create (Sprint 63)
 
@@ -248,6 +249,57 @@ List dossiers associated with the principal's organization as OSP.
 **Auth:** `issuer:readonly+` or `org:dossier_manager+`
 **Query Parameters:** `org_id` (optional, admin-only): Filter by specific OSP org
 **Scoping:** Admins see all; org-scoped principals see only their org's associations
+
+#### GET /api/dossier/readiness (Sprint 65)
+
+Pre-flight readiness assessment for dossier creation. Analyzes available credentials against dossier schema requirements.
+
+**Auth:** `issuer:admin` or `org:dossier_manager+` (org-scoped principals limited to own org)
+
+**Query Parameters:**
+- `org_id` (required): Organization UUID (AP organization)
+
+**Response:** `DossierReadinessResponse`
+```json
+{
+  "org_id": "uuid",
+  "org_name": "ACME Corp",
+  "ready": false,
+  "slots": [
+    {
+      "edge": "vetting",
+      "label": "Legal Entity",
+      "required": true,
+      "schema_constraint": "EH1jN4U4mWIW09jeCl2hFhg1YPKCAbW5sGPl3hJeAKTf",
+      "available_count": 1,
+      "total_count": 5,
+      "status": "ready"
+    },
+    {
+      "edge": "alloc",
+      "label": "Goal Code",
+      "required": true,
+      "schema_constraint": "EJxnJdxkHbRw2wVFNe4IUOPLt8fEtg9Sr3WyTjlgKoIb",
+      "available_count": 0,
+      "total_count": 0,
+      "status": "missing"
+    }
+  ],
+  "blocking_reason": "Required slot 'alloc' (Goal Code) has no available credentials"
+}
+```
+
+**Slot Status Values:**
+- `ready`: Available credentials meet requirement
+- `missing`: Required slot has no credentials
+- `invalid`: Credentials exist but all are excluded (revoked, wrong issuer)
+- `optional_missing`: Optional slot has no credentials (does not block)
+- `optional_unconstrained`: Optional slot with no schema constraint (cannot assess)
+
+**Error Responses:**
+- `400 Bad Request`: Organization not enabled, missing AID, or no credential registry
+- `403 Forbidden`: Non-admin accessing another org's readiness
+- `404 Not Found`: Organization does not exist
 
 ### TN Mappings (`/api/tn`)
 

@@ -255,6 +255,7 @@ class CreateDossierResponse(BaseModel):
 class OrganizationNameResponse(BaseModel):
     id: str
     name: str
+    aid: Optional[str]             # Included only when purpose=ap (Sprint 65)
 
 class OrganizationNameListResponse(BaseModel):
     count: int
@@ -270,6 +271,23 @@ class AssociatedDossierEntry(BaseModel):
 class AssociatedDossierListResponse(BaseModel):
     count: int
     associations: list[AssociatedDossierEntry]
+
+# Sprint 65 — Dossier Readiness Assessment
+class DossierSlotStatus(BaseModel):
+    edge: str                      # Edge name (vetting, alloc, tnalloc, etc.)
+    label: str                     # Human-readable label
+    required: bool                 # Is this slot required?
+    schema_constraint: Optional[str]  # Required schema SAID (if constrained)
+    available_count: int           # Count of valid, available credentials
+    total_count: int               # Total credentials matching schema
+    status: str                    # "ready", "missing", "invalid", "optional_missing", "optional_unconstrained"
+
+class DossierReadinessResponse(BaseModel):
+    org_id: str                    # Organization UUID
+    org_name: str                  # Organization name
+    ready: bool                    # Overall readiness (all required slots ready)
+    slots: list[DossierSlotStatus] # Per-slot assessment
+    blocking_reason: Optional[str] # Why not ready (if ready=False)
 ```
 
 ---

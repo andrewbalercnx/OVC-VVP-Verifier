@@ -4074,7 +4074,7 @@ Replace the current flat credential list with a multi-step wizard:
 
 ---
 
-## Sprint 65: Schema-Aware Credential Management (TODO)
+## Sprint 65: Schema-Aware Credential Management (DONE)
 
 **Goal:** Transform the credential creation experience from a generic "pick a schema and fill in JSON" workflow into a guided, schema-driven process. Each credential type's schema already defines its required attributes, edges, operators, and schema constraints — this sprint surfaces that information in the UI so that creating credentials for a dossier becomes intuitive rather than requiring deep knowledge of ACDC structure.
 

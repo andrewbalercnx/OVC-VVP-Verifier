@@ -310,7 +310,7 @@ class TestOrganizationNames:
 
     @pytest.mark.asyncio
     async def test_names_returns_id_and_name_only(self, client_with_auth, admin_headers):
-        """Response contains only id and name, no sensitive fields."""
+        """Response contains only id, name, and aid — no other sensitive fields."""
         _init_app_db()
         from app.db.session import SessionLocal
 
@@ -339,7 +339,7 @@ class TestOrganizationNames:
         for org in data["organizations"]:
             assert "id" in org
             assert "name" in org
-            assert "aid" not in org
+            assert "aid" in org  # Sprint 65: exposed for recipient-org AID selection
             assert "registry_key" not in org
             assert "le_credential_said" not in org
             assert "pseudo_lei" not in org
@@ -382,6 +382,37 @@ class TestOrganizationNames:
 
         org_names = [o["name"] for o in data["organizations"]]
         assert unique_name in org_names
+
+    @pytest.mark.asyncio
+    async def test_names_osp_purpose_hides_aid(
+        self, client_with_auth, admin_headers
+    ):
+        """Sprint 65: OSP purpose returns id/name only, not AID."""
+        _init_app_db()
+        from app.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            org = Organization(
+                id=str(uuid.uuid4()),
+                name=f"OSP Aid Check {uuid.uuid4().hex[:8]}",
+                pseudo_lei=f"54930{uuid.uuid4().hex[:15]}",
+                aid="Eosp_aid_test_12345678901234567890123456",
+                enabled=True,
+            )
+            db.add(org)
+            db.commit()
+        finally:
+            db.close()
+
+        response = await client_with_auth.get(
+            "/organizations/names?purpose=osp", headers=admin_headers
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        for org_entry in data["organizations"]:
+            assert org_entry.get("aid") is None
 
 
 # =============================================================================
