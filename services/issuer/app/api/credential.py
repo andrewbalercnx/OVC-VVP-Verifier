@@ -214,7 +214,6 @@ async def list_credentials(
             target_org = db.query(Organization).filter(Organization.id == org_id).first()
             target_org_aid = target_org.aid if target_org else None
 
-            org_managed = get_org_credentials(db, principal, schema_said=None)
             # Filter to target org's managed credentials
             target_managed = [
                 m for m in db.query(ManagedCredential)

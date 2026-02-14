@@ -635,6 +635,23 @@
           return;
         }
 
+        // For I2I edges, strictly filter to credentials issued TO the AP org
+        let filteredCreds = creds;
+        let i2iNotice = '';
+        if (slot.i2i) {
+          filteredCreds = creds.filter(c => c.relationship === 'subject');
+          if (filteredCreds.length === 0 && creds.length > 0) {
+            // Show empty-state — do NOT fall back to all creds (they'd fail server validation)
+            container.innerHTML =
+              `<div class="info" style="margin-top:0.5rem;">
+                No credentials issued <strong>to</strong> this AP organization found for this edge.
+                This edge requires an I2I (issued-to) credential.
+                <a href="/ui/credentials">Issue credentials</a> first.
+              </div>`;
+            return;
+          }
+        }
+
         let html = `<table class="cred-picker-table">
           <thead><tr>
             <th></th>
@@ -643,19 +660,6 @@
             <th>Relationship</th>
             <th>Issued</th>
           </tr></thead><tbody>`;
-
-        // For I2I edges, filter to show only credentials issued TO the AP org
-        let filteredCreds = creds;
-        if (slot.i2i) {
-          filteredCreds = creds.filter(c => c.relationship === 'subject');
-          if (filteredCreds.length === 0 && creds.length > 0) {
-            // Fall back to all creds with a note (rendered BEFORE the table, not inside tbody)
-            filteredCreds = creds;
-            html += `<p class="info" style="margin:0.25rem 0;font-size:0.85em;">
-              Note: This edge requires a credential issued <strong>to</strong> the AP org.
-            </p>`;
-          }
-        }
 
         for (const c of filteredCreds) {
           const isSelected = selected === c.said;
