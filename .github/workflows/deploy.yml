@@ -449,9 +449,9 @@ jobs:
       - name: Verify deployed version
         run: |
           EXPECTED="${{ github.sha }}"
-          # Shorter intervals early (new revision typically ready in 15-30s),
-          # longer intervals later as fallback
-          INTERVALS=(5 5 5 5 10 10 10 10 10 10 10 10)
+          # LMDB/Habery initialization on Azure Files takes ~3 minutes.
+          # Poll for 5 minutes total: short intervals early, longer later.
+          INTERVALS=(10 10 10 15 15 15 15 20 20 20 20 20 20 20 20 20)
           TOTAL=${#INTERVALS[@]}
           for i in "${!INTERVALS[@]}"; do
             ATTEMPT=$((i + 1))
@@ -475,7 +475,7 @@ jobs:
             echo "Attempt ${ATTEMPT}/${TOTAL}: expected ${EXPECTED:0:7}, got ${DEPLOYED:-unknown} (health: ${HEALTH:-unknown})"
             sleep "${INTERVALS[$i]}"
           done
-          echo "::error::Issuer version mismatch after 2 minutes"
+          echo "::error::Issuer version mismatch after 5 minutes"
           exit 1
 
   # =========================================================================
