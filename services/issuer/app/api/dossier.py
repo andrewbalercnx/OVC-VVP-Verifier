@@ -272,9 +272,10 @@ async def create_dossier(
     registry_mgr = await get_registry_manager()
     registry_info = await registry_mgr.get_registry(owner_org.registry_key)
     if not registry_info:
+        log.error(f"Could not resolve registry for key {owner_org.registry_key[:16]}...")
         raise HTTPException(
             status_code=500,
-            detail=f"Could not resolve registry for key {owner_org.registry_key[:16]}...",
+            detail="Could not resolve credential registry for organization",
         )
     registry_name = registry_info.name
 
