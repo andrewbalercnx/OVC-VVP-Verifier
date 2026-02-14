@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       lock_wait_seconds:
-        description: 'Max seconds to poll for LMDB lock release (default: 60)'
+        description: 'Max seconds to poll for LMDB lock release (default: 120)'
         required: false
-        default: '60'
+        default: '120'
 
 permissions:
   contents: read
@@ -312,8 +312,8 @@ jobs:
   # =========================================================================
   # DEPLOY ISSUER
   # =========================================================================
-  # Sprint 46: PostgreSQL migration - zero-downtime deployment with scaling.
-  # No more stop-before-deploy workaround needed.
+  # LMDB on Azure Files requires stop-before-deploy: the old revision must
+  # fully stop and release the LMDB file lock before the new revision starts.
   deploy-issuer:
     needs: [changes, test-issuer]
     if: needs.changes.outputs.issuer == 'true' && !failure()
@@ -347,43 +347,81 @@ jobs:
         run: |
           # The issuer uses LMDB (via keripy) on an Azure Files volume mount.
           # LMDB file locks prevent two revisions from running simultaneously.
-          # Deactivate ALL active revisions (not just those with traffic — a stuck
-          # "Activating" revision from a previous failed deploy also holds the lock).
+          # We must fully stop all old revisions and wait for the lock to release
+          # before deploying the new revision.
+
+          MAX_WAIT=${{ inputs.lock_wait_seconds || '120' }}
+          DEACTIVATE_RETRIES=3
+
+          # --- Phase 1: Scale to zero (forces container shutdown faster) ---
+          echo "Scaling vvp-issuer to 0 replicas..."
+          az containerapp update \
+            --name vvp-issuer \
+            --resource-group "${{ secrets.AZURE_RG }}" \
+            --min-replicas 0 \
+            --max-replicas 0 2>/dev/null || echo "::warning::Scale-to-zero command failed (non-fatal)"
+
+          # --- Phase 2: Deactivate all active revisions with retry ---
           ACTIVE_REVS=$(az containerapp revision list \
             --name vvp-issuer \
             --resource-group "${{ secrets.AZURE_RG }}" \
             --query "[?properties.active].name" -o tsv)
+
           if [ -n "$ACTIVE_REVS" ]; then
             for REV in $ACTIVE_REVS; do
               echo "Deactivating revision: $REV"
-              az containerapp revision deactivate \
-                --name vvp-issuer \
-                --resource-group "${{ secrets.AZURE_RG }}" \
-                --revision "$REV" || true
+              for ATTEMPT in $(seq 1 $DEACTIVATE_RETRIES); do
+                if az containerapp revision deactivate \
+                  --name vvp-issuer \
+                  --resource-group "${{ secrets.AZURE_RG }}" \
+                  --revision "$REV" 2>/dev/null; then
+                  echo "  Deactivated on attempt $ATTEMPT"
+                  break
+                fi
+                echo "  Deactivate attempt $ATTEMPT/$DEACTIVATE_RETRIES failed, retrying in 5s..."
+                sleep 5
+              done
             done
-            # Poll until all revisions are stopped
-            MAX_WAIT=${{ inputs.lock_wait_seconds || '60' }}
+
+            # --- Phase 3: Poll until all revisions are fully stopped ---
             ELAPSED=0
             INTERVAL=5
             while [ $ELAPSED -lt $MAX_WAIT ]; do
               RUNNING=$(az containerapp revision list \
                 --name vvp-issuer \
                 --resource-group "${{ secrets.AZURE_RG }}" \
-                --query "[?properties.runningState=='Running' || properties.runningState=='Activating'].name" -o tsv 2>/dev/null)
-              if [ -z "$RUNNING" ]; then
+                --query "[?properties.runningState=='Running' || properties.runningState=='Processing' || properties.runningState=='Activating'].name" -o tsv 2>/dev/null)
+              REPLICAS=$(az containerapp revision list \
+                --name vvp-issuer \
+                --resource-group "${{ secrets.AZURE_RG }}" \
+                --query "[?properties.active && properties.replicas > \`0\`].name" -o tsv 2>/dev/null)
+              if [ -z "$RUNNING" ] && [ -z "$REPLICAS" ]; then
                 echo "All revisions stopped after ${ELAPSED}s"
                 break
               fi
-              echo "Waiting for LMDB lock release... (${ELAPSED}s elapsed, still running: $RUNNING)"
+              echo "Waiting for LMDB lock release... (${ELAPSED}s elapsed, running: ${RUNNING:-none}, replicas: ${REPLICAS:-none})"
               sleep $INTERVAL
               ELAPSED=$((ELAPSED + INTERVAL))
             done
+
             if [ $ELAPSED -ge $MAX_WAIT ]; then
-              echo "::warning::Revisions did not stop within ${MAX_WAIT}s — proceeding anyway"
+              echo "::error::Revisions did not stop within ${MAX_WAIT}s — aborting to prevent LMDB lock conflict"
+              # Log final state for debugging
+              az containerapp revision list \
+                --name vvp-issuer \
+                --resource-group "${{ secrets.AZURE_RG }}" \
+                --query "[].{name:name, active:properties.active, state:properties.runningState, replicas:properties.replicas}" -o table 2>/dev/null || true
+              exit 1
             fi
           else
             echo "No active revisions to deactivate"
           fi
+
+          # --- Phase 4: LMDB lock release buffer ---
+          # Azure Files mount may hold the lock briefly after container reports stopped.
+          echo "Waiting 10s for LMDB file lock release on Azure Files..."
+          sleep 10
+          echo "Ready for new revision deployment"
 
       - name: Deploy issuer
         run: |

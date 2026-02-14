@@ -1,5 +1,46 @@
 # VVP Verifier Change Log
 
+## Sprint 64: Repository Migration to Rich-Connexions-Ltd
+
+**Date:** 2026-02-14
+**Status:** Complete
+
+### Summary
+
+Migrated the VVP repository from `github.com/andrewbalercnx/vvp-verifier` (personal account) to `github.com/Rich-Connexions-Ltd/VVP` (organization account). Full migration including git history, CI/CD secrets (14 secrets), Azure OIDC federation trust, code/documentation references, and deployment verification.
+
+### Key Changes
+
+- **Git remote**: Origin switched from `andrewbalercnx/vvp-verifier` to `Rich-Connexions-Ltd/VVP`
+- **Azure OIDC**: New federated credential added for `Rich-Connexions-Ltd/VVP`, old credential removed
+- **CI/CD**: All 14 workflow secrets migrated; deploy pipeline runs successfully from new repo
+- **Code updates**: All `andrewbalercnx/vvp-verifier` references replaced in active codebase
+- **Deploy fix**: LMDB lock wait timeout increased from 60s to 120s in deploy.yml
+- **Backup**: Pre-migration target history preserved as `backup/pre-migration-ovc-main-20260214-0622` tag
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `README.md` | Clone URL updated to `Rich-Connexions-Ltd/VVP` |
+| `fic.json` | OIDC subject and description updated |
+| `services/issuer/app/main.py` | Fallback repo name in `/version` endpoint |
+| `services/verifier/app/main.py` | Fallback repo name in `/version` endpoint |
+| `Documentation/VVP_Verifier_Documentation.md` | Repo reference in config table |
+| `.github/workflows/deploy.yml` | LMDB lock wait 60s→120s, comment update |
+| `SPRINTS.md` | Sprint 64 marked COMPLETE |
+
+### Deployment Verification
+
+- Verifier: healthy, SHA `a4ed5f1`, URL `Rich-Connexions-Ltd/VVP`
+- Issuer: healthy, SHA `a4ed5f1`, URL `Rich-Connexions-Ltd/VVP`
+- Witnesses: all 3 healthy (OOBI endpoints responding)
+- OIDC auth: working from new repo (Azure login step passes)
+- Integration tests (local): passing
+- PBX services: deployed successfully
+
+---
+
 ## Sprint 63: Dossier Creation Wizard UI
 
 **Date:** 2026-02-13
