@@ -292,7 +292,7 @@ async def create_dossier(
         )
     except Exception as e:
         log.exception(f"Failed to issue dossier ACDC: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to issue dossier: {e}")
+        raise HTTPException(status_code=500, detail="Failed to issue dossier credential")
 
     dossier_said = cred_info.said
 

@@ -909,7 +909,17 @@
         } catch (err) {
           btn.disabled = false;
           btn.textContent = 'Create Dossier';
-          resultEl.innerHTML = `<div class="error"><strong>Creation Failed</strong><br>${esc(err.message)}</div>`;
+          const msg = err.message || 'Unknown error';
+          // Detect which step to link back to based on error detail
+          let stepLink = '';
+          if (msg.includes('edge') || msg.includes('credential') || msg.includes('schema') || msg.includes('bproxy')) {
+            stepLink = `<a href="#" onclick="goToStep(2); return false;">Go to Step 2 (Edges)</a>`;
+          } else if (msg.includes('OSP') || msg.includes('osp') || msg.includes('AID')) {
+            stepLink = `<a href="#" onclick="goToStep(3); return false;">Go to Step 3 (Details)</a>`;
+          } else if (msg.includes('Organization') || msg.includes('org')) {
+            stepLink = `<a href="#" onclick="goToStep(1); return false;">Go to Step 1 (AP Org)</a>`;
+          }
+          resultEl.innerHTML = `<div class="error"><strong>Creation Failed</strong><br>${esc(msg)}${stepLink ? '<br>' + stepLink : ''}</div>`;
         }
       }
 
