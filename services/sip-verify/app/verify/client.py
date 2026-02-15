@@ -285,10 +285,9 @@ class VerifierClient:
         keyed by credential SAID.  Each value has constraint_type ("ecc" or
         "jurisdiction") and is_authorized (bool).
 
-        Deterministic precedence:
-        - If any constraint has is_authorized=False for ECC+jurisdiction → FAIL-ECC-JURISDICTION
-        - If any ECC failure → FAIL-ECC
-        - If any jurisdiction failure → FAIL-JURISDICTION
+        Deterministic precedence (FAIL > INDETERMINATE > PASS):
+        - If any hard failure (cert found but unauthorized): FAIL-ECC / FAIL-JURISDICTION / FAIL-ECC-JURISDICTION
+        - If any soft failure (cert missing, vetter_certification_said=None): INDETERMINATE
         - If all constraints authorized → PASS
         - If no constraints present → None (omit header)
         """
@@ -305,24 +304,33 @@ class VerifierClient:
 
         has_ecc_fail = False
         has_jurisdiction_fail = False
+        has_missing_cert = False
 
         for c in entries:
             if not isinstance(c, dict):
                 continue
             if c.get("is_authorized"):
                 continue
-            ct = c.get("constraint_type", c.get("check_type", ""))
-            if "ecc" in ct.lower():
-                has_ecc_fail = True
-            if "jurisdiction" in ct.lower():
-                has_jurisdiction_fail = True
+            # Unauthorized — distinguish missing cert from hard failure
+            if c.get("vetter_certification_said") is None:
+                has_missing_cert = True
+            else:
+                ct = c.get("constraint_type", c.get("check_type", ""))
+                if "ecc" in ct.lower():
+                    has_ecc_fail = True
+                if "jurisdiction" in ct.lower():
+                    has_jurisdiction_fail = True
 
+        # Hard failures take precedence
         if has_ecc_fail and has_jurisdiction_fail:
             return "FAIL-ECC-JURISDICTION"
         if has_ecc_fail:
             return "FAIL-ECC"
         if has_jurisdiction_fail:
             return "FAIL-JURISDICTION"
+        # Soft failure: cert missing but not a hard authorization violation
+        if has_missing_cert:
+            return "INDETERMINATE"
         return "PASS"
 
     def _parse_response(self, data: dict) -> VerifyResult:

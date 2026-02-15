@@ -1180,6 +1180,16 @@ async def verify_callee_vvp(
                         ClaimStatus.INDETERMINATE,
                         "Vetter certification missing for one or more credentials"
                     )
+                    if ENFORCE_VETTER_CONSTRAINTS:
+                        for result in constraint_results.values():
+                            if not result.is_authorized and result.vetter_certification_said is None:
+                                errors.append(ErrorDetail(
+                                    code=ErrorCode.VETTER_CERTIFICATION_MISSING,
+                                    message=result.reason,
+                                    recoverable=ERROR_RECOVERABILITY.get(
+                                        ErrorCode.VETTER_CERTIFICATION_MISSING, True
+                                    ),
+                                ))
             except Exception as e:
                 log.warning(f"Phase 11 vetter constraint evaluation failed: {e}")
                 vetter_constraints_claim.fail(

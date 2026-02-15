@@ -146,43 +146,87 @@ class TestDeriveVetterStatus:
         assert self._derive(constraints) == "PASS"
 
     def test_ecc_failure_returns_fail_ecc(self):
+        """Hard fail: cert found but unauthorized for ECC."""
         constraints = {
-            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": False},
-            "ECredSAID2": {"constraint_type": "jurisdiction", "is_authorized": True},
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": False, "vetter_certification_said": "EVetterCert1"},
+            "ECredSAID2": {"constraint_type": "jurisdiction", "is_authorized": True, "vetter_certification_said": "EVetterCert1"},
         }
         assert self._derive(constraints) == "FAIL-ECC"
 
     def test_jurisdiction_failure_returns_fail_jurisdiction(self):
         constraints = {
-            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": True},
-            "ECredSAID2": {"constraint_type": "jurisdiction", "is_authorized": False},
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": True, "vetter_certification_said": "EVetterCert1"},
+            "ECredSAID2": {"constraint_type": "jurisdiction", "is_authorized": False, "vetter_certification_said": "EVetterCert1"},
         }
         assert self._derive(constraints) == "FAIL-JURISDICTION"
 
     def test_both_failures_returns_fail_ecc_jurisdiction(self):
         constraints = {
-            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": False},
-            "ECredSAID2": {"constraint_type": "jurisdiction", "is_authorized": False},
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": False, "vetter_certification_said": "EVetterCert1"},
+            "ECredSAID2": {"constraint_type": "jurisdiction", "is_authorized": False, "vetter_certification_said": "EVetterCert1"},
         }
         assert self._derive(constraints) == "FAIL-ECC-JURISDICTION"
 
     def test_single_authorized_constraint(self):
         constraints = {
-            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": True},
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": True, "vetter_certification_said": "EVetterCert1"},
         }
         assert self._derive(constraints) == "PASS"
 
     def test_single_failed_ecc_constraint(self):
         constraints = {
-            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": False},
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": False, "vetter_certification_said": "EVetterCert1"},
         }
         assert self._derive(constraints) == "FAIL-ECC"
 
     def test_mixed_multiple_constraints(self):
-        """Multiple constraints — one failure is enough."""
+        """Multiple constraints — one hard failure is enough."""
         constraints = {
-            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": True},
-            "ECredSAID2": {"constraint_type": "ecc", "is_authorized": False},
-            "ECredSAID3": {"constraint_type": "jurisdiction", "is_authorized": True},
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": True, "vetter_certification_said": "EVetterCert1"},
+            "ECredSAID2": {"constraint_type": "ecc", "is_authorized": False, "vetter_certification_said": "EVetterCert1"},
+            "ECredSAID3": {"constraint_type": "jurisdiction", "is_authorized": True, "vetter_certification_said": "EVetterCert1"},
         }
         assert self._derive(constraints) == "FAIL-ECC"
+
+    def test_missing_cert_returns_indeterminate(self):
+        """When vetter_certification_said is None, return INDETERMINATE."""
+        constraints = {
+            "ECredSAID1": {
+                "constraint_type": "ecc",
+                "is_authorized": False,
+                "vetter_certification_said": None,
+            },
+        }
+        assert self._derive(constraints) == "INDETERMINATE"
+
+    def test_hard_fail_takes_precedence_over_indeterminate(self):
+        """Hard failure (cert found, unauthorized) beats INDETERMINATE."""
+        constraints = {
+            "ECredSAID1": {
+                "constraint_type": "ecc",
+                "is_authorized": False,
+                "vetter_certification_said": None,
+            },
+            "ECredSAID2": {
+                "constraint_type": "jurisdiction",
+                "is_authorized": False,
+                "vetter_certification_said": "EVetterCertSAID123",
+            },
+        }
+        assert self._derive(constraints) == "FAIL-JURISDICTION"
+
+    def test_all_missing_certs_returns_indeterminate(self):
+        """Multiple missing certs all yield INDETERMINATE."""
+        constraints = {
+            "ECredSAID1": {
+                "constraint_type": "ecc",
+                "is_authorized": False,
+                "vetter_certification_said": None,
+            },
+            "ECredSAID2": {
+                "constraint_type": "jurisdiction",
+                "is_authorized": False,
+                "vetter_certification_said": None,
+            },
+        }
+        assert self._derive(constraints) == "INDETERMINATE"

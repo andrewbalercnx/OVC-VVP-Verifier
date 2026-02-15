@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
-from app.config import ENFORCE_VETTER_CONSTRAINTS
+import app.config as _cfg
 from app.vetter.constants import (
     KNOWN_EXTENDED_SCHEMA_SAIDS,
     VALID_ECC_CODES,
@@ -483,6 +483,6 @@ def _log_evaluation(schema_said: str, result: ConstraintCheckResult) -> None:
             "schema_type": "extended" if schema_said in KNOWN_EXTENDED_SCHEMA_SAIDS else "base",
             "check_type": result.check_type,
             "is_authorized": result.is_authorized,
-            "enforcement_mode": "enforce" if ENFORCE_VETTER_CONSTRAINTS else "soft",
+            "enforcement_mode": "enforce" if _cfg.ENFORCE_VETTER_CONSTRAINTS else "soft",
         },
     )
