@@ -45,6 +45,95 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/credential", tags=["credential"])
 
 
+def schema_requires_certification_edge(schema_said: str) -> bool:
+    """Check if a schema requires a ``certification`` edge.
+
+    Schema-driven detection using the e.oneOf object-variant pattern
+    (same as Sprint 65's parse_schema_edges).
+    """
+    from app.schema.store import get_schema
+    from app.vetter.constants import KNOWN_EXTENDED_SCHEMA_SAIDS
+
+    schema_doc = get_schema(schema_said)
+    if schema_doc is None:
+        if schema_said in KNOWN_EXTENDED_SCHEMA_SAIDS:
+            raise RuntimeError(
+                f"Schema {schema_said} is a known extended schema but could not "
+                f"be loaded. Cannot enforce certification edge requirement."
+            )
+        return False
+
+    edges_one_of = schema_doc.get("properties", {}).get("e", {}).get("oneOf")
+    if not edges_one_of:
+        return False
+    edges_obj = next((v for v in edges_one_of if v.get("type") == "object"), None)
+    if not edges_obj:
+        return False
+    return "certification" in edges_obj.get("properties", {})
+
+
+async def _inject_certification_edge(
+    schema_said: str,
+    edges: Optional[dict],
+    org: Optional[Organization],
+) -> Optional[dict]:
+    """Inject certification edge for extended schemas.
+
+    Returns updated edges dict, or original edges if not an extended schema.
+    """
+    if not schema_requires_certification_edge(schema_said):
+        return edges
+
+    if org is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Extended schemas require organization context. "
+                   "Provide organization_id in the request.",
+        )
+
+    from app.vetter.service import resolve_active_vetter_cert
+    from app.vetter.constants import VETTER_CERT_SCHEMA_SAID
+
+    cert_info = await resolve_active_vetter_cert(org)
+    if cert_info is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Organization has no valid active VetterCertification. "
+                   "Issue a VetterCertification before using extended schemas.",
+        )
+
+    cert_edge = {
+        "n": cert_info.said,
+        "s": VETTER_CERT_SCHEMA_SAID,
+    }
+
+    edges = dict(edges) if edges else {}
+
+    if "certification" in edges:
+        caller_edge = edges["certification"]
+        if not isinstance(caller_edge, dict) or "n" not in caller_edge:
+            raise HTTPException(
+                status_code=400,
+                detail="Malformed certification edge. Expected dict with 'n' key.",
+            )
+        if caller_edge.get("n") != cert_info.said:
+            raise HTTPException(
+                status_code=400,
+                detail="Provided certification edge SAID does not match "
+                       "org's active VetterCertification.",
+            )
+        if caller_edge.get("s") != VETTER_CERT_SCHEMA_SAID:
+            raise HTTPException(
+                status_code=400,
+                detail="Provided certification edge schema does not match "
+                       f"VetterCertification schema ({VETTER_CERT_SCHEMA_SAID}).",
+            )
+    else:
+        edges["certification"] = cert_edge
+
+    return edges
+
+
 @router.post("/issue", response_model=IssueCredentialResponse)
 async def issue_credential(
     request: IssueCredentialRequest,
@@ -66,6 +155,45 @@ async def issue_credential(
     # Sprint 41: Check role access (system operator+ OR org dossier_manager+)
     check_credential_write_role(principal)
 
+    # Sprint 61: Block VetterCertification via generic endpoint
+    from app.vetter.constants import VETTER_CERT_SCHEMA_SAID
+    if request.schema_said == VETTER_CERT_SCHEMA_SAID:
+        raise HTTPException(
+            status_code=400,
+            detail="VetterCertification credentials must be issued via "
+                   "POST /vetter-certifications, not the generic issuance endpoint.",
+        )
+
+    # Sprint 61: Resolve org context for edge injection
+    resolved_org = None
+    resolved_org_id = None
+    if hasattr(request, "organization_id") and request.organization_id:
+        # Admin cross-org: explicit org_id in request
+        if not principal.is_system_admin:
+            if request.organization_id != principal.organization_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only system admins can specify a different organization_id.",
+                )
+        resolved_org = db.query(Organization).filter(
+            Organization.id == request.organization_id
+        ).first()
+        if resolved_org is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Organization not found: {request.organization_id}",
+            )
+        resolved_org_id = request.organization_id
+    elif principal.organization_id:
+        resolved_org = db.query(Organization).filter(
+            Organization.id == principal.organization_id
+        ).first()
+        resolved_org_id = principal.organization_id
+
+    # Sprint 61: Inject certification edge for extended schemas
+    edges = request.edges
+    edges = await _inject_certification_edge(request.schema_said, edges, resolved_org)
+
     issuer = await get_credential_issuer()
     audit = get_audit_logger()
 
@@ -76,24 +204,26 @@ async def issue_credential(
             schema_said=request.schema_said,
             attributes=request.attributes,
             recipient_aid=request.recipient_aid,
-            edges=request.edges,
+            edges=edges,
             rules=request.rules,
             private=request.private,
         )
 
-        # Sprint 41: Register credential with organization if principal has one
+        # Sprint 41/61: Register credential with organization
+        # Sprint 61: Use resolved_org_id for admin cross-org support
         managed = False
-        if principal.organization_id:
+        reg_org_id = resolved_org_id or principal.organization_id
+        if reg_org_id:
             register_credential(
                 db=db,
                 credential_said=cred_info.said,
-                organization_id=principal.organization_id,
+                organization_id=reg_org_id,
                 schema_said=request.schema_said,
                 issuer_aid=cred_info.issuer_aid,
             )
             managed = True
             log.info(
-                f"Credential {cred_info.said[:16]}... registered to org {principal.organization_id[:8]}..."
+                f"Credential {cred_info.said[:16]}... registered to org {reg_org_id[:8]}..."
             )
 
         # Publish anchoring IXN event to witnesses
@@ -123,17 +253,22 @@ async def issue_credential(
                 # Don't fail credential issuance if witness publishing fails
 
         # Audit log the issuance
+        audit_details = {
+            "registry_name": request.registry_name,
+            "schema_said": request.schema_said,
+            "recipient_aid": request.recipient_aid,
+            "organization_id": reg_org_id or principal.organization_id,
+            "managed": managed,
+        }
+        # Sprint 61: Record cross-org context when admin issues for a different org
+        if resolved_org_id and resolved_org_id != principal.organization_id:
+            audit_details["caller_organization_id"] = principal.organization_id
+            audit_details["target_organization_id"] = resolved_org_id
         audit.log_access(
             action="credential.issue",
             principal_id=principal.key_id,
             resource=cred_info.said,
-            details={
-                "registry_name": request.registry_name,
-                "schema_said": request.schema_said,
-                "recipient_aid": request.recipient_aid,
-                "organization_id": principal.organization_id,
-                "managed": managed,
-            },
+            details=audit_details,
             request=http_request,
         )
 

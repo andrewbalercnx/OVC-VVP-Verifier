@@ -141,6 +141,7 @@ class Organization(Base):
     lei: Optional[str]             # Legal Entity Identifier
     aid: Optional[str]             # KERI AID
     le_credential_said: Optional[str]  # Auto-issued LE credential
+    vetter_certification_said: Optional[str]  # Active VetterCert SAID (Sprint 61)
     status: str                    # "active", "suspended"
     created_at: datetime
     updated_at: datetime
@@ -203,6 +204,25 @@ class DossierOspAssociation(Base):   # Sprint 63
     osp_org_id: UUID               # FK → organizations.id (OSP), CASCADE, indexed
     created_at: datetime
     # Unique constraint: (dossier_said, osp_org_id)
+
+class ManagedCredential(Base):        # Tracks credential ownership
+    __tablename__ = "managed_credentials"
+    said: str(44)                  # Primary key (credential SAID)
+    organization_id: UUID          # FK → organizations.id
+    schema_said: str(44)           # Schema SAID
+    issuer_aid: str(44)            # Issuer AID
+    created_at: datetime
+
+class MockVLEIState(Base):            # Persists mock vLEI infrastructure state
+    __tablename__ = "mock_vlei_state"
+    id: int                        # Primary key
+    gleif_aid: str(44)             # Mock GLEIF root AID
+    qvi_aid: str(44)              # Mock QVI AID
+    gleif_registry_key: str(44)
+    qvi_registry_key: str(44)
+    gsma_aid: Optional[str(44)]    # Mock GSMA AID (Sprint 61)
+    gsma_registry_key: Optional[str(44)]  # Mock GSMA registry (Sprint 61)
+    initialized_at: datetime
 ```
 
 ### api/models.py - Issuer API Models
@@ -220,6 +240,7 @@ class IssueCredentialRequest(BaseModel):
     registry_key: str
     attributes: dict
     edges: Optional[dict]
+    organization_id: Optional[str]  # Cross-org issuance (Sprint 61)
 
 class CreateTNMappingRequest(BaseModel):
     telephone_number: str          # E.164
@@ -288,6 +309,40 @@ class DossierReadinessResponse(BaseModel):
     ready: bool                    # Overall readiness (all required slots ready)
     slots: list[DossierSlotStatus] # Per-slot assessment
     blocking_reason: Optional[str] # Why not ready (if ready=False)
+
+# Sprint 61 — Vetter Certification
+class VetterCertificationCreateRequest(BaseModel):
+    organization_id: str           # Target org UUID
+    ecc_targets: list[str]         # E.164 country codes (validated against VALID_ECC_CODES)
+    jurisdiction_targets: list[str]  # ISO 3166-1 alpha-3 codes (validated against VALID_JURISDICTION_CODES)
+    name: str                      # Vetter name (1-255 chars)
+    certification_expiry: Optional[str]  # ISO8601 UTC, alias "certificationExpiry"
+
+class VetterCertificationResponse(BaseModel):
+    said: str
+    issuer_aid: str                # Mock GSMA AID
+    vetter_aid: str                # Org AID
+    organization_id: str
+    organization_name: str
+    ecc_targets: list[str]
+    jurisdiction_targets: list[str]
+    name: str
+    certification_expiry: Optional[str]  # Alias "certificationExpiry"
+    status: str                    # "issued" or "revoked"
+    created_at: str
+
+class VetterCertificationListResponse(BaseModel):
+    certifications: list[VetterCertificationResponse]
+    count: int
+
+class OrganizationConstraintsResponse(BaseModel):
+    organization_id: str
+    organization_name: str
+    vetter_certification_said: Optional[str]
+    ecc_targets: Optional[list[str]]
+    jurisdiction_targets: Optional[list[str]]
+    certification_status: Optional[str]
+    certification_expiry: Optional[str]
 ```
 
 ---

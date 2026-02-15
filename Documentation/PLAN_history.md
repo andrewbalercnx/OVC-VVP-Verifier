@@ -13544,3 +13544,803 @@ GET /dossier/readiness?org_id=...
 10. **Tests** — Readiness endpoint tests
 11. **Knowledge updates** — api-reference.md
 
+
+---
+
+# Sprint 61: Organization Vetter Certification Association
+
+_Archived: 2026-02-15_
+
+# Sprint 61: Organization Vetter Certification Association
+
+## Problem Statement
+
+The VVP system needs to associate organizations with Vetter Certification credentials so that geographic (ECC) and jurisdictional constraints propagate through the credential chain. Currently, no mechanism exists to:
+1. Issue VetterCertification credentials via the issuer API
+2. Link an Organization to its active VetterCertification
+3. Query an org's constraints (ECC Targets, Jurisdiction Targets)
+4. Auto-inject `certification` edges when issuing extended-schema credentials
+
+This sprint provides the data model and APIs that Sprint 62 will use for enforcement at issuance, dossier creation, and signing time.
+
+## Spec References
+
+- `Documentation/Specs/How To Constrain Multichannel Vetters.pdf` — Normative spec
+- §1: VetterCertification credential with `ecc_targets` and `jurisdiction_targets`
+- §2: Extended schemas (LE, Brand, TNAlloc) with `certification` edge backlinks
+- §4: Multiple enforcement points (verification MUST, issuance/dossier/signing SHOULD)
+- §5: ECC vs Jurisdiction — two independent constraint dimensions
+
+## Current State
+
+**What exists:**
+- VetterCertification schema JSON (`EOefmhWU2qTpMiEQhXohE6z3xRXkpLloZdhTYIenlD4H`)
+- Extended LE/Brand/TNAlloc schemas with `certification` edge definitions
+- Verifier-side constraint validation (Sprint 40)
+- Organization model with users, API keys, managed credentials
+- Generic credential issuance endpoint (`POST /credential/issue`)
+- Mock vLEI infrastructure: mock-gleif → mock-qvi → LE credential chain
+- Bootstrap script provisioning orgs, TNAlloc, Brand credentials
+
+**What's missing:**
+- No mock GSMA certification authority (separate trust chain from QVI)
+- No dedicated VetterCertification lifecycle API
+- No `Organization.vetter_certification_said` column
+- No constraint visibility endpoints
+- No automatic `certification` edge injection for extended schemas
+- Bootstrap doesn't provision vetter certifications
+
+## Proposed Solution
+
+### Approach
+
+Introduce a **mock GSMA identity** as a new certification authority (separate from the QVI chain) and build a dedicated vetter certification module for lifecycle management.
+
+**Why mock GSMA, not mock QVI?** The QVI chain (GLEIF → QVI → LE) certifies legal entity identity. The GSMA chain certifies **vetters** — entities authorized to attest facts about phone-number holders. These are independent trust chains. A QVI could also be a vetter, but the certification authority is GSMA, not GLEIF. The mock GSMA identity mirrors this separation.
+
+**Trust chain architecture:**
+```
+GLEIF → QVI → LE (existing, legal entity identity)
+GSMA → VetterCertification (new, vetter authority scope)
+```
+
+The mock GSMA is simpler than the GLEIF→QVI chain: just one identity + one registry that directly issues VetterCertification credentials to organization AIDs.
+
+### Alternatives Considered
+
+| Alternative | Pros | Cons | Why Rejected |
+|-------------|------|------|--------------|
+| Use mock QVI as certification authority | Less code, reuse existing | Semantically wrong — QVI certifies entities, not vetters | Conflates two independent trust chains |
+| Use generic `/credential/issue` + manual org updates | No new router needed | No auto-linking, no constraint API, error-prone | Doesn't meet sprint deliverables |
+| Store constraints in a separate DB table | Independent of ACDC | Duplicates data, diverges from credential truth | ACDC credential IS the authoritative source |
+
+### Detailed Design
+
+#### Component 1: Mock GSMA Infrastructure
+
+**Purpose:** Create a mock GSMA identity and registry that can issue VetterCertification credentials
+
+**Location:** `services/issuer/app/org/mock_vlei.py` (extend existing)
+
+**Changes:**
+
+1. Add GSMA constants:
+```python
+VETTER_CERT_SCHEMA_SAID = "EOefmhWU2qTpMiEQhXohE6z3xRXkpLloZdhTYIenlD4H"
+```
+
+2. Add config constant in `app/config.py`:
+```python
+MOCK_GSMA_NAME = os.getenv("VVP_MOCK_GSMA_NAME", "mock-gsma")
+```
+
+3. Extend `MockVLEIState` dataclass:
+```python
+@dataclass
+class MockVLEIState:
+    # ... existing fields ...
+    gsma_aid: str = ""
+    gsma_registry_key: str = ""
+```
+
+4. Extend `MockVLEIState` ORM model:
+```python
+gsma_aid = Column(String(44), nullable=True)
+gsma_registry_key = Column(String(44), nullable=True)
+```
+
+5. Extend `MockVLEIManager.initialize()` with **partial-state upgrade logic:**
+
+   Currently, `initialize()` returns early if ANY persisted state exists (line 98-102):
+   ```python
+   persisted_state = self._load_persisted_state()
+   if persisted_state:
+       self._state = persisted_state
+       return self._state
+   ```
+
+   This means existing deployments with pre-Sprint 61 state rows (which have `gsma_aid=NULL`) will never trigger GSMA bootstrap.
+
+   **Fix:** After restoring persisted state, check if GSMA fields are populated. If not, run GSMA bootstrap only:
+   ```python
+   persisted_state = self._load_persisted_state()
+   if persisted_state:
+       self._state = persisted_state
+       if not self._state.gsma_aid:
+           # Pre-Sprint 61 state — upgrade with GSMA infrastructure
+           await self._bootstrap_gsma(identity_mgr, registry_mgr)
+       return self._state
+   ```
+
+   The `_bootstrap_gsma()` helper:
+   - Creates or gets `mock-gsma` identity
+   - Creates or gets `mock-gsma-registry`
+   - Publishes mock-gsma identity to witnesses
+   - Updates `self._state.gsma_aid` and `self._state.gsma_registry_key`
+   - Persists updated state to DB (updates existing row)
+
+   For fresh installations, GSMA bootstrap runs as part of the full initialization (steps 7-8 after QVI chain steps 1-6).
+
+6. Add `issue_vetter_certification()` method:
+```python
+async def issue_vetter_certification(
+    self,
+    org_aid: str,
+    ecc_targets: list[str],
+    jurisdiction_targets: list[str],
+    name: str,
+    certification_expiry: Optional[str] = None,
+) -> str:
+    """Issue a VetterCertification credential from mock-gsma to an org.
+
+    Returns:
+        SAID of the issued VetterCertification credential
+    """
+    # Uses mock-gsma-registry, VETTER_CERT_SCHEMA_SAID
+    # recipient_aid = org_aid (the certified vetter)
+    # attributes: {i: org_aid, ecc_targets, jurisdiction_targets, name, dt, ...}
+    # NOTE: Expiry stored as "certificationExpiry" (camelCase) in ACDC attributes,
+    # matching ACDC convention. API accepts snake_case via Pydantic alias.
+```
+
+**Idempotency:** Follows the same pattern as `_get_or_issue_qvi_credential()` — check for existing identity/registry before creating. State persists across restarts via `MockVLEIState` DB row.
+
+**Backward compatibility:** The new `gsma_aid` and `gsma_registry_key` columns are nullable. Existing state rows will have NULL for these fields. The `initialize()` method handles this by creating GSMA infrastructure only if not yet present.
+
+#### Component 2: Database Schema Changes
+
+**Purpose:** Add columns for vetter certification tracking
+
+**Locations:**
+- `services/issuer/app/db/models.py` — Add `Organization.vetter_certification_said`, extend `MockVLEIState`
+- `services/issuer/app/db/migrations/` — New migration script
+
+**Organization model change:**
+```python
+vetter_certification_said = Column(String(44), nullable=True)  # Active VetterCert SAID
+```
+
+**MockVLEIState model change:**
+```python
+gsma_aid = Column(String(44), nullable=True)
+gsma_registry_key = Column(String(44), nullable=True)
+```
+
+**Migration strategy:**
+
+SQLAlchemy's `Base.metadata.create_all()` does NOT add columns to existing tables in PostgreSQL — it only creates missing tables. Therefore, an explicit migration is required.
+
+**Approach:** A one-shot SQL migration script that runs on startup before `create_all()`. The script is idempotent (uses `IF NOT EXISTS` / checks for column existence):
+
+```python
+# services/issuer/app/db/migrations/sprint61_vetter_cert.py
+
+MIGRATION_SQL = """
+-- Add vetter_certification_said to organizations
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'organizations' AND column_name = 'vetter_certification_said'
+    ) THEN
+        ALTER TABLE organizations ADD COLUMN vetter_certification_said VARCHAR(44);
+    END IF;
+END $$;
+
+-- Add GSMA columns to mock_vlei_state (independent per-column checks)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'mock_vlei_state' AND column_name = 'gsma_aid'
+    ) THEN
+        ALTER TABLE mock_vlei_state ADD COLUMN gsma_aid VARCHAR(44);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'mock_vlei_state' AND column_name = 'gsma_registry_key'
+    ) THEN
+        ALTER TABLE mock_vlei_state ADD COLUMN gsma_registry_key VARCHAR(44);
+    END IF;
+END $$;
+"""
+```
+
+This runs in `init_database()` (in `app/db/session.py`) before `create_all()`. The migration detects the database dialect:
+
+- **PostgreSQL (production):** Uses `DO $$ ... END $$;` blocks with `information_schema.columns` checks (idempotent).
+- **SQLite (dev/test with existing DB):** Uses `PRAGMA table_info()` to check for column existence, then `ALTER TABLE ... ADD COLUMN` if missing. SQLite's `ALTER TABLE ADD COLUMN` is supported since SQLite 3.2.0. This path runs for any SQLite database that already has the `organizations` table.
+- **SQLite (fresh DB / test setup):** `create_all()` creates all tables with all columns from scratch. The migration function detects this case (table doesn't exist yet) and skips — `create_all()` handles everything.
+
+The migration function detects the dialect from the engine URL (`engine.url.get_backend_name()`) and dispatches accordingly. Both PostgreSQL and SQLite branches are idempotent. Tests for both dialects verify the migration adds columns to pre-existing tables.
+
+**Rollback:** The columns are nullable and unused by prior code. Rollback is simply removing the columns, but this is not expected to be needed.
+
+**Deploy ordering:** Migration runs on application startup, before any request handling. No separate deploy step needed.
+
+**Multi-worker concurrency:** Azure Container Apps runs a single Gunicorn master with multiple Uvicorn workers. The migration runs during app startup (`init_database()` in the `lifespan` context manager), which executes once before workers are spawned. For PostgreSQL, the `DO $$ ... END $$;` blocks with `IF NOT EXISTS` are inherently idempotent — concurrent execution is safe (second invocation is a no-op). For SQLite, only one process accesses the DB. A test verifies repeated migration invocations are idempotent (calling the migration function twice in sequence succeeds without error).
+
+#### Component 3: Pydantic Models
+
+**Purpose:** Request/response models for VetterCertification CRUD and constraint visibility
+
+**Location:** `services/issuer/app/api/models.py` (extend existing file)
+
+**New models:**
+
+```python
+class VetterCertificationCreateRequest(BaseModel):
+    """Request to issue a VetterCertification credential."""
+    organization_id: str = Field(..., description="Target org UUID")
+    ecc_targets: list[str] = Field(..., min_length=1, description="E.164 country codes")
+    jurisdiction_targets: list[str] = Field(..., min_length=1, description="ISO 3166-1 alpha-3 codes")
+    name: str = Field(..., min_length=1, max_length=255, description="Vetter name")
+    certification_expiry: Optional[str] = Field(
+        None,
+        description="Expiry date (ISO8601). Stored as 'certificationExpiry' in ACDC attributes.",
+        alias="certificationExpiry",
+    )
+
+    model_config = {"populate_by_name": True}  # Accept both snake_case and camelCase
+
+    @field_validator("ecc_targets")
+    @classmethod
+    def validate_ecc_targets(cls, v):
+        from app.vetter.constants import VALID_ECC_CODES
+        for code in v:
+            if code not in VALID_ECC_CODES:
+                raise ValueError(
+                    f"Invalid ECC target: {code}. Must be a valid E.164 country code."
+                )
+        return v
+
+    @field_validator("jurisdiction_targets")
+    @classmethod
+    def validate_jurisdiction_targets(cls, v):
+        from app.vetter.constants import VALID_JURISDICTION_CODES
+        for code in v:
+            if code not in VALID_JURISDICTION_CODES:
+                raise ValueError(
+                    f"Invalid jurisdiction: {code}. Must be a valid ISO 3166-1 alpha-3 code."
+                )
+        return v
+
+class VetterCertificationResponse(BaseModel):
+    """Response with VetterCertification credential info."""
+    said: str
+    issuer_aid: str  # Mock GSMA AID
+    vetter_aid: str  # Org AID (the certified vetter)
+    organization_id: str
+    organization_name: str
+    ecc_targets: list[str]
+    jurisdiction_targets: list[str]
+    name: str
+    certification_expiry: Optional[str] = Field(
+        None,
+        description="Expiry from ACDC 'certificationExpiry' attribute",
+        alias="certificationExpiry",
+    )
+    status: str  # "issued" or "revoked"
+    created_at: str
+
+    model_config = {"populate_by_name": True}  # Accept both naming conventions
+
+class VetterCertificationListResponse(BaseModel):
+    """List response."""
+    certifications: list[VetterCertificationResponse]
+    count: int
+
+class OrganizationConstraintsResponse(BaseModel):
+    """Constraint visibility response."""
+    organization_id: str
+    organization_name: str
+    vetter_certification_said: Optional[str] = None
+    ecc_targets: Optional[list[str]] = None
+    jurisdiction_targets: Optional[list[str]] = None
+    certification_status: Optional[str] = None
+    certification_expiry: Optional[str] = None
+```
+
+#### Component 4: Vetter Certification Service
+
+**Purpose:** Business logic for VetterCertification lifecycle and constraint queries
+
+**Location:** `services/issuer/app/vetter/service.py`
+
+**Issuance authority: Mock GSMA** — VetterCertification credentials are issued from the `mock-gsma-registry` using the mock GSMA identity. The org AID is the recipient (issuee). This is consistent with the real-world model where GSMA certifies vetters.
+
+**Central helper — `resolve_active_vetter_cert()`:**
+
+All code paths that need the org's active VetterCertification (edge injection, constraint queries, revocation cleanup) use a single helper function to prevent semantic drift:
+
+```python
+async def resolve_active_vetter_cert(
+    org: Organization,
+) -> Optional[CredentialInfo]:
+    """Resolve and validate the org's active VetterCertification.
+
+    Performs full validation:
+    1. org.vetter_certification_said is not None
+    2. Credential exists in KERI store
+    3. Credential schema_said == VETTER_CERT_SCHEMA_SAID
+    4. Credential status is "issued" (not revoked)
+    5. Credential issuer_aid == mock GSMA AID
+    6. Credential issuee AID (`a.i`) == org.aid (recipient binding)
+    7. If `certificationExpiry` attribute is present:
+       - Parse as ISO 8601 UTC datetime
+       - Compare against current UTC time
+       - If expired → treat as inactive (return None, log warning)
+       - If no expiry attribute → cert is indefinitely valid
+
+    Expiry policy: `certificationExpiry` is an optional ACDC attribute.
+    When present, it is an ISO 8601 UTC datetime string (e.g.,
+    "2025-12-31T23:59:59Z"). The resolver parses it with
+    `datetime.fromisoformat()` and compares against `datetime.now(UTC)`.
+    No grace period — expired means inactive. This affects all dependent
+    flows: edge injection rejects expired certs, constraint endpoints
+    return null, and issuance conflict checks treat expired certs as
+    clearable (stale pointer).
+
+    Returns CredentialInfo if valid, None otherwise.
+    If pointer exists but credential is invalid (revoked, wrong schema,
+    wrong recipient, expired, etc.), logs a warning but returns None
+    (stale pointer).
+    """
+```
+
+This helper is reused by edge injection (`inject_certification_edge`), constraints endpoints, and revocation logic.
+
+**Interface:**
+```python
+async def issue_vetter_certification(
+    db: Session,
+    organization_id: str,
+    ecc_targets: list[str],
+    jurisdiction_targets: list[str],
+    name: str,
+    certification_expiry: Optional[str] = None,
+) -> VetterCertificationResponse:
+    """Issue a VetterCertification ACDC and link to org."""
+    # 1. Validate org exists, has AID, and has registry
+    # 2. SELECT FOR UPDATE on org row (acquire row-level lock for concurrency safety)
+    # 3. If org.vetter_certification_said is not None:
+    #    a. Call resolve_active_vetter_cert(org) to validate the pointer
+    #    b. If valid active cert exists → 409 (must revoke first)
+    #    c. If pointer is stale (revoked/missing/wrong-schema/expired) → auto-clear
+    #       pointer, log warning "Cleared stale vetter cert pointer", proceed
+    # 3b. Durable secondary guard: query ManagedCredential for any active vetter
+    #    certs for this org (schema_said == VETTER_CERT_SCHEMA_SAID AND
+    #    organization_id == org.id AND status != "revoked"). If any exist AND
+    #    differ from the cleared pointer, log warning and return 409. This catches
+    #    edge cases where pointer drift occurred (e.g., partial failure left a
+    #    valid cert in ManagedCredential but pointer was cleared).
+    # 4. Build attributes dict
+    # 5. Issue credential via mock_vlei.issue_vetter_certification()
+    #    - Uses mock-gsma-registry
+    #    - Schema: VETTER_CERT_SCHEMA_SAID
+    #    - recipient_aid: org AID
+    # 6. Register ManagedCredential — direct db.add(), NOT via register_credential()
+    #    (register_credential() does an immediate db.commit() which would break atomicity)
+    # 7. Set org.vetter_certification_said = credential SAID
+    # 8. db.commit() — single atomic commit for both ManagedCredential + org pointer
+    # 9. Publish to witnesses (best-effort, log on failure)
+    # 10. Return response
+```
+
+**Concurrency safety:** The one-cert-per-org invariant is enforced via `SELECT FOR UPDATE` on the Organization row within a single transaction. The lock is held from the pointer check through KERI issuance to DB commit. This prevents two concurrent requests from both seeing NULL and both issuing.
+
+**Lock duration justification:** VetterCertification issuance is an admin-only, low-frequency operation (typically once per org). The KERI operations are local in-process calls (mock GSMA identity/registry in the same process). There is no external network I/O during issuance. Lock contention is negligible for this use case. If production deployments use real (remote) GSMA infrastructure, the locking strategy can be revisited at that point.
+
+For SQLite (dev/test), `SELECT FOR UPDATE` degrades to table-level locking which is acceptable. The implementation uses `db.query(Organization).with_for_update().filter(Organization.id == org_id).first()`.
+
+**Revocation semantics:**
+```python
+async def revoke_vetter_certification(
+    db: Session,
+    said: str,
+) -> VetterCertificationResponse:
+    """Revoke a VetterCertification and conditionally clear org link."""
+    # 1. Find the ManagedCredential by SAID → get organization_id
+    # 2. Revoke via CredentialIssuer.revoke_credential()
+    # 3. Get the Organization
+    # 4. ONLY clear org.vetter_certification_said if it equals `said`
+    #    (i.e., revoking the currently active cert clears the pointer;
+    #     revoking a historical cert leaves the active pointer intact)
+    # 5. db.commit()
+    # 6. Publish revocation to witnesses (best-effort)
+    # 7. Return response
+```
+
+**Constraint helper (for Sprint 62):**
+```python
+async def get_org_constraints(
+    db: Session,
+    organization_id: str,
+) -> OrganizationConstraintsResponse:
+    """Get parsed constraints for an org.
+
+    Uses resolve_active_vetter_cert() to validate the credential is:
+    - Present (not null pointer)
+    - A VetterCertification schema
+    - Issued by mock GSMA
+    - Not revoked
+
+    Returns null constraints if no valid active cert.
+    """
+```
+
+**Transaction boundary:** All DB writes happen in a single transaction. The vetter service does NOT call `register_credential()` from `app/auth/scoping.py` because that helper does an immediate `db.commit()` on line 212, which would break atomicity. Instead, the service directly creates and `db.add()`s the `ManagedCredential` object, sets `org.vetter_certification_said`, and issues a single `db.commit()`. KERI credential issuance happens before the DB commit (within the same request handler). Witness publishing happens after commit (best-effort).
+
+**KERI success + DB failure:** If KERI credential issuance succeeds but the DB commit fails, an orphaned credential exists in KERI store. The org pointer remains NULL. The orphaned credential has no pointer referencing it and is harmless. This is logged as an error. A test covers this failure path.
+
+#### Component 5: API Router
+
+**Purpose:** REST endpoints for VetterCertification CRUD + constraint visibility
+
+**Location:** `services/issuer/app/api/vetter_certification.py`
+
+**Endpoints:**
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/vetter-certifications` | `issuer:admin` | Issue VetterCertification |
+| `GET` | `/vetter-certifications` | `issuer:admin` | List all (optional `?organization_id=`) |
+| `GET` | `/vetter-certifications/{said}` | `issuer:readonly+` OR org member | Get by SAID |
+| `DELETE` | `/vetter-certifications/{said}` | `issuer:admin` | Revoke |
+| `GET` | `/organizations/{org_id}/constraints` | Any authenticated + org access | Org constraints |
+| `GET` | `/users/me/constraints` | Any authenticated | Current user's org constraints |
+
+**Authorization scoping:**
+- `POST /vetter-certifications` — admin only
+- `GET /vetter-certifications` (list) — admin only (list is a system-wide view)
+- `GET /vetter-certifications/{said}` — system role (admin/readonly/operator) can read any cert; org-scoped principals can only read certs linked to their own org (checked via `ManagedCredential.organization_id == principal.organization_id`). Returns 403 if the cert belongs to a different org.
+- `DELETE /vetter-certifications/{said}` — admin only
+- `GET /organizations/{org_id}/constraints` — same access check as `GET /organizations/{org_id}` (system role OR org membership)
+- `GET /users/me/constraints` — any authenticated user; reads from `principal.organization_id` directly
+
+**Schema enforcement:** All vetter-certification API operations (GET, DELETE, list) enforce `schema_said == VETTER_CERT_SCHEMA_SAID` on the `ManagedCredential` record. If a SAID is provided that exists but has a different schema, the endpoint returns 404 ("VetterCertification not found") rather than exposing non-vetter credentials. The list endpoint filters by `ManagedCredential.schema_said == VETTER_CERT_SCHEMA_SAID` in the query. This prevents the vetter API surface from accidentally operating on non-vetter credentials.
+
+#### Component 6: Automatic Certification Edge Injection
+
+**Purpose:** When issuing credentials with extended schemas, auto-populate the `certification` edge
+
+**Location:** `services/issuer/app/api/credential.py` (modify existing `issue_credential`)
+
+**Logic:**
+
+First, add an optional `organization_id` field to `IssueCredentialRequest`:
+```python
+# In IssueCredentialRequest (existing model, add one field):
+organization_id: Optional[str] = Field(
+    None,
+    description="Organization context for cross-org admin operations. "
+                "Required for extended schemas when principal has no org.",
+)
+```
+
+Then the injection logic:
+```python
+VETTER_CERT_SCHEMA_SAID = "EOefmhWU2qTpMiEQhXohE6z3xRXkpLloZdhTYIenlD4H"
+
+def schema_requires_certification_edge(schema_said: str) -> bool:
+    """Check if a schema requires a `certification` edge.
+
+    Schema-driven detection: loads the schema JSON from the embedded store
+    and inspects the `e.oneOf` object variant for a "certification" key.
+    This uses the same `oneOf` pattern as Sprint 65's `parse_schema_edges()`:
+
+    1. Look up `properties.e.oneOf` (the standard ACDC edge definition pattern)
+    2. Find the object variant (`type: "object"`) by type, not index
+    3. Check if that variant's `properties` contains "certification"
+
+    This avoids hardcoding schema SAIDs and automatically adapts when
+    new schemas with certification edges are added.
+
+    Falls back to False if schema is not found or has no edge block.
+
+    Uses source-agnostic schema lookup (get_schema(), not just get_embedded_schema())
+    to support both embedded and any future imported schemas.
+
+    Fail-closed for known VVP extended schema SAIDs: if the schema SAID matches
+    a known extended schema but the schema document cannot be loaded, raises
+    RuntimeError rather than silently skipping enforcement. For truly unknown
+    schemas (not in the known set), returns False.
+    """
+    from app.schema.store import get_schema
+    from app.vetter.constants import KNOWN_EXTENDED_SCHEMA_SAIDS
+
+    schema_doc = get_schema(schema_said)
+    if schema_doc is None:
+        # Fail-closed for known extended schemas
+        if schema_said in KNOWN_EXTENDED_SCHEMA_SAIDS:
+            raise RuntimeError(
+                f"Schema {schema_said} is a known extended schema but could not "
+                f"be loaded. Cannot enforce certification edge requirement."
+            )
+        return False
+    # Use the e.oneOf object-variant pattern (same as parse_schema_edges)
+    edges_one_of = schema_doc.get("properties", {}).get("e", {}).get("oneOf")
+    if not edges_one_of:
+        return False
+    # Find the object variant by type (not by index)
+    edges_obj = next((v for v in edges_one_of if v.get("type") == "object"), None)
+    if not edges_obj:
+        return False
+    return "certification" in edges_obj.get("properties", {})
+
+async def inject_certification_edge(
+    schema_said: str,
+    edges: Optional[dict],
+    org: Optional[Organization],
+) -> Optional[dict]:
+    """Inject certification edge for extended schemas.
+
+    Uses resolve_active_vetter_cert() to validate the credential
+    (not just a non-null pointer check).
+
+    Args:
+        schema_said: Schema SAID of the credential being issued
+        edges: Caller-provided edges (may be None)
+        org: Organization resolved from principal or request org_id
+
+    Returns:
+        Updated edges dict, or original edges if not an extended schema
+
+    Raises:
+        HTTPException 400: If org has no valid active cert, or edge SAID mismatch
+    """
+    if not schema_requires_certification_edge(schema_said):
+        return edges  # Not an extended schema, pass through unchanged
+
+    # Extended schema requires org context
+    if org is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Extended schemas require organization context. "
+                   "Provide organization_id in the request.",
+        )
+
+    # Validate the active cert (not just pointer presence)
+    cert_info = await resolve_active_vetter_cert(org)
+    if cert_info is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Organization has no valid active VetterCertification. "
+                   "Issue a VetterCertification before using extended schemas.",
+        )
+
+    cert_edge = {
+        "n": cert_info.said,
+        "s": VETTER_CERT_SCHEMA_SAID,
+    }
+
+    edges = dict(edges) if edges else {}
+
+    if "certification" in edges:
+        # Caller provided a certification edge — validate shape and value
+        caller_edge = edges["certification"]
+        if not isinstance(caller_edge, dict) or "n" not in caller_edge:
+            raise HTTPException(
+                status_code=400,
+                detail="Malformed certification edge. Expected dict with 'n' key.",
+            )
+        if caller_edge.get("n") != cert_info.said:
+            raise HTTPException(
+                status_code=400,
+                detail="Provided certification edge SAID does not match "
+                       "org's active VetterCertification.",
+            )
+    else:
+        # Auto-inject
+        edges["certification"] = cert_edge
+
+    return edges
+```
+
+**Admin cross-org support:** System admins can issue extended-schema credentials for any org by specifying `organization_id` in `IssueCredentialRequest`. This is consistent with existing admin cross-org patterns (e.g., `GET /credential?org_id=...`). The org resolution order is:
+
+1. If `request.organization_id` is set AND principal is admin → use that org
+2. Else if `principal.organization_id` is set → use principal's org
+3. Else → no org context (400 for extended schemas, pass-through for base schemas)
+
+Non-admin principals specifying an `organization_id` different from their own receive a **403 Forbidden** (not silently ignored), consistent with Sprint 63's tenant-isolation pattern. If `organization_id` matches `principal.organization_id` or is omitted, it proceeds normally.
+
+**ManagedCredential registration scoping:** When admin cross-org issuance is used (admin specifies `organization_id`), the `ManagedCredential` record is registered with `organization_id` set to the **target org** (the value from the request), not the caller's org. This ensures the credential is correctly scoped to the org that owns it. The `register_credential()` call in `issue_credential()` already accepts an explicit `organization_id` parameter — the cross-org path passes the resolved target org ID.
+
+**Integration point:** Called in `issue_credential()` after `check_credential_write_role()` and before `issuer.issue_credential()`. The org is resolved using the logic above.
+
+**VetterCertification schema guard in generic endpoint:**
+
+The generic `POST /credential/issue` endpoint MUST reject requests with `schema_said == VETTER_CERT_SCHEMA_SAID`. VetterCertification credentials must always be issued through the dedicated `POST /vetter-certifications` endpoint, which handles org association, pointer management, and mock GSMA issuance atomically. Without this guard, users (or the `vetter.html` UI) could issue VetterCertification credentials via the generic path, creating unlinked credentials that bypass the org-association model.
+
+```python
+# In issue_credential(), after resolving schema_said and before edge injection:
+if body.schema_said == VETTER_CERT_SCHEMA_SAID:
+    raise HTTPException(
+        status_code=400,
+        detail="VetterCertification credentials must be issued via "
+               "POST /vetter-certifications, not the generic issuance endpoint.",
+    )
+```
+
+The `vetter.html` UI will continue to exist as documentation/reference but will receive a 400 error if used to issue VetterCertification credentials. No changes to the HTML file itself are needed — the server-side guard is sufficient.
+
+#### Component 7: Bootstrap Updates
+
+**Purpose:** Provision a VetterCertification during bootstrap
+
+**Location:** `scripts/bootstrap-issuer.py`
+
+**New step (between step 3 and 3b):**
+```python
+def step_issue_vetter_certification(base_url, admin_key, org_id):
+    """Step 3a: Issue VetterCertification for the test org."""
+    status, body = api_call(
+        "POST",
+        f"{base_url}/vetter-certifications",
+        data={
+            "organization_id": org_id,
+            "ecc_targets": ["44", "1"],
+            "jurisdiction_targets": ["GBR", "USA"],
+            "name": "ACME Inc Vetter Certification",
+        },
+        api_key=admin_key,
+        timeout=120,
+    )
+    ...
+```
+
+**Deferred to Sprint 62:** Switching bootstrap to use extended schemas (Extended LE, Extended Brand, Extended TNAlloc) with certification edges. For Sprint 61, the bootstrap provisions the VetterCert and the edge injection mechanism is tested independently. This avoids changing the existing E2E credential chain.
+
+#### Component 8: Organization Response Extension
+
+**Purpose:** Include vetter cert info in org GET response
+
+**Location:** `services/issuer/app/api/organization.py`
+
+**Change:** Extend `OrganizationResponse` to include:
+```python
+vetter_certification_said: Optional[str] = None
+```
+
+The `ecc_targets` and `jurisdiction_targets` are available via the dedicated `/organizations/{id}/constraints` endpoint and are NOT duplicated into the org response. This keeps the org response lightweight and avoids coupling to credential parsing.
+
+### Data Flow
+
+1. **Issue VetterCertification:**
+   Admin → `POST /vetter-certifications` → validate org → mock GSMA issues ACDC via `mock-gsma-registry` → store ManagedCredential + set `org.vetter_certification_said` (one DB transaction) → publish to witnesses (best-effort) → return response
+
+2. **Query constraints:**
+   User → `GET /organizations/{id}/constraints` → read `org.vetter_certification_said` → fetch credential from KERI store → parse `ecc_targets` + `jurisdiction_targets` → return
+
+3. **Edge injection on credential issuance:**
+   User → `POST /credential/issue` (extended schema) → `inject_certification_edge()` checks org context → checks `org.vetter_certification_said` → adds `certification` edge to edges dict → `issuer.issue_credential()` includes edge in ACDC `e` section → SAID computation includes edge
+
+4. **Revoke VetterCertification:**
+   Admin → `DELETE /vetter-certifications/{said}` → find ManagedCredential → revoke ACDC → if `said == org.vetter_certification_said` then clear pointer → return
+
+### Error Handling
+
+| Scenario | HTTP | Error |
+|----------|------|-------|
+| Org not found | 404 | "Organization not found" |
+| Org has no AID | 400 | "Organization has no KERI identity" |
+| Org already has active cert | 409 | "Organization already has active VetterCertification. Revoke it first." |
+| Invalid ECC target format | 422 | Pydantic validation error |
+| Invalid jurisdiction format | 422 | Pydantic validation error |
+| Extended schema without org context | 400 | "Extended schemas require organization context. Provide organization_id." |
+| Extended schema without cert | 400 | "Organization has no active VetterCertification..." |
+| Edge SAID mismatch | 400 | "Provided certification edge SAID does not match..." |
+| Malformed certification edge | 400 | "Malformed certification edge. Expected dict with 'n' key." |
+| VetterCert not found | 404 | "VetterCertification not found" |
+| Non-vetter SAID on vetter endpoint | 404 | "VetterCertification not found" (schema_said != VETTER_CERT_SCHEMA_SAID) |
+| Mock GSMA not initialized | 500 | "Mock GSMA infrastructure not available" |
+
+### Test Strategy
+
+Two test files covering all deliverables:
+
+**`test_vetter_certification.py`** (~22 tests):
+- **CRUD lifecycle:** Issue, list (with/without org filter), get by SAID, revoke
+- **Org association:** `vetter_certification_said` set on issue, cleared on revoke of active cert
+- **Historical revoke:** Revoking a non-active cert does NOT clear org pointer
+- **One-cert-per-org:** Reject second issue without revoking first (409)
+- **Concurrent issuance guard:** Two rapid issue requests — second should get 409
+- **Validation:** Invalid ECC targets (letters, >3 digits), invalid jurisdiction (lowercase, wrong length)
+- **Auth:** Admin-only for issue/revoke/list, org-scoped get checks ownership
+- **Org-scoped GET:** Org principal can read own org's cert, gets 403 for other org's cert
+- **ManagedCredential tracking:** Cert registered as managed credential with correct schema_said
+- **Mock GSMA:** Verify credential is issued by mock-gsma AID, not QVI or org
+- **Expiry round-trip:** Issue with `certification_expiry`, verify stored as `certificationExpiry` in ACDC, verify returned correctly in response
+- **Generic endpoint guard:** `POST /credential/issue` with VetterCert schema SAID returns 400
+- **Schema enforcement on GET:** GET/DELETE with non-vetter credential SAID returns 404
+- **Semantic ECC validation:** Reject invalid E.164 codes (e.g., "999") that pass format check
+- **Semantic jurisdiction validation:** Reject invalid alpha-3 codes (e.g., "ZZZ") that pass format check
+- **Expired cert:** resolve_active_vetter_cert returns None for expired certificationExpiry
+- **Durable secondary guard:** Issuance blocked if ManagedCredential has active vetter cert even when pointer was cleared
+- **Malformed certification edge:** Caller provides string instead of dict → 400
+
+**`test_vetter_constraints.py`** (~21 tests):
+- **Constraint visibility:** `/organizations/{id}/constraints` returns correct ecc/jurisdiction data
+- **No cert:** Returns null constraints for org without cert
+- **Revoked cert:** Returns null constraints after revocation (resolve_active_vetter_cert detects revoked)
+- **Stale pointer:** Returns null constraints if pointer exists but credential is revoked in KERI
+- **User constraints:** `/users/me/constraints` returns org constraints via principal
+- **User no org:** Returns 404 for user without org
+- **Edge injection:** Auto-populate certification edge for Extended LE/Brand/TNAlloc schemas
+- **Edge injection skip:** Pass through unchanged for base (non-extended) schemas
+- **Edge mismatch:** Reject mismatched certification edge SAID (400)
+- **No cert + extended schema:** Return 400 for org without active cert
+- **Admin cross-org extended schema:** Admin specifies `organization_id` in request, edge injected from that org's cert
+- **Admin no org context:** Admin with no org and no `organization_id` in request gets 400 for extended schemas
+- **Non-admin cross-org 403:** Org-scoped user specifying different org_id gets 403, not silently ignored
+- **Admin cross-org credential scoping:** Admin issues with org_id → ManagedCredential.organization_id == target org
+- **resolve_active_vetter_cert validates schema:** Pointer to non-VetterCert credential returns None
+- **Org response:** Org GET includes `vetter_certification_said` field
+- **schema_requires_certification_edge:** Detects `certification` in extended schema `e.oneOf` object variant; returns False for base schemas
+- **DB migration:** Verify `vetter_certification_said` column exists after startup
+- **KERI success + DB failure:** Orphaned credential is logged, org pointer not set
+- **SQLite migration:** Column added to existing SQLite DB
+- **Migration idempotency:** Calling migration function twice in sequence succeeds without error
+- **Test-path migration:** Migration function is exposed as `run_migrations(engine)` and called directly in tests (not only via lifespan startup), ensuring migration behavior is exercised in the test environment
+- **Partial-state GSMA upgrade:** Pre-Sprint 61 MockVLEIState (gsma_aid=NULL) triggers GSMA bootstrap on next initialize()
+
+## Files to Create/Modify
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `services/issuer/app/db/models.py` | Modify | Add `Organization.vetter_certification_said`, extend `MockVLEIState` with GSMA fields |
+| `services/issuer/app/db/migrations/__init__.py` | Create | Migrations package |
+| `services/issuer/app/db/migrations/sprint61_vetter_cert.py` | Create | Column migration for PostgreSQL |
+| `services/issuer/app/db/session.py` | Modify | Run migration before `create_all()` |
+| `services/issuer/app/config.py` | Modify | Add `MOCK_GSMA_NAME` constant |
+| `services/issuer/app/org/mock_vlei.py` | Modify | Add mock GSMA identity/registry, `issue_vetter_certification()` |
+| `services/issuer/app/api/models.py` | Modify | Add VetterCert + Constraint Pydantic models |
+| `services/issuer/app/vetter/__init__.py` | Create | Vetter package init |
+| `services/issuer/app/vetter/service.py` | Create | VetterCert business logic |
+| `services/issuer/app/vetter/constants.py` | Create | `VETTER_CERT_SCHEMA_SAID`, `KNOWN_EXTENDED_SCHEMA_SAIDS`, `VALID_ECC_CODES`, `VALID_JURISDICTION_CODES` |
+| `services/issuer/app/api/vetter_certification.py` | Create | API router |
+| `services/issuer/app/api/organization.py` | Modify | Add `vetter_certification_said` to response |
+| `services/issuer/app/api/credential.py` | Modify | Add certification edge injection |
+| `services/issuer/app/main.py` | Modify | Register vetter_certification router |
+| `scripts/bootstrap-issuer.py` | Modify | Add VetterCert provisioning step |
+| `services/issuer/tests/test_vetter_certification.py` | Create | CRUD + association + concurrency tests |
+| `services/issuer/tests/test_vetter_constraints.py` | Create | Constraint visibility + edge injection tests |
+
+## Open Questions
+
+None — all prior open questions have been resolved:
+1. **Issuance authority:** Mock GSMA (not QVI). Confirmed by user — GSMA and QVI are independent trust chains.
+2. **Migration strategy:** Explicit one-shot SQL migration, not `create_all()`. Confirmed by reviewer.
+
+## Risks and Mitigations
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| Mock GSMA initialization order conflicts with existing startup | Low | Medium | GSMA init runs after QVI init in same `initialize()` method; sequential and tested |
+| Migration script fails on SQLite (dev) | Low | Low | SQLite branch uses `PRAGMA table_info()` + `ALTER TABLE ADD COLUMN` for existing DBs; fresh DBs handled by `create_all()`. Both paths tested. |
+| Existing tests break from Organization model change | Very Low | Low | Column is nullable with default NULL; no existing code references it |
+| Edge injection SAID computation changes credential content | N/A | N/A | Edge injection happens BEFORE `proving.credential()`, so SAID is computed correctly over full content including edges |
+| Backward compatibility — old dossiers without certification edges | Low | Low | Verifier already distinguishes base vs extended schemas (Sprint 40); no enforcement for base schemas |
+| Concurrent cert issuance bypasses one-per-org guard | Low | Medium | `SELECT FOR UPDATE` row lock held for duration of issuance (admin-only, low-frequency, local KERI ops); second request blocks on lock, then sees non-null pointer and gets 409 |
+

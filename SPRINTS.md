@@ -48,7 +48,7 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 59 | Infrastructure Fixes | COMPLETE | Sprint 53 |
 | 60 | Spec-Compliant VVP Header Flow | COMPLETE | Sprint 58 |
 | 60b | TNAlloc in Dossier + Brand Logo Fix | COMPLETE | Sprint 60 |
-| 61 | Organization Vetter Certification Association | TODO | Sprint 41, 40 |
+| 61 | Organization Vetter Certification Association | DONE | Sprint 41, 40 |
 | 62 | Multichannel Vetter Constraints — End-to-End | TODO | Sprint 61, 44 |
 | 63 | Dossier Creation Wizard UI | DONE | Sprint 41, 32, 60b |
 | 64 | Repository Migration to Rich-Connexions-Ltd | COMPLETE | - |
@@ -3400,7 +3400,7 @@ Identity: eyJhbGci...sig;info=<OOBI-URL>;alg=EdDSA;ppt=vvp
 
 ---
 
-## Sprint 61: Organization Vetter Certification Association (TODO)
+## Sprint 61: Organization Vetter Certification Association (DONE)
 
 **Goal:** Associate organizations with Vetter Certification credentials so that users and API keys acting on behalf of an org inherit the vetter's geographic (ECC) and jurisdictional constraints. This is a prerequisite for Sprint 62, which enforces these constraints at issuance, dossier creation, and signing time.
 

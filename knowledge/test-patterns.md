@@ -129,6 +129,8 @@ Key shared fixtures:
 | `test_vvp_header.py` | VVP header generation |
 | `test_vvp_passport.py` | PASSporT JWT generation |
 | `test_sprint41_multitenancy.py` | Multi-tenancy features |
+| `test_vetter_certification.py` | VetterCert API CRUD, access control, schema guard (22 tests, Sprint 61) |
+| `test_vetter_constraints.py` | Pydantic validation, `resolve_active_vetter_cert()`, edge injection, constants (27 tests, Sprint 61) |
 
 ---
 
@@ -140,3 +142,32 @@ Key shared fixtures:
 4. **Test vectors**: Formal vectors in `tests/vectors/` with schema validation
 5. **libsodium**: Required for crypto tests - always use test runner script
 6. **keripy exclusion**: `keripy/` directory excluded in `pytest.ini` to avoid conflicts
+
+### Sprint 61 Test Patterns
+
+**Direct DB org creation** (`_create_db_org()`): Creates organizations directly in the database via `SessionLocal()`, bypassing KERI infrastructure. Used when tests need an org with an AID but don't need real KERI identity management. Pattern:
+```python
+def _create_db_org(*, aid=None):
+    _init_app_db()
+    from app.db.session import SessionLocal
+    db = SessionLocal()
+    org = Organization(id=str(uuid.uuid4()), name=..., aid=aid or f"E{...}", ...)
+    db.add(org); db.commit(); db.refresh(org)
+    return org
+```
+
+**`_resolve_cert_attributes` mocking**: The vetter API tests mock `_resolve_cert_attributes` to avoid needing real KERI credential store access. Pattern:
+```python
+@patch("app.api.vetter_certification._resolve_cert_attributes", new_callable=AsyncMock)
+async def test_list_certs(mock_resolve, ...):
+    mock_resolve.return_value = {"ecc_targets": [...], "jurisdiction_targets": [...], ...}
+```
+
+**`resolve_active_vetter_cert` mocking**: The constraint tests mock the 7-point validation function. Returns `CredentialInfo(...)` for active cert or `None` for no cert:
+```python
+@patch("app.vetter.service.resolve_active_vetter_cert", new_callable=AsyncMock)
+async def test_constraints(mock_resolve, ...):
+    mock_resolve.return_value = CredentialInfo(said="E...", attributes={...}, ...)
+```
+
+**Schema JSON inspection**: `test_vetter_constraints.py` reads schema JSON files from disk to verify `schema_requires_certification_edge()` detects `oneOf` edge blocks correctly in extended schema definitions

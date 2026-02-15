@@ -62,7 +62,8 @@ The system consists of three services plus shared infrastructure:
 | Directory | Purpose |
 |-----------|---------|
 | `app/main.py` | FastAPI app with all routers |
-| `app/api/` | API routers (health, identity, registry, credential, dossier, auth, organization, tn_mapping, schema, admin, vvp) |
+| `app/api/` | API routers (health, identity, registry, credential, dossier, auth, organization, tn_mapping, schema, admin, vvp, vetter_certification) |
+| `app/vetter/` | Vetter certification business logic and constants (Sprint 61) |
 | `app/keri/` | KERI integration (identity management, witness interaction) |
 | `app/auth/` | Authentication (API keys, sessions, OAuth M365, RBAC) |
 | `app/db/` | Database models and session management |
@@ -163,6 +164,25 @@ Three witnesses run in Docker (or on PBX):
 |---------|----------|
 | (default) | 3 witnesses |
 | `full` | witnesses + verifier + issuer |
+
+### Mock Trust Infrastructure (Issuer)
+
+The issuer bootstraps two parallel mock trust chains on startup:
+
+**QVI Chain** (existing): Mock GLEIF root -> Mock QVI -> LE credentials for orgs
+- State stored in `MockVLEIState.gleif_aid`, `qvi_aid`, `gleif_registry_key`, `qvi_registry_key`
+
+**GSMA Chain** (Sprint 61): Mock GSMA -> VetterCertification credentials for orgs
+- State stored in `MockVLEIState.gsma_aid`, `gsma_registry_key`
+- Bootstrapped by `_bootstrap_gsma()` in `app/org/mock_vlei.py`
+- Config: `MOCK_GSMA_NAME` in `app/config.py`
+- VetterCerts issued via `mock_vlei.issue_vetter_certification()`
+
+**Vetter Module** (`app/vetter/`):
+- `service.py`: `resolve_active_vetter_cert()` performs 7-point validation (existence, schema match, not revoked, issuer is GSMA, issuee matches org AID, not expired). Also contains `issue_vetter_certification()`, `revoke_vetter_certification()`, `get_org_constraints()`.
+- `constants.py`: `VETTER_CERT_SCHEMA_SAID`, `VALID_ECC_CODES`, `VALID_JURISDICTION_CODES`, `KNOWN_EXTENDED_SCHEMA_SAIDS`.
+
+**Extended Schema Edge Injection**: When issuing credentials with extended schemas (Extended LE, Brand, TNAlloc), `_inject_certification_edge()` in `app/api/credential.py` auto-populates the `certification` edge with the org's active VetterCertification SAID. Detection uses `schema_requires_certification_edge()` which checks the schema JSON for `oneOf` edge blocks, with `KNOWN_EXTENDED_SCHEMA_SAIDS` as a fail-closed fallback.
 
 ---
 

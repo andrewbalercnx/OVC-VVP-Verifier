@@ -93,7 +93,7 @@ def wait_for_health(base_url, timeout=120):
 
 def step_reinitialize(base_url, admin_key):
     """Step 1: Re-initialize mock vLEI infrastructure."""
-    print("\n[1/5] Re-initializing mock vLEI infrastructure...")
+    print("\n[1/6] Re-initializing mock vLEI infrastructure...")
     status, body = api_call(
         "POST",
         f"{base_url}/admin/mock-vlei/reinitialize",
@@ -112,7 +112,7 @@ def step_reinitialize(base_url, admin_key):
 
 def step_create_org(base_url, admin_key, org_name):
     """Step 2: Create organization with LE credential."""
-    print(f"\n[2/5] Creating organization '{org_name}'...")
+    print(f"\n[2/6] Creating organization '{org_name}'...")
     status, body = api_call(
         "POST",
         f"{base_url}/organizations",
@@ -137,7 +137,7 @@ def step_create_org(base_url, admin_key, org_name):
 
 def step_create_api_key(base_url, admin_key, org_id):
     """Step 3: Create organization API key."""
-    print(f"\n[3/5] Creating organization API key...")
+    print(f"\n[3/6] Creating organization API key...")
     status, body = api_call(
         "POST",
         f"{base_url}/organizations/{org_id}/api-keys",
@@ -157,6 +157,41 @@ def step_create_api_key(base_url, admin_key, org_id):
     return body
 
 
+def step_issue_vetter_certification(base_url, admin_key, org_id):
+    """Step 3a: Issue VetterCertification for the test org.
+
+    Sprint 61: Issues a VetterCertification credential via the dedicated API.
+    This associates the org with GSMA vetter constraints (ECC + jurisdiction).
+    """
+    print("\n[3a/6] Issuing VetterCertification...")
+
+    status, body = api_call(
+        "POST",
+        f"{base_url}/vetter-certifications",
+        data={
+            "organization_id": org_id,
+            "ecc_targets": ["44", "1"],
+            "jurisdiction_targets": ["GBR", "USA"],
+            "name": "ACME Inc Vetter Certification",
+        },
+        api_key=admin_key,
+        timeout=120,
+    )
+
+    if status == 409:
+        print("  Already has active VetterCertification (skipping)")
+        return None
+
+    if status not in (200, 201):
+        print(f"  WARNING: Failed to issue VetterCertification ({status}): {body}")
+        return None
+
+    print(f"  VetterCert SAID: {body['said'][:24]}...")
+    print(f"  ECC targets:     {body.get('ecc_targets', [])}")
+    print(f"  Jurisdictions:   {body.get('jurisdiction_targets', [])}")
+    return body
+
+
 def step_issue_tn_allocation(base_url, org_api_key, org_aid, registry_name, tn_ranges):
     """Step 3b: Issue TN Allocation credentials for ownership validation.
 
@@ -164,7 +199,7 @@ def step_issue_tn_allocation(base_url, org_api_key, org_aid, registry_name, tn_r
     credential before allowing VVP attestation.
     """
     TN_ALLOC_SCHEMA = "EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ"
-    print(f"\n[3b/5] Issuing TN Allocation credentials ({len(tn_ranges)} ranges)...")
+    print(f"\n[4/6] Issuing TN Allocation credentials ({len(tn_ranges)} ranges)...")
 
     results = []
     for tn_range in tn_ranges:
@@ -207,7 +242,7 @@ def step_issue_brand_credential(base_url, org_api_key, org_aid, registry_name,
     LE_SCHEMA = "ENPXp1vQzRF6JwIuS-mp2U8Uf1MKAIuPchgRiMCe48Mb"
     TN_ALLOC_SCHEMA = "EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ"
 
-    print(f"\n[3c/5] Issuing Extended Brand Credential...")
+    print(f"\n[4a/6] Issuing Extended Brand Credential...")
     print(f"  Brand Name:     {brand_name}")
     print(f"  Logo URL:       {brand_logo_url}")
 
@@ -264,7 +299,7 @@ def step_issue_brand_credential(base_url, org_api_key, org_aid, registry_name,
 def step_create_tn_mapping(base_url, org_api_key, tn, dossier_said, identity_name,
                            brand_name, brand_logo_url):
     """Step 4: Create TN mapping."""
-    print(f"\n[4/5] Creating TN mapping for {tn}...")
+    print(f"\n[5/6] Creating TN mapping for {tn}...")
     status, body = api_call(
         "POST",
         f"{base_url}/tn/mappings",
@@ -310,7 +345,7 @@ def step_create_tn_mapping(base_url, org_api_key, tn, dossier_said, identity_nam
 
 def step_verify_dossier(base_url, org_api_key, dossier_said):
     """Step 5: Verify dossier builds correctly."""
-    print(f"\n[5/5] Verifying dossier build...")
+    print(f"\n[6/6] Verifying dossier build...")
     status, body = api_call(
         "POST",
         f"{base_url}/dossier/build/info",
@@ -409,7 +444,7 @@ def main():
             print("\nFATAL: Mock vLEI re-initialization failed")
             sys.exit(1)
     else:
-        print("\n[1/5] Skipping mock vLEI re-initialization (--skip-reinit)")
+        print("\n[1/6] Skipping mock vLEI re-initialization (--skip-reinit)")
 
     # Step 2: Create organization
     org = step_create_org(base_url, args.admin_key, args.org_name)
@@ -430,6 +465,9 @@ def main():
     org_api_key = key_resp["raw_key"]
     org_aid = org.get("aid", "")
     registry_name = f"{identity_name}-registry"
+
+    # Step 3a: Issue VetterCertification
+    vetter_cert = step_issue_vetter_certification(base_url, args.admin_key, org_id)
 
     # Step 3b: Issue TN Allocation credentials (before brand, so SAIDs can be linked)
     tn_ranges = [
@@ -472,14 +510,14 @@ def main():
                     args.brand_name, args.brand_logo,
                 )
     else:
-        print("\n[4/5] Skipping TN mapping (no dossier root credential)")
+        print("\n[5/6] Skipping TN mapping (no dossier root credential)")
 
     # Step 5: Verify dossier (from brand root)
     dossier_info = None
     if dossier_root_said:
         dossier_info = step_verify_dossier(base_url, org_api_key, dossier_root_said)
     else:
-        print("\n[5/5] Skipping dossier verification (no LE credential SAID)")
+        print("\n[6/6] Skipping dossier verification (no LE credential SAID)")
 
     # Summary
     summary = {

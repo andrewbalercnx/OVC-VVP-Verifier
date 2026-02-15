@@ -39,6 +39,16 @@ The Issuer manages the full lifecycle of VVP credentials: organization managemen
 | `user.py` | `/api/users` | User CRUD |
 | `vvp.py` | `/api/vvp` | VVP attestation creation |
 | `admin.py` | `/api/admin` | Admin operations |
+| `vetter_certification.py` | `/api/vetter-certifications` | VetterCert CRUD + constraint visibility |
+
+## Vetter Certification (Sprint 61)
+
+Organizations can be associated with Vetter Certification credentials that define geographic (ECC) and jurisdictional constraints. Key components:
+
+- **`app/vetter/service.py`** — Business logic: `resolve_active_vetter_cert()` (7-point validation), issue/revoke/constraints
+- **`app/vetter/constants.py`** — `VETTER_CERT_SCHEMA_SAID`, `VALID_ECC_CODES`, `VALID_JURISDICTION_CODES`, `KNOWN_EXTENDED_SCHEMA_SAIDS`
+- **Mock GSMA** — Separate trust chain from QVI. Config: `MOCK_GSMA_NAME` in `app/config.py`. State: `MockVLEIState.gsma_aid` + `gsma_registry_key`
+- **Edge injection** — `_inject_certification_edge()` in `credential.py` auto-populates `certification` edge for extended schemas (Extended LE/Brand/TNAlloc)
 
 ## Authentication
 Three methods:

@@ -47,6 +47,9 @@ class OrganizationResponse(BaseModel):
         None, description="Legal Entity credential SAID"
     )
     registry_key: Optional[str] = Field(None, description="TEL registry prefix")
+    vetter_certification_said: Optional[str] = Field(
+        None, description="Active VetterCertification SAID"
+    )
     enabled: bool = Field(..., description="Whether the organization is enabled")
     created_at: str = Field(..., description="Creation timestamp (ISO8601)")
     updated_at: str = Field(..., description="Last update timestamp (ISO8601)")
@@ -195,6 +198,7 @@ async def create_organization(
         aid=org.aid,
         le_credential_said=org.le_credential_said,
         registry_key=org.registry_key,
+        vetter_certification_said=org.vetter_certification_said,
         enabled=org.enabled,
         created_at=org.created_at.isoformat(),
         updated_at=org.updated_at.isoformat(),
@@ -222,6 +226,7 @@ async def list_organizations(
                 aid=org.aid,
                 le_credential_said=org.le_credential_said,
                 registry_key=org.registry_key,
+                vetter_certification_said=org.vetter_certification_said,
                 enabled=org.enabled,
                 created_at=org.created_at.isoformat(),
                 updated_at=org.updated_at.isoformat(),
@@ -320,6 +325,7 @@ async def get_organization(
         aid=org.aid,
         le_credential_said=org.le_credential_said,
         registry_key=org.registry_key,
+        vetter_certification_said=org.vetter_certification_said,
         enabled=org.enabled,
         created_at=org.created_at.isoformat(),
         updated_at=org.updated_at.isoformat(),
@@ -380,6 +386,7 @@ async def update_organization(
         aid=org.aid,
         le_credential_said=org.le_credential_said,
         registry_key=org.registry_key,
+        vetter_certification_said=org.vetter_certification_said,
         enabled=org.enabled,
         created_at=org.created_at.isoformat(),
         updated_at=org.updated_at.isoformat(),

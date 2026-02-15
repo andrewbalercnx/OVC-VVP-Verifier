@@ -50,6 +50,7 @@ class Organization(Base):
     aid = Column(String(44), nullable=True)  # KERI AID (44 chars for Ed25519)
     le_credential_said = Column(String(44), nullable=True)  # Legal Entity credential SAID
     registry_key = Column(String(44), nullable=True)  # TEL registry prefix
+    vetter_certification_said = Column(String(44), nullable=True)  # Active VetterCert SAID
     enabled = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -233,6 +234,8 @@ class MockVLEIState(Base):
     qvi_aid = Column(String(44), nullable=False)
     qvi_credential_said = Column(String(44), nullable=False)
     qvi_registry_key = Column(String(44), nullable=False)
+    gsma_aid = Column(String(44), nullable=True)
+    gsma_registry_key = Column(String(44), nullable=True)
     initialized_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self) -> str:

@@ -20,7 +20,8 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from app.config import MOCK_GLEIF_NAME, MOCK_QVI_NAME, MOCK_VLEI_ENABLED
+from app.config import MOCK_GLEIF_NAME, MOCK_GSMA_NAME, MOCK_QVI_NAME, MOCK_VLEI_ENABLED
+from app.vetter.constants import VETTER_CERT_SCHEMA_SAID
 from app.db.session import get_db_session
 from app.db.models import MockVLEIState as MockVLEIStateModel
 
@@ -40,6 +41,8 @@ class MockVLEIState:
     qvi_aid: str
     qvi_credential_said: str
     qvi_registry_key: str
+    gsma_aid: str = ""
+    gsma_registry_key: str = ""
     initialized: bool = True
 
 
@@ -99,6 +102,11 @@ class MockVLEIManager:
         if persisted_state:
             log.info("Restored mock vLEI state from database")
             self._state = persisted_state
+            # Sprint 61: Partial-state upgrade — if either GSMA field is empty,
+            # bootstrap GSMA infrastructure on top of existing state
+            if not self._state.gsma_aid or not self._state.gsma_registry_key:
+                log.info("Pre-Sprint 61 state detected — bootstrapping GSMA infrastructure")
+                await self._bootstrap_gsma()
             return self._state
 
         # Import here to avoid circular imports
@@ -181,13 +189,20 @@ class MockVLEIManager:
             qvi_aid=qvi_info.aid,
         )
 
-        # 6. Persist state to database
+        # 7. Create mock GSMA infrastructure (Sprint 61)
+        gsma_aid, gsma_registry_key = await self._create_gsma_identity(
+            identity_mgr, registry_mgr
+        )
+
+        # 8. Persist state to database
         self._state = MockVLEIState(
             gleif_aid=gleif_info.aid,
             gleif_registry_key=gleif_registry_key,
             qvi_aid=qvi_info.aid,
             qvi_credential_said=qvi_cred_said,
             qvi_registry_key=qvi_registry_key,
+            gsma_aid=gsma_aid,
+            gsma_registry_key=gsma_registry_key,
         )
         self._persist_state(self._state)
 
@@ -299,6 +314,123 @@ class MockVLEIManager:
         log.info(f"Issued LE credential for {org_name}: {cred_info.said[:16]}...")
         return cred_info.said
 
+    async def _create_gsma_identity(self, identity_mgr, registry_mgr):
+        """Create mock GSMA identity and registry.
+
+        Returns:
+            Tuple of (gsma_aid, gsma_registry_key)
+        """
+        # Create or get mock-gsma identity
+        gsma_info = await identity_mgr.get_identity_by_name(MOCK_GSMA_NAME)
+        if gsma_info is None:
+            gsma_info = await identity_mgr.create_identity(
+                name=MOCK_GSMA_NAME,
+                transferable=True,
+            )
+            log.info(f"Created mock GSMA identity: {gsma_info.aid[:16]}...")
+        else:
+            log.info(f"Found existing mock GSMA identity: {gsma_info.aid[:16]}...")
+
+        # Create or get mock-gsma registry
+        gsma_registry_name = f"{MOCK_GSMA_NAME}-registry"
+        gsma_registry = registry_mgr.regery.registryByName(gsma_registry_name)
+        if gsma_registry is None:
+            gsma_registry_info = await registry_mgr.create_registry(
+                name=gsma_registry_name,
+                issuer_aid=gsma_info.aid,
+            )
+            gsma_registry_key = gsma_registry_info.registry_key
+            log.info(f"Created mock GSMA registry: {gsma_registry_key[:16]}...")
+        else:
+            gsma_registry_key = gsma_registry.regk
+            log.info(f"Found existing mock GSMA registry: {gsma_registry_key[:16]}...")
+
+        # Publish mock-gsma identity to witnesses
+        try:
+            from app.keri.witness import get_witness_publisher
+            publisher = get_witness_publisher()
+            kel_bytes = await identity_mgr.get_kel_bytes(gsma_info.aid)
+            pub = await publisher.publish_oobi(gsma_info.aid, kel_bytes)
+            log.info(f"Published mock GSMA to witnesses: "
+                     f"{pub.success_count}/{pub.total_count}")
+        except Exception as e:
+            log.warning(f"Failed to publish mock GSMA identity to witnesses: {e}")
+
+        return gsma_info.aid, gsma_registry_key
+
+    async def _bootstrap_gsma(self) -> None:
+        """Bootstrap GSMA infrastructure for pre-Sprint 61 state.
+
+        Called when persisted state exists but GSMA fields are empty.
+        Creates GSMA identity/registry and updates persisted state.
+        """
+        from app.keri.identity import get_identity_manager
+        from app.keri.registry import get_registry_manager
+
+        identity_mgr = await get_identity_manager()
+        registry_mgr = await get_registry_manager()
+
+        gsma_aid, gsma_registry_key = await self._create_gsma_identity(
+            identity_mgr, registry_mgr
+        )
+
+        self._state.gsma_aid = gsma_aid
+        self._state.gsma_registry_key = gsma_registry_key
+        self._persist_state(self._state)
+        log.info("GSMA infrastructure bootstrapped and state updated")
+
+    async def issue_vetter_certification(
+        self,
+        org_aid: str,
+        ecc_targets: list[str],
+        jurisdiction_targets: list[str],
+        name: str,
+        certification_expiry: Optional[str] = None,
+    ) -> str:
+        """Issue a VetterCertification credential from mock-gsma to an org.
+
+        Args:
+            org_aid: Organization's KERI AID (the certified vetter)
+            ecc_targets: E.164 country codes
+            jurisdiction_targets: ISO 3166-1 alpha-3 codes
+            name: Vetter name
+            certification_expiry: Optional expiry date (ISO 8601 UTC)
+
+        Returns:
+            SAID of the issued VetterCertification credential
+
+        Raises:
+            RuntimeError: If mock GSMA is not initialized
+        """
+        if self._state is None or not self._state.gsma_aid:
+            raise RuntimeError("Mock GSMA not initialized")
+
+        from app.keri.issuer import get_credential_issuer
+
+        issuer = await get_credential_issuer()
+
+        # VetterCertification attributes
+        attributes = {
+            "i": org_aid,
+            "ecc_targets": ecc_targets,
+            "jurisdiction_targets": jurisdiction_targets,
+            "name": name,
+        }
+        # NOTE: Expiry stored as "certificationExpiry" (camelCase) in ACDC attributes
+        if certification_expiry:
+            attributes["certificationExpiry"] = certification_expiry
+
+        gsma_registry_name = f"{MOCK_GSMA_NAME}-registry"
+        cred_info, _ = await issuer.issue_credential(
+            registry_name=gsma_registry_name,
+            schema_said=VETTER_CERT_SCHEMA_SAID,
+            attributes=attributes,
+            recipient_aid=org_aid,
+        )
+
+        log.info(f"Issued VetterCertification for {name}: {cred_info.said[:16]}...")
+        return cred_info.said
+
     def _load_persisted_state(self) -> Optional[MockVLEIState]:
         """Load persisted mock vLEI state from database."""
         try:
@@ -311,6 +443,8 @@ class MockVLEIManager:
                         qvi_aid=state_record.qvi_aid,
                         qvi_credential_said=state_record.qvi_credential_said,
                         qvi_registry_key=state_record.qvi_registry_key,
+                        gsma_aid=state_record.gsma_aid or "",
+                        gsma_registry_key=state_record.gsma_registry_key or "",
                     )
         except Exception as e:
             # Database may not be initialized yet
@@ -331,6 +465,8 @@ class MockVLEIManager:
                     qvi_aid=state.qvi_aid,
                     qvi_credential_said=state.qvi_credential_said,
                     qvi_registry_key=state.qvi_registry_key,
+                    gsma_aid=state.gsma_aid or None,
+                    gsma_registry_key=state.gsma_registry_key or None,
                 )
                 db.add(state_record)
                 log.info("Persisted mock vLEI state to database")

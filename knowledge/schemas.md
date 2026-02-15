@@ -22,6 +22,10 @@ This document catalogs all credential schemas, their SAIDs, and governance rules
 | **DE** (Delegate Entity) | `EL7irIKYJL9Io0hhKSGWI4OznhwC7qgJG5Qf4aEs6j0o` | Delegates authority (Provenant demo) |
 | **TNAlloc** (TN Allocation) | `EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ` | Allocates telephone numbers |
 | **Brand** (Brand Owner) | *(project-specific)* | Associates brand identity |
+| **VetterCertification** | `EOefmhWU2qTpMiEQhXohE6z3xRXkpLloZdhTYIenlD4H` | Certifies vetter for ECC/jurisdiction constraints (Sprint 61) |
+| **Extended LE** | `EPknTwPpSZi379molapnuN4V5AyhCxz_6TLYdiVNWvbV` | LE with `certification` edge to VetterCert (Sprint 61) |
+| **Extended Brand** | `EK7kPhs5YkPsq9mZgUfPYfU-zq5iSlU8XVYJWqrVPk6g` | Brand with `certification` edge to VetterCert (Sprint 61) |
+| **Extended TNAlloc** | `EGUh_fVLbjfkYFb5zAsY2Rqq0NqwnD3r5jsdKWLTpU8_` | TNAlloc with `certification` edge to VetterCert (Sprint 61) |
 
 ### Schema SAID Lookup
 Credential type is determined primarily by schema SAID, with edge-name heuristic as fallback:
@@ -33,7 +37,16 @@ SCHEMA_SAID_MAP = {
     "EJrcLKzq4d1PF...": "LE",                 # Provenant demo
     "EL7irIKYJL9Io...": "DE",                 # Provenant demo
     "EFvnoHDY7I-kaBBe...": "TNAlloc",         # Base TN Allocation
+    "EOefmhWU2qTpMiEQ...": "VetterCert",      # VetterCertification (Sprint 61)
     ...
+}
+
+# Extended schemas — schemas with a `certification` edge to VetterCert (Sprint 61)
+# Detected via oneOf edge block in schema JSON or via KNOWN_EXTENDED_SCHEMA_SAIDS fallback
+KNOWN_EXTENDED_SCHEMA_SAIDS = {
+    "EPknTwPpSZi379mo...": "Extended LE",
+    "EK7kPhs5YkPsq9mZ...": "Extended Brand",
+    "EGUh_fVLbjfkYFb5...": "Extended TNAlloc",
 }
 
 # Fallback: Edge name → credential type (heuristic)
@@ -85,6 +98,19 @@ GLEIF Root (trusted anchor)
 **Note:** The Brand Credential is typically the dossier root SAID. The dossier builder
 does a DFS edge walk from the root, so TNAlloc credentials must be linked as edges of
 the brand credential to be included in the dossier.
+
+### VetterCertification Trust Chain (Sprint 61)
+```
+Mock GSMA (trust anchor, separate from QVI chain)
+  └── VetterCertification (issued to org AID)
+        ├── ecc_targets: ["44", "1"]        # Allowed E.164 country codes
+        ├── jurisdiction_targets: ["GBR"]   # Allowed ISO 3166-1 alpha-3
+        └── certificationExpiry: "..."      # Optional expiry
+```
+Extended schemas (Extended LE, Extended Brand, Extended TNAlloc) have a `certification`
+edge that links to the org's VetterCertification. This edge is auto-injected by
+`_inject_certification_edge()` during credential issuance when the schema has a
+`oneOf` edge block containing a `certification` variant.
 
 ### Edge Rules (Semantic Validation)
 

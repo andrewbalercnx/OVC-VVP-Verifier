@@ -4,7 +4,7 @@ Pydantic models for API requests and responses.
 """
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # =============================================================================
@@ -288,6 +288,11 @@ class IssueCredentialRequest(BaseModel):
     rules: Optional[dict] = Field(None, description="Rules section")
     private: bool = Field(False, description="Add privacy-preserving nonces")
     publish_to_witnesses: bool = Field(True, description="Publish TEL to witnesses")
+    organization_id: Optional[str] = Field(
+        None,
+        description="Organization context for cross-org admin operations. "
+                    "Required for extended schemas when principal has no org.",
+    )
 
 
 class CredentialResponse(BaseModel):
@@ -612,3 +617,89 @@ class TNLookupResponse(BaseModel):
     brand_name: Optional[str] = Field(None, description="Brand name")
     brand_logo_url: Optional[str] = Field(None, description="Brand logo URL")
     error: Optional[str] = Field(None, description="Error message if not found")
+
+
+# =============================================================================
+# Sprint 61: Vetter Certification Models
+# =============================================================================
+
+
+class VetterCertificationCreateRequest(BaseModel):
+    """Request to issue a VetterCertification credential."""
+
+    organization_id: str = Field(..., description="Target org UUID")
+    ecc_targets: list[str] = Field(..., min_length=1, description="E.164 country codes")
+    jurisdiction_targets: list[str] = Field(
+        ..., min_length=1, description="ISO 3166-1 alpha-3 codes"
+    )
+    name: str = Field(..., min_length=1, max_length=255, description="Vetter name")
+    certification_expiry: Optional[str] = Field(
+        None,
+        description="Expiry date (ISO8601 UTC). Stored as 'certificationExpiry' in ACDC.",
+        alias="certificationExpiry",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("ecc_targets")
+    @classmethod
+    def validate_ecc_targets(cls, v):
+        from app.vetter.constants import VALID_ECC_CODES
+        for code in v:
+            if code not in VALID_ECC_CODES:
+                raise ValueError(
+                    f"Invalid ECC target: {code}. Must be a valid E.164 country code."
+                )
+        return v
+
+    @field_validator("jurisdiction_targets")
+    @classmethod
+    def validate_jurisdiction_targets(cls, v):
+        from app.vetter.constants import VALID_JURISDICTION_CODES
+        for code in v:
+            if code not in VALID_JURISDICTION_CODES:
+                raise ValueError(
+                    f"Invalid jurisdiction: {code}. Must be a valid ISO 3166-1 alpha-3 code."
+                )
+        return v
+
+
+class VetterCertificationResponse(BaseModel):
+    """Response with VetterCertification credential info."""
+
+    said: str
+    issuer_aid: str
+    vetter_aid: str
+    organization_id: str
+    organization_name: str
+    ecc_targets: list[str]
+    jurisdiction_targets: list[str]
+    name: str
+    certification_expiry: Optional[str] = Field(
+        None,
+        description="Expiry from ACDC 'certificationExpiry' attribute",
+        alias="certificationExpiry",
+    )
+    status: str
+    created_at: str
+
+    model_config = {"populate_by_name": True}
+
+
+class VetterCertificationListResponse(BaseModel):
+    """List response for VetterCertification credentials."""
+
+    certifications: list[VetterCertificationResponse]
+    count: int
+
+
+class OrganizationConstraintsResponse(BaseModel):
+    """Constraint visibility response for an organization."""
+
+    organization_id: str
+    organization_name: str
+    vetter_certification_said: Optional[str] = None
+    ecc_targets: Optional[list[str]] = None
+    jurisdiction_targets: Optional[list[str]] = None
+    certification_status: Optional[str] = None
+    certification_expiry: Optional[str] = None

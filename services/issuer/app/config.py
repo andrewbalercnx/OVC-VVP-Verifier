@@ -90,6 +90,7 @@ DATABASE_URL: str = _get_database_url()
 MOCK_VLEI_ENABLED: bool = os.getenv("VVP_MOCK_VLEI_ENABLED", "true").lower() == "true"
 MOCK_GLEIF_NAME: str = os.getenv("VVP_MOCK_GLEIF_NAME", "mock-gleif")
 MOCK_QVI_NAME: str = os.getenv("VVP_MOCK_QVI_NAME", "mock-qvi")
+MOCK_GSMA_NAME: str = os.getenv("VVP_MOCK_GSMA_NAME", "mock-gsma")
 
 
 # =============================================================================
@@ -180,6 +181,20 @@ DASHBOARD_REQUEST_TIMEOUT: float = float(os.getenv("VVP_DASHBOARD_REQUEST_TIMEOU
 
 ADMIN_ENDPOINT_ENABLED: bool = os.getenv("ADMIN_ENDPOINT_ENABLED", "true").lower() == "true"
 SERVICE_PORT: int = int(os.getenv("VVP_ISSUER_PORT", "8001"))
+
+# Sprint 62: Vetter constraint enforcement
+# When false (default): log warnings for constraint violations, proceed normally
+# When true: reject requests with 403 for constraint violations
+ENFORCE_VETTER_CONSTRAINTS: bool = os.getenv(
+    "VVP_ENFORCE_VETTER_CONSTRAINTS", "false"
+).lower() == "true"
+
+# Sprint 62: Constraint bypass gate for skip_vetter_constraints flag
+# Must be explicitly enabled for skip_vetter_constraints=True to work.
+# Only set to true in test/staging environments. Production should never enable this.
+ALLOW_CONSTRAINT_BYPASS: bool = os.getenv(
+    "VVP_ALLOW_CONSTRAINT_BYPASS", "false"
+).lower() == "true"
 
 # VVP Header creation settings
 # Base URL for this issuer service (used to construct dossier URLs)

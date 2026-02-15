@@ -301,6 +301,81 @@ Pre-flight readiness assessment for dossier creation. Analyzes available credent
 - `403 Forbidden`: Non-admin accessing another org's readiness
 - `404 Not Found`: Organization does not exist
 
+### Vetter Certifications (Sprint 61)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/vetter-certifications` | Issue VetterCertification (admin-only) |
+| `GET` | `/vetter-certifications` | List VetterCertifications (admin-only, optional `?organization_id` filter) |
+| `GET` | `/vetter-certifications/{said}` | Get VetterCertification by SAID (system role or org member) |
+| `DELETE` | `/vetter-certifications/{said}` | Revoke VetterCertification (admin-only) |
+| `GET` | `/organizations/{org_id}/constraints` | Get vetter constraints for org (system role or org member) |
+| `GET` | `/users/me/constraints` | Current user's org constraints (any auth) |
+
+#### POST /vetter-certifications
+
+Issues a VetterCertification ACDC from mock GSMA to the org's AID. Links the credential SAID to `Organization.vetter_certification_said`. Rejects if org already has an active (non-revoked, non-expired) cert (409).
+
+**Auth:** `issuer:admin`
+
+**Request:** `VetterCertificationCreateRequest`
+```json
+{
+  "organization_id": "uuid",
+  "ecc_targets": ["44", "1"],
+  "jurisdiction_targets": ["GBR", "USA"],
+  "name": "ACME Vetter",
+  "certificationExpiry": "2027-01-01T00:00:00Z"
+}
+```
+
+**Response:** `VetterCertificationResponse`
+```json
+{
+  "said": "E...",
+  "issuer_aid": "E... (mock GSMA AID)",
+  "vetter_aid": "E... (org AID)",
+  "organization_id": "uuid",
+  "organization_name": "ACME Corp",
+  "ecc_targets": ["44", "1"],
+  "jurisdiction_targets": ["GBR", "USA"],
+  "name": "ACME Vetter",
+  "certificationExpiry": "2027-01-01T00:00:00Z",
+  "status": "issued",
+  "created_at": "2026-02-15T12:00:00Z"
+}
+```
+
+**Validation:**
+- `ecc_targets`: Must be valid E.164 country calling codes (ITU-T assigned)
+- `jurisdiction_targets`: Must be valid ISO 3166-1 alpha-3 codes
+- Both lists must be non-empty
+
+#### GET /organizations/{org_id}/constraints
+
+Returns the parsed constraints from the org's active VetterCertification. Null fields if no valid cert.
+
+**Auth:** System role (`admin`/`readonly`/`operator`) or org membership
+
+**Response:** `OrganizationConstraintsResponse`
+```json
+{
+  "organization_id": "uuid",
+  "organization_name": "ACME Corp",
+  "vetter_certification_said": "E...",
+  "ecc_targets": ["44", "1"],
+  "jurisdiction_targets": ["GBR", "USA"],
+  "certification_status": "issued",
+  "certification_expiry": "2027-01-01T00:00:00Z"
+}
+```
+
+#### GET /users/me/constraints
+
+Convenience endpoint — resolves current user's org and returns constraints. Returns 404 if user has no org.
+
+**Auth:** Any authenticated user
+
 ### TN Mappings (`/api/tn`)
 
 | Method | Path | Purpose |

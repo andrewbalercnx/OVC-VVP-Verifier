@@ -137,5 +137,9 @@ def init_database() -> None:
             db_dir.mkdir(parents=True, exist_ok=True)
             log.info(f"Ensured database directory exists: {db_dir}")
 
+    # Run explicit column migrations before create_all (Sprint 61)
+    from app.db.migrations.sprint61_vetter_cert import run_migrations
+    run_migrations(engine)
+
     Base.metadata.create_all(bind=engine)
     log.info("Database tables created successfully")

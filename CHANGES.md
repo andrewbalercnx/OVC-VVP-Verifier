@@ -1,5 +1,54 @@
 # VVP Verifier Change Log
 
+## Sprint 61: Organization Vetter Certification Association
+
+**Date:** 2026-02-15
+**Status:** Complete
+
+### Summary
+
+Associates organizations with Vetter Certification credentials so that geographic (ECC) and jurisdictional constraints propagate through the credential chain. Introduces a mock GSMA certification authority (separate trust chain from QVI), dedicated VetterCert lifecycle API, automatic certification edge injection for extended schemas, and constraint visibility endpoints.
+
+### Key Changes
+
+- **Mock GSMA infrastructure**: New certification authority identity (`mock-gsma`) + registry (`mock-gsma-registry`) for issuing VetterCertification credentials. Separate trust chain from GLEIF→QVI→LE.
+- **Partial-state upgrade**: Existing deployments auto-bootstrap GSMA infrastructure on next startup if `gsma_aid` or `gsma_registry_key` is NULL.
+- **DB migration**: Added `organizations.vetter_certification_said`, `mock_vlei_state.gsma_aid`, `mock_vlei_state.gsma_registry_key` columns with idempotent migration (PostgreSQL + SQLite).
+- **VetterCert CRUD API**: POST/GET/DELETE `/vetter-certifications`, GET `/vetter-certifications/{said}` with org-scoped access control.
+- **Constraint visibility**: GET `/organizations/{org_id}/constraints` and GET `/users/me/constraints` — resolves active cert from KERI store.
+- **resolve_active_vetter_cert()**: 7-point validation (pointer, KERI store, schema, revocation status, GSMA issuer, issuee binding, expiry). Fail-closed when GSMA state unavailable.
+- **Certification edge injection**: `_inject_certification_edge()` auto-populates `certification` edge for extended schemas (Extended LE, Brand, TNAlloc) during `POST /credential/issue`. Validates both `n` (SAID) and `s` (schema) fields.
+- **Schema guard**: `POST /credential/issue` rejects VetterCertification schema SAID — must use dedicated endpoint.
+- **Admin cross-org support**: System admins can specify `organization_id` on `POST /credential/issue` for extended schemas. 404 for unknown orgs. Audit trail records both caller and target org.
+- **Bootstrap**: Added `step_issue_vetter_certification()` to `scripts/bootstrap-issuer.py`.
+- **Org response**: `vetter_certification_said` included in GET/list organization responses.
+
+### Files Changed
+
+| File | Action | Summary |
+|------|--------|---------|
+| `services/issuer/app/vetter/__init__.py` | Created | Vetter package |
+| `services/issuer/app/vetter/service.py` | Created | VetterCert business logic |
+| `services/issuer/app/vetter/constants.py` | Created | Schema SAIDs, ECC codes, jurisdiction codes |
+| `services/issuer/app/api/vetter_certification.py` | Created | Vetter cert API router |
+| `services/issuer/app/db/migrations/__init__.py` | Created | Migrations package |
+| `services/issuer/app/db/migrations/sprint61_vetter_cert.py` | Created | Column migration |
+| `services/issuer/app/db/models.py` | Modified | Organization + MockVLEIState columns |
+| `services/issuer/app/db/session.py` | Modified | Run migration before create_all |
+| `services/issuer/app/config.py` | Modified | MOCK_GSMA_NAME constant |
+| `services/issuer/app/org/mock_vlei.py` | Modified | GSMA bootstrap + issue_vetter_certification |
+| `services/issuer/app/api/models.py` | Modified | VetterCert + Constraint Pydantic models |
+| `services/issuer/app/api/credential.py` | Modified | Edge injection, schema guard, cross-org |
+| `services/issuer/app/api/organization.py` | Modified | vetter_certification_said in responses |
+| `services/issuer/app/main.py` | Modified | Register vetter_certification router |
+| `scripts/bootstrap-issuer.py` | Modified | VetterCert provisioning step |
+| `services/issuer/tests/test_vetter_certification.py` | Created | 22 API endpoint tests |
+| `services/issuer/tests/test_vetter_constraints.py` | Created | 27 unit/integration tests |
+
+### Test Results
+
+49 tests — all passing.
+
 ## Sprint 65: Schema-Aware Credential Management
 
 **Date:** 2026-02-14
