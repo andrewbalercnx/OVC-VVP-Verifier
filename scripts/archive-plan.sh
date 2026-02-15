@@ -95,6 +95,17 @@ else
     echo "==> No $REVIEW_BASENAME to remove (already clean)."
 fi
 
+# --- Step 3b: Remove round tracking state files ---
+
+PLAN_ROUND_FILE="$REPO_ROOT/.review-round-sprint${SPRINT_NUM}-plan"
+CODE_ROUND_FILE="$REPO_ROOT/.review-round-sprint${SPRINT_NUM}-code"
+for rf in "$PLAN_ROUND_FILE" "$CODE_ROUND_FILE"; do
+    if [ -f "$rf" ]; then
+        echo "==> Removing round state: $(basename "$rf")"
+        rm "$rf"
+    fi
+done
+
 # --- Step 4: Remind about CHANGES.md ---
 
 echo ""

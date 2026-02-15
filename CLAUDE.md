@@ -473,10 +473,14 @@ Files are **namespaced by sprint number** so multiple sprints can run concurrent
 
 | File | Purpose | Owner |
 |------|---------|-------|
-| `PLAN_Sprint<N>.md` | Current phase design with rationale | Editor |
-| `REVIEW_Sprint<N>.md` | Reviewer feedback on plans and code | Reviewer (Codex) |
+| `PLAN_Sprint<N>.md` | Current phase design with rationale and revision history | Editor |
+| `REVIEW_Sprint<N>.md` | Reviewer feedback with round number (R1, R2, ...) | Reviewer (Codex) |
+| `.review-round-sprint<N>-plan` | Plan review round counter (transient, gitignored) | Script |
+| `.review-round-sprint<N>-code` | Code review round counter (transient, gitignored) | Script |
 | `Documentation/archive/PLAN_Sprint<N>.md` | Archive of accepted plans | Both |
 | `CHANGES.md` | Change log with commit SHAs | Both |
+
+**Round tracking:** The review script (`request-review.sh`) automatically tracks the round number per sprint per review type (plan/code). Each invocation increments the counter and includes the round number in the REVIEW file header (e.g., `R1`, `R2`). The PLAN file includes a **Revision History** section at the bottom that the Editor updates when revising the plan, documenting what changed in each round. Round state files are cleaned up by `archive-plan.sh`.
 
 **Concurrency:** Sprint 35 uses `PLAN_Sprint35.md` / `REVIEW_Sprint35.md`, Sprint 36 uses `PLAN_Sprint36.md` / `REVIEW_Sprint36.md`, etc. Two sprints can be in-flight simultaneously without clobbering each other's files. The scripts derive filenames from the sprint number argument automatically.
 
@@ -546,7 +550,15 @@ What tests will be written and what they verify.
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
 | ... | ... | ... | ... |
+
+## Revision History
+
+| Round | Date | Changes |
+|-------|------|---------|
+| R1 | YYYY-MM-DD | Initial draft |
 ```
+
+The **Revision History** table at the bottom of the PLAN file tracks revisions across review rounds. The Editor appends a row each time the plan is revised in response to reviewer feedback. This provides a clear audit trail of how the plan evolved.
 
 #### Step 1.2: Request Plan Review
 
@@ -558,12 +570,13 @@ Run the review script to invoke the Reviewer (Codex) automatically:
 ```
 
 The script:
-1. Assembles a prompt instructing the Reviewer to read `CHANGES.md`, `Documentation/PLAN_history.md`, and `PLAN_Sprint<N>.md`
-2. Invokes Codex (or the configured `VVP_REVIEWER`) with the prompt
-3. Codex writes its verdict and findings to `REVIEW_Sprint<N>.md`
-4. Reports the verdict and next steps
+1. Increments the plan review round counter (stored in `.review-round-sprint<N>-plan`)
+2. Assembles a prompt instructing the Reviewer to read `CHANGES.md`, `Documentation/PLAN_history.md`, and `PLAN_Sprint<N>.md`
+3. Invokes Codex (or the configured `VVP_REVIEWER`) with the prompt, including the round number
+4. Codex writes its verdict and findings to `REVIEW_Sprint<N>.md` with the round number in the header (e.g., `R1`, `R2`)
+5. Reports the verdict, round number, and next steps
 
-After the script completes, read `REVIEW_Sprint<N>.md` to see the verdict.
+After the script completes, read `REVIEW_Sprint<N>.md` to see the verdict. The review file header will show the round number (e.g., `## Plan Review: Sprint 35 - Credential Issuance (R1)`).
 
 #### Step 1.3: Human Review Gate (if Human Review ON)
 
@@ -573,8 +586,9 @@ If human review mode is ON (check `memory/human-review-mode`), perform the human
 
 If Reviewer returns `CHANGES_REQUESTED`:
 1. Editor revises `PLAN_Sprint<N>.md` addressing all required changes
-2. Re-run `./scripts/request-review-with-context.sh plan <N> "<title>"`
-3. Repeat from Step 1.3 until `APPROVED`
+2. Editor appends a row to the **Revision History** table in `PLAN_Sprint<N>.md` documenting what changed (e.g., `| R2 | 2025-01-15 | Added issuer-binding enforcement per R1 finding [High] |`)
+3. Re-run `./scripts/request-review-with-context.sh plan <N> "<title>"` (the script auto-increments the round counter)
+4. Repeat from Step 1.3 until `APPROVED`
 
 ---
 
@@ -626,12 +640,13 @@ Run the review script to invoke the Reviewer (Codex) automatically:
 ```
 
 The script:
-1. Detects changed files from git history
-2. Assembles a prompt instructing the Reviewer to read `CHANGES.md`, `PLAN_Sprint<N>.md`, and the changed files
-3. Invokes Codex, which writes its verdict to `REVIEW_Sprint<N>.md`
-4. Reports the verdict and next steps
+1. Increments the code review round counter (stored in `.review-round-sprint<N>-code`)
+2. Detects changed files from git history
+3. Assembles a prompt instructing the Reviewer to read `CHANGES.md`, `PLAN_Sprint<N>.md`, and the changed files
+4. Invokes Codex, which writes its verdict to `REVIEW_Sprint<N>.md` with the round number in the header
+5. Reports the verdict, round number, and next steps
 
-After the script completes, read `REVIEW_Sprint<N>.md` to see the verdict.
+After the script completes, read `REVIEW_Sprint<N>.md` to see the verdict. The review file header will show the round number (e.g., `## Code Review: Sprint 35 - Credential Issuance (R1)`).
 
 #### Step 2.4: Human Review Gate (if Human Review ON)
 
@@ -660,6 +675,7 @@ This script automatically:
 1. Appends `PLAN_Sprint<N>.md` content to `Documentation/PLAN_history.md` under a sprint header
 2. Moves `PLAN_Sprint<N>.md` to `Documentation/archive/PLAN_Sprint<N>.md`
 3. Removes `REVIEW_Sprint<N>.md`
+4. Removes round tracking state files (`.review-round-sprint<N>-plan`, `.review-round-sprint<N>-code`)
 
 #### Step 3.2: Update CHANGES.md and Commit
 

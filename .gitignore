@@ -47,6 +47,7 @@ htmlcov/
 # Pair programming working files (transient, per-sprint)
 PLAN_Sprint*.md
 REVIEW_Sprint*.md
+.review-round-*
 
 # Generated context packs (transient)
 codex/context/

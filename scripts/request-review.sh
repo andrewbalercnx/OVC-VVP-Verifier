@@ -57,6 +57,13 @@ HISTORY_FILE="$REPO_ROOT/Documentation/PLAN_history.md"
 PLAN_BASENAME="PLAN_Sprint${SPRINT_NUM}.md"
 REVIEW_BASENAME="REVIEW_Sprint${SPRINT_NUM}.md"
 
+# ---------- round tracking ----------
+
+ROUND_FILE="$REPO_ROOT/.review-round-sprint${SPRINT_NUM}-${REVIEW_TYPE}"
+ROUND=$(cat "$ROUND_FILE" 2>/dev/null || echo "0")
+ROUND=$((ROUND + 1))
+echo "$ROUND" > "$ROUND_FILE"
+
 # ---------- validate ----------
 
 if ! command -v codex &>/dev/null && [ -z "${VVP_REVIEWER:-}" ]; then
@@ -77,12 +84,21 @@ fi
 
 REVIEWER="${VVP_REVIEWER:-codex exec --full-auto}"
 
+# ---------- round context ----------
+
+if [ "$ROUND" -eq 1 ]; then
+    ROUND_CONTEXT="This is the first review of this ${REVIEW_TYPE}."
+else
+    ROUND_CONTEXT="This is round ${ROUND}. The plan has been revised to address findings from previous rounds. Check that prior issues are resolved and look for any new issues introduced by the revisions. Refer to the Revision History section at the bottom of the plan for changes made since the last round."
+fi
+
 # ---------- build prompt ----------
 
 build_plan_review_prompt() {
     cat <<PROMPT
 You are a senior code architect acting as Reviewer in a pair programming workflow.
-You are reviewing Sprint ${SPRINT_NUM}: ${TITLE}.
+You are reviewing Sprint ${SPRINT_NUM}: ${TITLE} — this is review round ${ROUND}.
+${ROUND_CONTEXT}
 
 INSTRUCTIONS:
 1. Read these files for project context (in order):
@@ -102,8 +118,9 @@ Do NOT modify any other files. Do NOT run tests or execute code.
 
 OUTPUT FORMAT (write exactly this structure to ${REVIEW_BASENAME}):
 
-## Plan Review: Sprint ${SPRINT_NUM} - ${TITLE}
+## Plan Review: Sprint ${SPRINT_NUM} - ${TITLE} (R${ROUND})
 
+**Round:** ${ROUND}
 **Verdict:** APPROVED | CHANGES_REQUESTED
 
 ### Spec Compliance
@@ -139,7 +156,8 @@ build_code_review_prompt() {
 
     cat <<PROMPT
 You are a senior code architect acting as Reviewer in a pair programming workflow.
-You are reviewing the implementation for Sprint ${SPRINT_NUM}: ${TITLE}.
+You are reviewing the implementation for Sprint ${SPRINT_NUM}: ${TITLE} — this is review round ${ROUND}.
+${ROUND_CONTEXT}
 
 INSTRUCTIONS:
 1. Read these files for context:
@@ -162,8 +180,9 @@ Do NOT modify any source files.
 
 OUTPUT FORMAT (write exactly this structure to ${REVIEW_BASENAME}):
 
-## Code Review: Sprint ${SPRINT_NUM} - ${TITLE}
+## Code Review: Sprint ${SPRINT_NUM} - ${TITLE} (R${ROUND})
 
+**Round:** ${ROUND}
 **Verdict:** APPROVED | CHANGES_REQUESTED | PLAN_REVISION_REQUIRED
 
 ### Implementation Assessment
@@ -196,10 +215,11 @@ else
     PROMPT=$(build_code_review_prompt)
 fi
 
-echo "==> Requesting ${REVIEW_TYPE} review for Sprint ${SPRINT_NUM}: ${TITLE}"
+echo "==> Requesting ${REVIEW_TYPE} review for Sprint ${SPRINT_NUM}: ${TITLE} (Round ${ROUND})"
 echo "    Reviewer: ${REVIEWER}"
 echo "    Plan:     ${PLAN_BASENAME}"
 echo "    Review:   ${REVIEW_BASENAME}"
+echo "    Round:    ${ROUND}"
 echo ""
 
 # Capture the review file's timestamp before invocation
