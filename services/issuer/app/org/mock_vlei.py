@@ -107,12 +107,24 @@ class MockVLEIManager:
             # bootstrap GSMA infrastructure on top of existing state
             if not self._state.gsma_aid or not self._state.gsma_registry_key:
                 log.info("Pre-Sprint 61 state detected — bootstrapping GSMA infrastructure")
-                await self._bootstrap_gsma()
+                try:
+                    await self._bootstrap_gsma()
+                except Exception as e:
+                    log.error(
+                        f"GSMA bootstrap failed (non-fatal): {e}. "
+                        f"Vetter certification features will be unavailable."
+                    )
             # Sprint 62: Partial-state upgrade — if governance credential is missing,
             # issue it on top of existing GSMA infrastructure
             if self._state.gsma_aid and not self._state.gsma_governance_said:
                 log.info("Pre-Sprint 62 state detected — issuing GSMA governance credential")
-                await self._bootstrap_governance_credential()
+                try:
+                    await self._bootstrap_governance_credential()
+                except Exception as e:
+                    log.error(
+                        f"GSMA governance bootstrap failed (non-fatal): {e}. "
+                        f"Governance features will be unavailable."
+                    )
             return self._state
 
         # Import here to avoid circular imports
