@@ -40,7 +40,7 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 51 | Verification Result Caching | COMPLETE | Sprint 50 |
 | 52 | Central Service Dashboard | COMPLETE | Sprint 49 |
 | 53 | E2E System Validation & Cache Timing | COMPLETE | Sprint 50, 52 |
-| 54 | Open-Source Standalone VVP Verifier | TODO | Sprints 1-25, 44 |
+| 54 | Open-Source Standalone VVP Verifier | COMPLETE | Sprints 1-25, 44 |
 | 55 | README Update & User Manual Requirements | COMPLETE | Sprint 53 |
 | 56 | System Operator User Manual | COMPLETE | Sprint 55 |
 | 57 | Complete STIR Header Compliance | COMPLETE | Sprint 44, 42 |
@@ -2890,9 +2890,11 @@ Sprint 49 introduced shared dossier caching (5-minute TTL, LRU 1000 entries) and
 
 ---
 
-## Sprint 54: Open-Source Standalone VVP Verifier
+## Sprint 54: Open-Source Standalone VVP Verifier (COMPLETE)
 
 **Goal:** Create a new standalone repository suitable for open-source release containing a self-contained SIP redirect VVP verifier. The repository should be simple enough for anyone to take and build their own VVP verifier, with minimal documentation and logging, and no internal project tooling.
+
+**Repository:** https://github.com/Rich-Connexions-Ltd/OVC-VVP-Verifier
 
 **Prerequisites:** Sprints 1-25 (VVP Verifier implementation), Sprint 44 (SIP Redirect Verification Service) for SIP protocol patterns.
 
@@ -4474,6 +4476,7 @@ The knowledge base serves three audiences:
 | `knowledge/verification-pipeline.md` | 3 | ~Sprint 40 | Missing vetter constraint phase, dossier public access flow |
 | `knowledge/keri-primer.md` | 3 | ~Sprint 40 | Likely still accurate — verify |
 | `knowledge/dossier-parsing-algorithm.md` | 3 | Sprint 59 | Likely current — verify |
+| `knowledge/dossier-creation-guide.md` | 3 | NEW | Does not exist — create with both dossier models (with/without vetter cert) |
 | `codex/skills/keri-acdc-vlei-vvp/references/*.md` | 4 | ~Sprint 53 | Source map, VVP reference outdated |
 
 ### Deliverables
@@ -4555,6 +4558,29 @@ These are the most impactful — loaded automatically when working in a service 
 
 - [ ] **`knowledge/dossier-parsing-algorithm.md`** — Verify accuracy
 
+- [ ] **`knowledge/dossier-creation-guide.md`** — **NEW FILE** — Step-by-step guide for creating a complete dossier, covering both operational models:
+
+  **Model 1: Without Vetter Certification (current real-world scheme)**
+  - Prerequisites: Organization with AID, registry, LE credential, Brand credential, TNAlloc credential(s)
+  - Credential chain: QVI → LE → Brand, TNAlloc (base schemas, no `certification` edges)
+  - Step-by-step: create org → issue LE → issue Brand → issue TNAlloc(s) → assemble dossier with edge links → dossier ready for PASSporT signing
+  - Schema SAIDs used: base LE (`ENPXp1vQ...`), base Brand (`EBIFDhtS...`), base TNAlloc (`EFvnoHDY7I-...`)
+  - Edge structure: dossier edges point to LE, Brand, TNAlloc directly (no vetter backlinks)
+  - API calls: `POST /credential/issue` for each credential, `POST /dossier/create` for assembly
+  - How verification works: verifier checks credential chain, skips vetter constraint checks for base schemas
+
+  **Model 2: With Vetter Certification (Sprint 61/62 scheme)**
+  - Prerequisites: same as Model 1 plus a VetterCertification credential issued by GSMA to the org's AID
+  - Credential chain: GSMA → VetterCertification → Extended LE/Brand/TNAlloc (each with `certification` edge backlink)
+  - Step-by-step: create org → issue VetterCertification (via `POST /vetter-certifications`) → issue Extended LE (auto-injects `certification` edge) → issue Extended Brand (auto-injects) → issue Extended TNAlloc(s) (auto-injects) → assemble dossier → dossier ready
+  - Schema SAIDs used: Extended LE (`EPknTwPp...`), Extended Brand (`EK7kPhs5...`), Extended TNAlloc (`EGUh_fVL...`), VetterCertification (`EOefmhWU...`)
+  - Edge structure: each credential has `certification` edge pointing to VetterCertification SAID; dossier edges point to extended credentials
+  - Constraint semantics: ECC Targets (E.164 country codes for TN right-to-use), Jurisdiction Targets (ISO 3166-1 alpha-3 for incorporation and brand assertion)
+  - How verification works: verifier follows `certification` edges, resolves VetterCertification, validates ECC targets against TN country code and jurisdiction targets against LE country / brand assertionCountry
+  - What happens when constraints fail: status bits in verification response indicate which checks failed; client decides routing policy
+
+  **Comparison table:** Side-by-side summary of both models (schemas, trust chains, edge structures, enforcement points, verification behavior)
+
 #### Phase 3: Tier 1 Root Files
 
 - [ ] **`CLAUDE.md`** — Incremental update:
@@ -4606,6 +4632,7 @@ These are the most impactful — loaded automatically when working in a service 
 - `knowledge/architecture.md` includes the issuer service, multi-tenancy, SSO, and SIP infrastructure
 - `knowledge/deployment.md` reflects the current CI/CD pipeline (new repo, OIDC, LMDB handling)
 - `knowledge/test-patterns.md` covers issuer test patterns and PostgreSQL constraints
+- `knowledge/dossier-creation-guide.md` provides complete step-by-step instructions for dossier creation in both models (with and without vetter certification)
 - Cross-reference check passes: no undocumented endpoints, models, or schemas
 - Reviewer context pack (`source-map.md`, `vvp-reference.md`) reflects current file layout and API surface
 
