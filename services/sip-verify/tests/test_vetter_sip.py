@@ -134,54 +134,55 @@ class TestDeriveVetterStatus:
     def test_none_constraints_returns_none(self):
         assert self._derive(None) is None
 
-    def test_empty_list_returns_none(self):
-        assert self._derive([]) is None
+    def test_empty_dict_returns_none(self):
+        assert self._derive({}) is None
 
     def test_all_authorized_returns_pass(self):
-        constraints = [
-            {"check_type": "ecc", "is_authorized": True},
-            {"check_type": "jurisdiction", "is_authorized": True},
-        ]
+        """Dict keyed by credential SAID with constraint_type field."""
+        constraints = {
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": True},
+            "ECredSAID2": {"constraint_type": "jurisdiction", "is_authorized": True},
+        }
         assert self._derive(constraints) == "PASS"
 
     def test_ecc_failure_returns_fail_ecc(self):
-        constraints = [
-            {"check_type": "ecc", "is_authorized": False},
-            {"check_type": "jurisdiction", "is_authorized": True},
-        ]
+        constraints = {
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": False},
+            "ECredSAID2": {"constraint_type": "jurisdiction", "is_authorized": True},
+        }
         assert self._derive(constraints) == "FAIL-ECC"
 
     def test_jurisdiction_failure_returns_fail_jurisdiction(self):
-        constraints = [
-            {"check_type": "ecc", "is_authorized": True},
-            {"check_type": "jurisdiction", "is_authorized": False},
-        ]
+        constraints = {
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": True},
+            "ECredSAID2": {"constraint_type": "jurisdiction", "is_authorized": False},
+        }
         assert self._derive(constraints) == "FAIL-JURISDICTION"
 
     def test_both_failures_returns_fail_ecc_jurisdiction(self):
-        constraints = [
-            {"check_type": "ecc", "is_authorized": False},
-            {"check_type": "jurisdiction", "is_authorized": False},
-        ]
+        constraints = {
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": False},
+            "ECredSAID2": {"constraint_type": "jurisdiction", "is_authorized": False},
+        }
         assert self._derive(constraints) == "FAIL-ECC-JURISDICTION"
 
     def test_single_authorized_constraint(self):
-        constraints = [
-            {"check_type": "ecc", "is_authorized": True},
-        ]
+        constraints = {
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": True},
+        }
         assert self._derive(constraints) == "PASS"
 
     def test_single_failed_ecc_constraint(self):
-        constraints = [
-            {"check_type": "ecc", "is_authorized": False},
-        ]
+        constraints = {
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": False},
+        }
         assert self._derive(constraints) == "FAIL-ECC"
 
     def test_mixed_multiple_constraints(self):
-        """Multiple constraints of same type — one failure is enough."""
-        constraints = [
-            {"check_type": "ecc", "is_authorized": True},
-            {"check_type": "ecc", "is_authorized": False},
-            {"check_type": "jurisdiction", "is_authorized": True},
-        ]
+        """Multiple constraints — one failure is enough."""
+        constraints = {
+            "ECredSAID1": {"constraint_type": "ecc", "is_authorized": True},
+            "ECredSAID2": {"constraint_type": "ecc", "is_authorized": False},
+            "ECredSAID3": {"constraint_type": "jurisdiction", "is_authorized": True},
+        }
         assert self._derive(constraints) == "FAIL-ECC"

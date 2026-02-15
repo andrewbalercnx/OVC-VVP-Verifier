@@ -167,6 +167,12 @@
     border: 1px solid #ffcc80;
 }
 
+.vvp-vetter-indeterminate {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffc107;
+}
+
 /* Animations */
 @keyframes vvp-fade-in {
     from {

@@ -57,6 +57,11 @@ const VVPDisplay = {
             label: 'Vetter: ECC + Jurisdiction Violation',
             className: 'vvp-vetter-fail',
             icon: '!'
+        },
+        'INDETERMINATE': {
+            label: 'Vetter: Indeterminate',
+            className: 'vvp-vetter-indeterminate',
+            icon: '?'
         }
     },
 

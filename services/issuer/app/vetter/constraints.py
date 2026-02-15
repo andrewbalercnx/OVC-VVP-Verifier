@@ -427,8 +427,11 @@ async def validate_signing_constraints(
             if isinstance(edge_val, dict) and "n" in edge_val:
                 cred_saids.append(edge_val["n"])
 
-    # Validate constraints for each edge credential
-    results = await validate_dossier_constraints(cred_saids)
+    # Also validate the root credential itself (it may have a certification edge)
+    all_saids = [dossier_said] + cred_saids
+
+    # Validate constraints for root + all edge credentials
+    results = await validate_dossier_constraints(all_saids)
 
     # Additionally check orig_tn ECC against any TN credential's VetterCert
     # (the dossier constraint check above already validates per-credential,
