@@ -130,6 +130,43 @@ async def validate_tn_ownership(db: Session, org_id: str, tn: str) -> bool:
     return False
 
 
+def _lookup_via_osp_delegation(
+    db: Session, tn: str, osp_org_id: str
+) -> Optional["TNMapping"]:
+    """Find a TN mapping via OSP delegation.
+
+    When an OSP presents their own API key, the TN mapping belongs to the
+    owner (accountable party) org. This function joins DossierOspAssociation
+    with TNMapping to find mappings where the dossier has been delegated to
+    the OSP's org.
+
+    Args:
+        db: Database session
+        tn: E.164 telephone number
+        osp_org_id: Organization ID of the OSP (from API key)
+
+    Returns:
+        TNMapping if found via delegation, None otherwise
+    """
+    from app.db.models import DossierOspAssociation, TNMapping
+
+    result = (
+        db.query(TNMapping)
+        .join(
+            DossierOspAssociation,
+            DossierOspAssociation.dossier_said == TNMapping.dossier_said,
+        )
+        .filter(
+            TNMapping.tn == tn,
+            TNMapping.enabled == True,  # noqa: E712
+            DossierOspAssociation.osp_org_id == osp_org_id,
+        )
+        .first()
+    )
+
+    return result
+
+
 async def lookup_tn_with_validation(
     db: Session,
     tn: str,
@@ -175,9 +212,21 @@ async def lookup_tn_with_validation(
     if not org_id:
         return TNLookupResult(found=False, error="No organization associated with API key")
 
-    # Look up mapping
+    # Look up mapping — first try direct (API key's own org), then OSP delegation
     store = TNMappingStore(db)
     mapping = store.get_by_tn(tn, org_id)
+    owner_org_id = org_id  # For TN ownership validation
+
+    if not mapping:
+        # Fallback: check if API key's org is an OSP for a dossier with this TN
+        mapping = _lookup_via_osp_delegation(db, tn, org_id)
+        if mapping:
+            # TN ownership belongs to the delegating (owner) org, not the OSP
+            owner_org_id = mapping.organization_id
+            log.info(
+                f"TN {tn} resolved via OSP delegation "
+                f"(osp={org_id[:8]}..., owner={owner_org_id[:8]}...)"
+            )
 
     if not mapping:
         return TNLookupResult(found=False, tn=tn, error=f"No mapping found for TN {tn}")
@@ -185,17 +234,17 @@ async def lookup_tn_with_validation(
     if not mapping.enabled:
         return TNLookupResult(found=False, tn=tn, error=f"TN mapping for {tn} is disabled")
 
-    # Validate TN ownership (if enabled)
+    # Validate TN ownership (if enabled) — always against the owner org
     if validate_ownership:
-        if not await validate_tn_ownership(db, org_id, tn):
+        if not await validate_tn_ownership(db, owner_org_id, tn):
             return TNLookupResult(
                 found=False,
                 tn=tn,
                 error=f"TN {tn} not covered by organization's TN Allocation credentials",
             )
 
-    # Get organization name
-    org = db.query(Organization).filter(Organization.id == org_id).first()
+    # Get organization name (of the owner org that holds the TN mapping)
+    org = db.query(Organization).filter(Organization.id == mapping.organization_id).first()
     org_name = org.name if org else None
 
     return TNLookupResult(

@@ -317,6 +317,7 @@
             </div>
           </div>
           <div class="org-card-actions">
+            <button class="secondary" onclick="showAddUserModal('${escapeHtml(org.id)}', '${escapeHtml(org.name)}')">+ Add User</button>
             <button class="secondary" onclick="toggleOrg('${escapeHtml(org.id)}', ${!org.enabled})">
               ${org.enabled ? 'Disable' : 'Enable'}
             </button>
@@ -655,6 +656,115 @@
         }
       } catch (err) {
         showToast('Network error: ' + err.message, 'error');
+      }
+    }
+
+    function showAddUserModal(orgId, orgName) {
+      const proposedPassword = generatePassword();
+      const html = `
+        <form id="add-user-form" class="modal-form">
+          <p style="color: var(--vvp-text-muted); font-size: 0.875rem; margin: 0;">
+            Create a user for <strong>${escapeHtml(orgName)}</strong>.
+          </p>
+          <div>
+            <label for="user-email">Email</label>
+            <input type="email" id="user-email" required placeholder="user@example.com">
+          </div>
+          <div>
+            <label for="user-name">Display Name</label>
+            <input type="text" id="user-name" placeholder="(defaults to email prefix)">
+          </div>
+          <div>
+            <label for="user-password">Password</label>
+            <div style="display: flex; gap: 0.5rem;">
+              <input type="text" id="user-password" required minlength="8" value="${escapeHtml(proposedPassword)}" style="flex: 1;">
+              <button type="button" class="secondary small" onclick="document.getElementById('user-password').value = generatePassword();" style="white-space: nowrap;">Regenerate</button>
+            </div>
+          </div>
+          <div>
+            <label>Role</label>
+            <select id="user-role" style="width:100%;padding:0.5rem;border:1px solid var(--vvp-border);border-radius:4px;">
+              <option value="org:administrator">Organization Administrator</option>
+              <option value="org:dossier_manager">Dossier Manager</option>
+            </select>
+          </div>
+          <div class="modal-buttons">
+            <button type="button" class="secondary" onclick="closeModal(this)">Cancel</button>
+            <button type="submit" class="primary" id="add-user-submit">Create User</button>
+          </div>
+        </form>
+      `;
+
+      showModal(html, { title: 'Add User' });
+
+      document.getElementById('add-user-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await addUserToOrg(orgId, orgName);
+      });
+    }
+
+    async function addUserToOrg(orgId, orgName) {
+      const email = document.getElementById('user-email').value;
+      const name = document.getElementById('user-name').value || email.split('@')[0];
+      const password = document.getElementById('user-password').value;
+      const role = document.getElementById('user-role').value;
+      const submitBtn = document.getElementById('add-user-submit');
+
+      setButtonLoading(submitBtn, 'Creating user...');
+
+      try {
+        const response = await authFetch('/users', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: JSON.stringify({
+            email: email,
+            name: name,
+            password: password,
+            system_roles: [],
+            org_roles: [role],
+            organization_id: orgId,
+            is_oauth_user: false,
+          }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          showToast(data.detail || 'Failed to create user', 'error');
+          resetButton(submitBtn);
+          return;
+        }
+
+        closeModal(document.querySelector('.modal-overlay'));
+
+        // Show credentials
+        const html = `
+          <p>User created for <strong>${escapeHtml(orgName)}</strong>.</p>
+          <div style="background: var(--vvp-bg); padding: 1rem; border-radius: 4px; margin-bottom: 1rem;">
+            <div style="margin-bottom: 0.5rem;">
+              <span style="font-size: 0.75rem; color: var(--vvp-text-muted); text-transform: uppercase;">Email</span><br>
+              <code>${escapeHtml(email)}</code>
+            </div>
+            <div>
+              <span style="font-size: 0.75rem; color: var(--vvp-text-muted); text-transform: uppercase;">Password</span><br>
+              <code id="user-created-password">${escapeHtml(password)}</code>
+              <button class="small secondary" style="margin-left: 0.5rem;" onclick="copyToClipboard(document.getElementById('user-created-password').textContent, this)">Copy</button>
+            </div>
+          </div>
+          <div class="raw-key-warning">
+            Save these credentials now. The password cannot be retrieved later.
+          </div>
+          <div class="modal-buttons">
+            <button class="secondary" onclick="closeModal(this)">Close</button>
+            <button class="primary" onclick="loginAsUser('${escapeHtml(email)}', '${escapeHtml(password)}')">Login as ${escapeHtml(email)}</button>
+          </div>
+        `;
+        showModal(html, { title: 'User Created' });
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+        resetButton(submitBtn);
       }
     }
 

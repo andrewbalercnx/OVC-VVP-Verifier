@@ -80,7 +80,7 @@ The endpoint:
 1. Validates each edge credential exists and belongs to the org
 2. Issues a Dossier ACDC (CVD schema, no issuee) with the specified edges
 3. Publishes to witnesses
-4. Optionally creates a `DossierOspAssociation` record
+4. Optionally creates a `DossierOspAssociation` record (enables TN lookup via OSP's API key)
 5. Returns `dossier_said`, `dossier_url`, and publish results
 
 ### Step 4: Create TN Mapping

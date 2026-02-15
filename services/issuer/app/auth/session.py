@@ -192,15 +192,29 @@ class InMemorySessionStore(SessionStore):
             # Check if underlying principal is still valid
             if session.key_id.startswith("user:"):
                 # User session - check if user is disabled
+                # Check file-based store first, then DB-backed store
                 from app.auth.users import get_user_store
 
                 user_store = get_user_store()
-                # Ensure we have fresh user state before checking disabled status
                 user_store.reload_if_stale()
                 email = session.key_id[5:]  # Strip "user:" prefix
                 user = user_store.get_user(email)
 
-                if user is None or not user.enabled:
+                if user is None:
+                    # Not in file-based store — check DB-backed user store
+                    try:
+                        from app.auth.db_users import get_db_user_store
+                        from app.db.session import get_db_session
+
+                        with get_db_session() as db:
+                            db_store = get_db_user_store()
+                            db_user = db_store.get_user_by_email(db, email)
+                            if db_user is not None and db_user.enabled:
+                                user = db_user  # Found in DB, valid
+                    except Exception as e:
+                        log.debug(f"DB user check failed: {e}")
+
+                if user is None or (hasattr(user, 'enabled') and not user.enabled):
                     del self._sessions[session_id]
                     log.warning(
                         f"Session {session_id[:8]}... invalidated: "

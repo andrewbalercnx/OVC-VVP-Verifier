@@ -18,7 +18,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.auth.api_key import Principal
-from app.db.models import Base, Organization, OrgAPIKey, OrgAPIKeyRole, ManagedCredential, TNMapping
+from app.db.models import (
+    Base,
+    Organization,
+    OrgAPIKey,
+    OrgAPIKeyRole,
+    ManagedCredential,
+    TNMapping,
+    DossierOspAssociation,
+)
 from app.tn.store import TNMappingStore
 from app.tn.lookup import (
     lookup_tn_with_validation,
@@ -540,3 +548,263 @@ class TestTNMappingAPI:
     # These tests would use httpx TestClient with app
     # For now, we've tested the underlying store and lookup logic
     pass
+
+
+# =============================================================================
+# OSP Delegation TN Lookup Tests
+# =============================================================================
+
+
+class TestOSPDelegationLookup:
+    """Test TN lookup via OSP delegation.
+
+    When a dossier is delegated to an OSP via DossierOspAssociation,
+    the OSP's API key should be able to discover the dossier by TN.
+    """
+
+    @pytest.fixture
+    def owner_org(self, in_memory_db):
+        """Create the accountable party (owner) organization."""
+        org = Organization(
+            id=str(uuid.uuid4()),
+            name="ACME Telecom (Owner)",
+            pseudo_lei="5493001111111111AB12",
+            enabled=True,
+        )
+        in_memory_db.add(org)
+        in_memory_db.commit()
+        in_memory_db.refresh(org)
+        return org
+
+    @pytest.fixture
+    def osp_org(self, in_memory_db):
+        """Create the OSP organization."""
+        org = Organization(
+            id=str(uuid.uuid4()),
+            name="BigCarrier OSP",
+            pseudo_lei="5493002222222222CD34",
+            enabled=True,
+        )
+        in_memory_db.add(org)
+        in_memory_db.commit()
+        in_memory_db.refresh(org)
+        return org
+
+    @pytest.fixture
+    def owner_tn_mapping(self, in_memory_db, owner_org):
+        """Create a TN mapping owned by the accountable party."""
+        mapping = TNMapping(
+            id=str(uuid.uuid4()),
+            tn="+15557770001",
+            organization_id=owner_org.id,
+            dossier_said="E" + "d" * 43,
+            identity_name="owner-identity",
+            brand_name="ACME Brand",
+            brand_logo_url="https://example.com/acme-logo.png",
+            enabled=True,
+        )
+        in_memory_db.add(mapping)
+        in_memory_db.commit()
+        in_memory_db.refresh(mapping)
+        return mapping
+
+    @pytest.fixture
+    def osp_delegation(self, in_memory_db, owner_org, osp_org, owner_tn_mapping):
+        """Create a DossierOspAssociation delegating to the OSP."""
+        assoc = DossierOspAssociation(
+            dossier_said=owner_tn_mapping.dossier_said,
+            owner_org_id=owner_org.id,
+            osp_org_id=osp_org.id,
+        )
+        in_memory_db.add(assoc)
+        in_memory_db.commit()
+        in_memory_db.refresh(assoc)
+        return assoc
+
+    def _make_principal(self, org):
+        """Create a mock Principal for an org."""
+        return Principal(
+            key_id=f"key-{org.id[:8]}",
+            name=f"{org.name} Key",
+            roles={"org:dossier_manager"},
+            organization_id=org.id,
+        )
+
+    @pytest.mark.asyncio
+    async def test_osp_key_finds_delegated_tn(
+        self, in_memory_db, owner_org, osp_org, owner_tn_mapping, osp_delegation
+    ):
+        """OSP's API key should find TN via delegation when direct lookup fails."""
+        mock_principal = self._make_principal(osp_org)
+        mock_store = MagicMock()
+        mock_store.verify.return_value = (mock_principal, None)
+
+        with patch(GET_API_KEY_STORE_PATCH, return_value=mock_store):
+            result = await lookup_tn_with_validation(
+                db=in_memory_db,
+                tn="+15557770001",
+                api_key="osp-api-key",
+                validate_ownership=False,
+            )
+
+            assert result.found is True
+            assert result.tn == "+15557770001"
+            assert result.dossier_said == owner_tn_mapping.dossier_said
+            assert result.identity_name == "owner-identity"
+            assert result.brand_name == "ACME Brand"
+            # organization_id should be the OWNER's org (who holds the TN mapping)
+            assert result.organization_id == owner_org.id
+            assert result.organization_name == "ACME Telecom (Owner)"
+
+    @pytest.mark.asyncio
+    async def test_osp_key_without_delegation_fails(
+        self, in_memory_db, owner_org, osp_org, owner_tn_mapping
+    ):
+        """OSP's API key should NOT find TN if no delegation exists."""
+        # No osp_delegation fixture — no DossierOspAssociation record
+        mock_principal = self._make_principal(osp_org)
+        mock_store = MagicMock()
+        mock_store.verify.return_value = (mock_principal, None)
+
+        with patch(GET_API_KEY_STORE_PATCH, return_value=mock_store):
+            result = await lookup_tn_with_validation(
+                db=in_memory_db,
+                tn="+15557770001",
+                api_key="osp-api-key",
+                validate_ownership=False,
+            )
+
+            assert result.found is False
+            assert "No mapping found" in result.error
+
+    @pytest.mark.asyncio
+    async def test_owner_key_still_works_directly(
+        self, in_memory_db, owner_org, osp_org, owner_tn_mapping, osp_delegation
+    ):
+        """Owner's API key should find TN directly (not via delegation)."""
+        mock_principal = self._make_principal(owner_org)
+        mock_store = MagicMock()
+        mock_store.verify.return_value = (mock_principal, None)
+
+        with patch(GET_API_KEY_STORE_PATCH, return_value=mock_store):
+            result = await lookup_tn_with_validation(
+                db=in_memory_db,
+                tn="+15557770001",
+                api_key="owner-api-key",
+                validate_ownership=False,
+            )
+
+            assert result.found is True
+            assert result.organization_id == owner_org.id
+
+    @pytest.mark.asyncio
+    async def test_osp_delegation_validates_against_owner_tn_alloc(
+        self, in_memory_db, owner_org, osp_org, owner_tn_mapping, osp_delegation
+    ):
+        """TN ownership validation should check the owner org's TN Alloc credentials."""
+        mock_principal = self._make_principal(osp_org)
+        mock_store = MagicMock()
+        mock_store.verify.return_value = (mock_principal, None)
+
+        # Create TN Allocation credential for the OWNER org
+        cred = ManagedCredential(
+            said="E" + "t" * 43,
+            organization_id=owner_org.id,
+            schema_said="EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ",
+            issuer_aid="A" + "a" * 43,
+        )
+        in_memory_db.add(cred)
+        in_memory_db.commit()
+
+        mock_cred_info = MagicMock()
+        mock_cred_info.attributes = {"numbers": ["+15557770001"]}
+
+        with patch(GET_API_KEY_STORE_PATCH, return_value=mock_store):
+            with patch(GET_CREDENTIAL_ISSUER_PATCH) as mock_get_issuer:
+                mock_issuer = AsyncMock()
+                mock_issuer.get_credential = AsyncMock(return_value=mock_cred_info)
+                mock_get_issuer.return_value = mock_issuer
+
+                result = await lookup_tn_with_validation(
+                    db=in_memory_db,
+                    tn="+15557770001",
+                    api_key="osp-api-key",
+                    validate_ownership=True,
+                )
+
+                assert result.found is True
+                assert result.dossier_said == owner_tn_mapping.dossier_said
+
+    @pytest.mark.asyncio
+    async def test_osp_delegation_fails_if_owner_has_no_tn_alloc(
+        self, in_memory_db, owner_org, osp_org, owner_tn_mapping, osp_delegation
+    ):
+        """TN ownership validation should fail if owner has no TN Alloc covering the TN."""
+        mock_principal = self._make_principal(osp_org)
+        mock_store = MagicMock()
+        mock_store.verify.return_value = (mock_principal, None)
+
+        # No TN Allocation credentials for owner_org
+
+        with patch(GET_API_KEY_STORE_PATCH, return_value=mock_store):
+            result = await lookup_tn_with_validation(
+                db=in_memory_db,
+                tn="+15557770001",
+                api_key="osp-api-key",
+                validate_ownership=True,
+            )
+
+            assert result.found is False
+            assert "TN Allocation" in result.error
+
+    @pytest.mark.asyncio
+    async def test_osp_delegation_disabled_mapping_not_returned(
+        self, in_memory_db, owner_org, osp_org, owner_tn_mapping, osp_delegation
+    ):
+        """Disabled TN mappings should not be returned even via delegation."""
+        # Disable the mapping
+        owner_tn_mapping.enabled = False
+        in_memory_db.commit()
+
+        mock_principal = self._make_principal(osp_org)
+        mock_store = MagicMock()
+        mock_store.verify.return_value = (mock_principal, None)
+
+        with patch(GET_API_KEY_STORE_PATCH, return_value=mock_store):
+            result = await lookup_tn_with_validation(
+                db=in_memory_db,
+                tn="+15557770001",
+                api_key="osp-api-key",
+                validate_ownership=False,
+            )
+
+            assert result.found is False
+
+    @pytest.mark.asyncio
+    async def test_unrelated_osp_cannot_access_delegation(
+        self, in_memory_db, owner_org, osp_org, owner_tn_mapping, osp_delegation
+    ):
+        """A third org (not the delegated OSP) should not find the TN."""
+        third_org = Organization(
+            id=str(uuid.uuid4()),
+            name="Third Party Corp",
+            pseudo_lei="5493003333333333EF56",
+            enabled=True,
+        )
+        in_memory_db.add(third_org)
+        in_memory_db.commit()
+
+        mock_principal = self._make_principal(third_org)
+        mock_store = MagicMock()
+        mock_store.verify.return_value = (mock_principal, None)
+
+        with patch(GET_API_KEY_STORE_PATCH, return_value=mock_store):
+            result = await lookup_tn_with_validation(
+                db=in_memory_db,
+                tn="+15557770001",
+                api_key="third-party-key",
+                validate_ownership=False,
+            )
+
+            assert result.found is False
+            assert "No mapping found" in result.error

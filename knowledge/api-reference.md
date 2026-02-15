@@ -423,6 +423,21 @@ Convenience endpoint — resolves current user's org and returns constraints. Re
 | `POST` | `/tn/lookup` | Look up TN (used by SIP Redirect) |
 | `POST` | `/tn/test-lookup/{mapping_id}` | Test a specific mapping |
 
+#### POST /tn/lookup
+
+Internal endpoint for SIP Redirect service. Authenticates via API key (not session) and returns the dossier/identity for a given TN.
+
+**Request:** `{ "tn": "+15551234567", "api_key": "..." }`
+
+**Lookup order:**
+1. Direct lookup: find TNMapping where `tn` matches and `organization_id` matches the API key's org
+2. OSP delegation fallback: if direct lookup fails, join `DossierOspAssociation` with `TNMapping` to find mappings where the dossier has been delegated to the API key's org as OSP
+3. TN ownership validation: checks the **owner org's** TN Allocation credentials (even when found via OSP delegation)
+
+**Response:** `{ "found": true, "tn": "...", "organization_id": "...", "organization_name": "...", "dossier_said": "...", "identity_name": "...", "brand_name": "...", "brand_logo_url": "...", "error": null }`
+
+When found via OSP delegation, the response contains the **owner org's** data (organization_id, identity_name, dossier_said) since the signing identity and dossier belong to the accountable party.
+
 ### Schemas (`/schema`, `/schemas`)
 
 | Method | Path | Purpose |
