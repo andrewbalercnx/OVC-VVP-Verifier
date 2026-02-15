@@ -417,7 +417,7 @@
         // Step 2: Create admin user for the organization
         submitBtn.textContent = 'Creating admin user...';
 
-        const userResponse = await authFetch('/api/users', {
+        const userResponse = await authFetch('/users', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
