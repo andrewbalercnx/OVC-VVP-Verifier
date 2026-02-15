@@ -100,6 +100,7 @@ class AuthStatusResponse(BaseModel):
     """Current authentication status.
 
     Sprint 41: Added organization_id and organization_name for multi-tenancy.
+    Sprint 67: Added home/active org fields for org context switching.
     """
 
     authenticated: bool = Field(..., description="Whether currently authenticated")
@@ -112,8 +113,15 @@ class AuthStatusResponse(BaseModel):
     expires_at: Optional[str] = Field(
         None, description="Session expiry (ISO8601), null for API key auth"
     )
-    organization_id: Optional[str] = Field(None, description="Organization UUID")
-    organization_name: Optional[str] = Field(None, description="Organization name")
+    organization_id: Optional[str] = Field(None, description="Effective org UUID (active if switched, home otherwise)")
+    organization_name: Optional[str] = Field(None, description="Effective org name")
+    # Sprint 67: Org context switching fields
+    home_org_id: Optional[str] = Field(None, description="Admin's own org (immutable)")
+    home_org_name: Optional[str] = Field(None, description="Admin's own org name")
+    home_org_type: Optional[str] = Field(None, description="Admin's own org type")
+    active_org_id: Optional[str] = Field(None, description="Switched org (null = home)")
+    active_org_name: Optional[str] = Field(None, description="Switched org name")
+    active_org_type: Optional[str] = Field(None, description="Switched org type")
 
 
 class LogoutResponse(BaseModel):
@@ -424,8 +432,43 @@ async def auth_status(request: Request) -> AuthStatusResponse:
         session_store = get_session_store()
         session = await session_store.get(session_id)
         if session:
-            # Sprint 41: Get organization name
-            org_name = _get_organization_name(session.principal.organization_id)
+            # Sprint 67: Populate home/active org fields for org switching
+            home_org_id = session.home_org_id
+            home_org_name = _get_organization_name(home_org_id)
+            home_org_type = None
+            active_org_id = session.active_org_id
+            active_org_name = None
+            active_org_type = None
+
+            # Look up home org type
+            if home_org_id:
+                try:
+                    with get_db_session() as db:
+                        home_org = db.query(Organization).filter(
+                            Organization.id == home_org_id
+                        ).first()
+                        if home_org:
+                            home_org_type = home_org.org_type
+                except Exception:
+                    pass
+
+            if active_org_id:
+                active_org_name = _get_organization_name(active_org_id)
+                # Get active org type
+                try:
+                    with get_db_session() as db:
+                        active_org = db.query(Organization).filter(
+                            Organization.id == active_org_id
+                        ).first()
+                        if active_org:
+                            active_org_type = active_org.org_type
+                except Exception:
+                    pass
+
+            # Effective org: active if switched, home otherwise
+            effective_org_id = active_org_id or home_org_id
+            effective_org_name = active_org_name if active_org_id else home_org_name
+
             return AuthStatusResponse(
                 authenticated=True,
                 method="session",
@@ -433,8 +476,14 @@ async def auth_status(request: Request) -> AuthStatusResponse:
                 name=session.principal.name,
                 roles=list(session.principal.roles),
                 expires_at=session.expires_at.isoformat(),
-                organization_id=session.principal.organization_id,
-                organization_name=org_name,
+                organization_id=effective_org_id,
+                organization_name=effective_org_name,
+                home_org_id=home_org_id,
+                home_org_name=home_org_name,
+                home_org_type=home_org_type,
+                active_org_id=active_org_id,
+                active_org_name=active_org_name,
+                active_org_type=active_org_type,
             )
 
     # Check API key header

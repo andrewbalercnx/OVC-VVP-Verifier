@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Organization Detail - VVP Issuer</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+  <style>
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+    }
+    .detail-header h1 { margin: 0; }
+    .back-link { font-size: 0.875rem; margin-bottom: 0.5rem; display: inline-block; }
+    .info-panel {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 1rem;
+    }
+    .info-field .label {
+      font-size: 0.75rem;
+      color: var(--vvp-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .info-field .value {
+      font-family: monospace;
+      font-size: 0.875rem;
+      word-break: break-all;
+    }
+    .type-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .type-badge.root_authority { background: #dbeafe; color: #1d4ed8; }
+    .type-badge.qvi { background: #ede9fe; color: #6d28d9; }
+    .type-badge.vetter_authority { background: #dcfce7; color: #15803d; }
+    .type-badge.regular { background: #f3f4f6; color: #6b7280; }
+    .status-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+    .status-badge.enabled { background: #d1fae5; color: #059669; }
+    .status-badge.disabled { background: #fee2e2; color: #dc2626; }
+    .tab-bar {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid var(--vvp-border);
+      margin-bottom: 1rem;
+    }
+    .tab-btn {
+      padding: 0.5rem 1.25rem;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 0.875rem;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      color: var(--vvp-text-muted);
+    }
+    .tab-btn.active {
+      border-bottom-color: var(--vvp-primary, #2563eb);
+      color: var(--vvp-text);
+      font-weight: 600;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .section-panel {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      padding: 1.25rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--vvp-border);
+    }
+    th { font-weight: 600; font-size: 0.75rem; text-transform: uppercase; color: var(--vvp-text-muted); }
+    .empty-state { text-align: center; padding: 2rem; color: var(--vvp-text-muted); }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-brand">
+      <img src="/static/ovc-logo.png" alt="OVC" class="ovc-logo">
+      <a href="/ui/" class="logo">
+        <span class="service-label">VVP</span>
+        Issuer
+      </a>
+    </div>
+    <nav class="nav-links">
+      <a href="/ui/identity">Identities</a>
+      <a href="/ui/registry">Registries</a>
+      <a href="/ui/schemas">Schemas</a>
+      <a href="/ui/credentials">Credentials</a>
+      <a href="/ui/dossier">Dossiers</a>
+      <a href="/ui/vvp">VVP</a>
+      <a href="/ui/tn-mappings">TN Mappings</a>
+      <a href="/organizations/ui">Organizations</a>
+    </nav>
+    <div class="header-user" id="header-user"></div>
+  </header>
+
+  <main>
+    <a href="/organizations/ui" class="back-link">&larr; Back to Organizations</a>
+    <div id="org-detail">
+      <div class="empty-state">Loading organization...</div>
+    </div>
+  </main>
+
+  <script src="/static/shared.js"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const orgId = params.get('id');
+
+    async function init() {
+      const session = await checkAuthStatus();
+      if (!session.authenticated) {
+        window.location.href = '/login?redirect=' + encodeURIComponent(window.location.href);
+        return;
+      }
+      if (!orgId) {
+        document.getElementById('org-detail').innerHTML = '<div class="empty-state">No organization ID specified.</div>';
+        return;
+      }
+      await loadOrgDetail();
+    }
+
+    async function loadOrgDetail() {
+      const container = document.getElementById('org-detail');
+      try {
+        const response = await authFetch(`/organizations/${orgId}`, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        if (!response.ok) {
+          container.innerHTML = '<div class="empty-state">Organization not found.</div>';
+          return;
+        }
+        const org = await response.json();
+        renderOrgDetail(org);
+      } catch (err) {
+        container.innerHTML = `<div class="empty-state">Error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function renderOrgDetail(org) {
+      const container = document.getElementById('org-detail');
+      const orgType = org.org_type || 'regular';
+      const typeLabel = { root_authority: 'Root Authority', qvi: 'QVI', vetter_authority: 'Vetter Authority', regular: 'Organization' }[orgType] || orgType;
+
+      container.innerHTML = `
+        <div class="detail-header">
+          <h1>${escapeHtml(org.name)}</h1>
+          <div>
+            <span class="type-badge ${escapeHtml(orgType)}">${escapeHtml(typeLabel)}</span>
+            <span class="status-badge ${org.enabled ? 'enabled' : 'disabled'}">${org.enabled ? 'Active' : 'Disabled'}</span>
+          </div>
+        </div>
+        <div class="info-panel">
+          <div class="info-grid">
+            <div class="info-field">
+              <div class="label">ID</div>
+              <div class="value">${escapeHtml(org.id)}</div>
+            </div>
+            <div class="info-field">
+              <div class="label">LEI</div>
+              <div class="value">${escapeHtml(org.pseudo_lei || 'N/A')}</div>
+            </div>
+            <div class="info-field">
+              <div class="label">AID</div>
+              <div class="value">${org.aid ? escapeHtml(org.aid) : '<em>Not created</em>'}</div>
+            </div>
+            <div class="info-field">
+              <div class="label">Registry Key</div>
+              <div class="value">${org.registry_key ? escapeHtml(org.registry_key) : '<em>None</em>'}</div>
+            </div>
+            <div class="info-field">
+              <div class="label">Created</div>
+              <div class="value">${org.created_at ? new Date(org.created_at).toLocaleString() : 'N/A'}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-bar">
+          <button class="tab-btn active" onclick="switchTab('users')">Users</button>
+          <button class="tab-btn" onclick="switchTab('credentials')">Credentials</button>
+          ${orgType === 'vetter_authority' ? '<button class="tab-btn" onclick="switchTab(\'vetter\')">Vetter Certs</button>' : ''}
+        </div>
+
+        <div id="tab-users" class="tab-panel active">
+          <div class="section-panel" id="users-panel">
+            <div class="empty-state">Loading users...</div>
+          </div>
+        </div>
+        <div id="tab-credentials" class="tab-panel">
+          <div class="section-panel" id="credentials-panel">
+            <div class="empty-state">Loading credentials...</div>
+          </div>
+        </div>
+        ${orgType === 'vetter_authority' ? `
+        <div id="tab-vetter" class="tab-panel">
+          <div class="section-panel" id="vetter-panel">
+            <div class="empty-state">Loading vetter certifications...</div>
+          </div>
+        </div>
+        ` : ''}
+      `;
+
+      // Load tab data
+      loadUsers();
+      loadCredentials();
+      if (orgType === 'vetter_authority') loadVetterCerts();
+    }
+
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
+      document.getElementById(`tab-${tabName}`).classList.add('active');
+    }
+
+    async function loadUsers() {
+      const panel = document.getElementById('users-panel');
+      try {
+        const response = await authFetch(`/users?organization_id=${orgId}`, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        if (!response.ok) {
+          panel.innerHTML = '<div class="empty-state">Failed to load users.</div>';
+          return;
+        }
+        const data = await response.json();
+        const users = data.users || [];
+        if (users.length === 0) {
+          panel.innerHTML = '<div class="empty-state">No users in this organization.</div>';
+          return;
+        }
+        panel.innerHTML = `
+          <table>
+            <thead><tr><th>Email</th><th>Name</th><th>Roles</th><th>Enabled</th></tr></thead>
+            <tbody>
+              ${users.map(u => `
+                <tr>
+                  <td>${escapeHtml(u.email)}</td>
+                  <td>${escapeHtml(u.name)}</td>
+                  <td>${(u.org_roles || []).map(r => escapeHtml(r)).join(', ') || '<em>none</em>'}</td>
+                  <td><span class="status-badge ${u.enabled ? 'enabled' : 'disabled'}">${u.enabled ? 'Yes' : 'No'}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (err) {
+        panel.innerHTML = `<div class="empty-state">Error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function loadCredentials() {
+      const panel = document.getElementById('credentials-panel');
+      try {
+        const response = await authFetch(`/credential?org_id=${orgId}`, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        if (!response.ok) {
+          panel.innerHTML = '<div class="empty-state">Failed to load credentials.</div>';
+          return;
+        }
+        const data = await response.json();
+        const creds = data.credentials || [];
+        if (creds.length === 0) {
+          panel.innerHTML = '<div class="empty-state">No credentials issued by this organization.</div>';
+          return;
+        }
+        panel.innerHTML = `
+          <table>
+            <thead><tr><th>SAID</th><th>Schema</th><th>Status</th><th>Issued</th></tr></thead>
+            <tbody>
+              ${creds.map(c => `
+                <tr>
+                  <td style="font-family:monospace; font-size:0.8rem;">${escapeHtml((c.said || '').substring(0, 16))}...</td>
+                  <td style="font-family:monospace; font-size:0.8rem;">${escapeHtml((c.schema_said || '').substring(0, 16))}...</td>
+                  <td><span class="status-badge ${c.status === 'issued' ? 'enabled' : 'disabled'}">${escapeHtml(c.status || 'unknown')}</span></td>
+                  <td>${c.created_at ? new Date(c.created_at).toLocaleDateString() : 'N/A'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (err) {
+        panel.innerHTML = `<div class="empty-state">Error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function loadVetterCerts() {
+      const panel = document.getElementById('vetter-panel');
+      if (!panel) return;
+      try {
+        const response = await authFetch(`/vetter-certifications?organization_id=${orgId}`, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        if (!response.ok) {
+          panel.innerHTML = '<div class="empty-state">Failed to load vetter certifications.</div>';
+          return;
+        }
+        const data = await response.json();
+        const certs = data.certifications || [];
+        if (certs.length === 0) {
+          panel.innerHTML = '<div class="empty-state">No vetter certifications issued.</div>';
+          return;
+        }
+        panel.innerHTML = `
+          <table>
+            <thead><tr><th>SAID</th><th>Subject Org</th><th>Status</th><th>Expires</th></tr></thead>
+            <tbody>
+              ${certs.map(c => `
+                <tr>
+                  <td style="font-family:monospace; font-size:0.8rem;">${escapeHtml((c.said || '').substring(0, 16))}...</td>
+                  <td>${escapeHtml(c.subject_org_name || c.subject_organization_id || 'N/A')}</td>
+                  <td><span class="status-badge ${c.status === 'active' ? 'enabled' : 'disabled'}">${escapeHtml(c.status || 'unknown')}</span></td>
+                  <td>${c.expires_at ? new Date(c.expires_at).toLocaleDateString() : 'N/A'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (err) {
+        panel.innerHTML = `<div class="empty-state">Error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

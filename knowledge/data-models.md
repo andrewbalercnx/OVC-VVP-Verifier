@@ -135,6 +135,12 @@ class DossierDAG:
 
 ### db/models.py - SQLAlchemy Database Models
 ```python
+class OrgType(str, Enum):          # Sprint 67 — organization type hierarchy
+    ROOT_AUTHORITY = "root_authority"   # GLEIF (issues QVI credentials)
+    QVI = "qvi"                        # Qualified vLEI Issuer (issues LE credentials)
+    VETTER_AUTHORITY = "vetter_authority"  # GSMA (issues VetterCert, Governance)
+    REGULAR = "regular"                # Standard organization (Brand, TN Alloc)
+
 class Organization(Base):
     id: String(36)                 # UUID, primary key
     name: String(255)              # Organization name, unique
@@ -143,6 +149,7 @@ class Organization(Base):
     le_credential_said: Optional[String(44)]  # Auto-issued LE credential
     registry_key: Optional[String(44)]  # TEL registry prefix
     vetter_certification_said: Optional[String(44)]  # Active VetterCert SAID (Sprint 61)
+    org_type: String(20)           # OrgType value (Sprint 67, default "regular")
     enabled: bool                  # Tenant enabled flag (default True)
     created_at: datetime
     updated_at: datetime
@@ -232,6 +239,9 @@ class MockVLEIState(Base):            # Persists mock vLEI infrastructure state
     gsma_aid: Optional[String(44)]  # Mock GSMA AID (Sprint 61)
     gsma_registry_key: Optional[String(44)]  # Mock GSMA registry (Sprint 61)
     gsma_governance_said: Optional[String(44)]  # GSMA governance cred (Sprint 62)
+    gleif_org_id: Optional[String(36)]  # FK to Organization (Sprint 67)
+    qvi_org_id: Optional[String(36)]    # FK to Organization (Sprint 67)
+    gsma_org_id: Optional[String(36)]   # FK to Organization (Sprint 67)
 ```
 
 ### api/models.py - Issuer API Models (complete inventory)
@@ -510,6 +520,60 @@ class DossierInfoResponse(BaseModel):
 
 class BuildDossierResponse(BaseModel):
     dossier: DossierInfoResponse
+```
+
+#### Session & Org Context Models (Sprint 67)
+```python
+@dataclass
+class Session:
+    session_id: str
+    key_id: str
+    principal: Principal
+    created_at: datetime
+    expires_at: datetime
+    home_org_id: Optional[str] = None     # Immutable: user's actual org (Sprint 67)
+    active_org_id: Optional[str] = None   # Mutable: switched org context (Sprint 67)
+
+class SwitchOrgRequest(BaseModel):
+    organization_id: Optional[str] = None  # None reverts to home org
+
+class SwitchOrgResponse(BaseModel):
+    active_org_id: Optional[str]
+    active_org_name: Optional[str]
+    active_org_type: Optional[str]
+    home_org_id: Optional[str]
+    home_org_name: Optional[str]
+
+class AuthStatusResponse(BaseModel):
+    authenticated: bool
+    method: Optional[str]
+    user_email: Optional[str]
+    user_name: Optional[str]
+    user_id: Optional[str]
+    is_system_admin: bool
+    roles: list[str]
+    organization_id: Optional[str]         # Effective org (active if switched)
+    organization_name: Optional[str]
+    home_org_id: Optional[str] = None      # User's actual org (Sprint 67)
+    home_org_name: Optional[str] = None
+    home_org_type: Optional[str] = None    # Admin's own org type (Sprint 67)
+    active_org_id: Optional[str] = None    # Switched org (Sprint 67)
+    active_org_name: Optional[str] = None
+    active_org_type: Optional[str] = None
+```
+
+#### Schema Authorization (Sprint 67)
+```python
+# app/auth/schema_auth.py — Hard-coded mapping (trust chain is spec-defined)
+SCHEMA_AUTHORIZATION: dict[OrgType, set[str]] = {
+    OrgType.ROOT_AUTHORITY: {QVI_SAID},
+    OrgType.QVI: {LE_SAID, EXT_LE_SAID},
+    OrgType.VETTER_AUTHORITY: {VETTER_CERT_SAID, GOVERNANCE_SAID},
+    OrgType.REGULAR: {EXT_BRAND_SAID, TN_ALLOC_SAID, EXT_TN_ALLOC_SAID, DE_GCD_SAID},
+}
+
+def is_schema_authorized(org_type: str, schema_said: str) -> bool
+def get_authorized_schemas(org_type: str) -> set[str]
 ```
 
 #### VVP Header/PASSporT Models

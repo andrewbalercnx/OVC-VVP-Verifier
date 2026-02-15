@@ -9,7 +9,7 @@ The Issuer manages the full lifecycle of VVP credentials: organization managemen
 |------|---------|
 | `app/main.py` | FastAPI app, router mounts, UI routes, lifespan |
 | `app/config.py` | All configuration (DB, OAuth, session, witnesses, auth) |
-| `app/api/` | API routers (15 router files) |
+| `app/api/` | API routers (16 router files) |
 | `app/api/models.py` | All Pydantic request/response models (~45 models) |
 | `app/keri/identity.py` | `IssuerIdentityManager` — KERI inception, rotation, OOBI |
 | `app/keri/registry.py` | `CredentialRegistryManager` — TEL registry lifecycle |
@@ -23,11 +23,12 @@ The Issuer manages the full lifecycle of VVP credentials: organization managemen
 | `app/auth/session.py` | `InMemorySessionStore` + `LoginRateLimiter` |
 | `app/auth/roles.py` | System role hierarchy + dependencies |
 | `app/auth/org_roles.py` | Organization role hierarchy + dependencies |
+| `app/auth/schema_auth.py` | Schema authorization by org type (Sprint 67) |
 | `app/auth/scoping.py` | Multi-tenant credential access control |
 | `app/auth/oauth.py` | Microsoft OAuth (Entra ID) with PKCE |
 | `app/auth/users.py` | File-based user store |
 | `app/auth/db_users.py` | `DatabaseUserStore` — DB-backed user auth |
-| `app/db/models.py` | SQLAlchemy models (9 tables) |
+| `app/db/models.py` | SQLAlchemy models (9 tables) + OrgType enum |
 | `app/db/session.py` | Database session management |
 | `app/audit/logger.py` | Structured audit logging |
 | `config/witnesses.json` | Witness pool configuration |
@@ -44,7 +45,8 @@ The Issuer manages the full lifecycle of VVP credentials: organization managemen
 | `org_api_key.py` | `/organizations/{org_id}/api-keys` | CRUD + revoke (4 endpoints) |
 | `user.py` | `/users` | CRUD + `/me` + password change/reset (8 endpoints) |
 | `registry.py` | `/registry` | CRUD (4 endpoints) |
-| `schema.py` | `/schema` | list, get, verify, validate, import, create, delete, weboftrust (8 endpoints) |
+| `schema.py` | `/schema` | list, get, verify, validate, import, create, delete, weboftrust, authorized (9 endpoints) |
+| `session.py` | `/session` | `POST /session/switch-org` (Sprint 67) |
 | `credential.py` | `/credential` | issue, list, get, revoke, delete (5 endpoints) |
 | `dossier.py` | `/dossier` | create, build, build/info, associated, readiness, get (6 endpoints) |
 | `tn.py` | `/tn` | mappings CRUD + lookup + test-lookup (7 endpoints) |

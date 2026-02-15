@@ -23,7 +23,7 @@ from typing import Optional
 from app.config import MOCK_GLEIF_NAME, MOCK_GSMA_NAME, MOCK_QVI_NAME, MOCK_VLEI_ENABLED
 from app.vetter.constants import GSMA_GOVERNANCE_SCHEMA_SAID, VETTER_CERT_SCHEMA_SAID
 from app.db.session import get_db_session
-from app.db.models import MockVLEIState as MockVLEIStateModel
+from app.db.models import MockVLEIState as MockVLEIStateModel, Organization, OrgType
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +44,9 @@ class MockVLEIState:
     gsma_aid: str = ""
     gsma_registry_key: str = ""
     gsma_governance_said: str = ""  # Sprint 62: governance credential SAID
+    gleif_org_id: str = ""  # Sprint 67: promoted Organization ID
+    qvi_org_id: str = ""  # Sprint 67: promoted Organization ID
+    gsma_org_id: str = ""  # Sprint 67: promoted Organization ID
     initialized: bool = True
 
 
@@ -125,6 +128,9 @@ class MockVLEIManager:
                         f"GSMA governance bootstrap failed (non-fatal): {e}. "
                         f"Governance features will be unavailable."
                     )
+            # Sprint 67: Promote trust anchors to first-class organizations
+            # Runs on restored-state path to backfill pre-Sprint67 deployments
+            self._promote_trust_anchors()
             return self._state
 
         # Import here to avoid circular imports
@@ -229,6 +235,9 @@ class MockVLEIManager:
             gsma_governance_said=gsma_governance_said,
         )
         self._persist_state(self._state)
+
+        # Sprint 67: Promote trust anchors to first-class organizations
+        self._promote_trust_anchors()
 
         log.info("Mock vLEI infrastructure initialized successfully")
         return self._state
@@ -526,6 +535,111 @@ class MockVLEIManager:
         log.info(f"Issued VetterCertification for {name}: {cred_info.said[:16]}...")
         return cred_info.said
 
+    def _promote_trust_anchors(self) -> None:
+        """Promote trust-anchor identities to first-class Organization records.
+
+        Sprint 67: Creates Organization DB records for GLEIF, QVI, and GSMA
+        so they appear in the org list and can have admin users and credentials.
+
+        Matching strategy (no name-based matching):
+        1. Check persisted org_id in MockVLEIState → load by ID
+        2. Check if Organization with matching AID exists → update org_type
+        3. Create new Organization (with name collision safety)
+
+        Idempotent: safe to call on every startup (both fresh and restored paths).
+        """
+        if self._state is None:
+            return
+
+        import uuid
+        from app.org.lei_generator import generate_pseudo_lei
+
+        trust_anchors = [
+            (MOCK_GLEIF_NAME, self._state.gleif_aid, self._state.gleif_registry_key,
+             OrgType.ROOT_AUTHORITY, "gleif_org_id"),
+            (MOCK_QVI_NAME, self._state.qvi_aid, self._state.qvi_registry_key,
+             OrgType.QVI, "qvi_org_id"),
+        ]
+        if self._state.gsma_aid:
+            trust_anchors.append(
+                (MOCK_GSMA_NAME, self._state.gsma_aid, self._state.gsma_registry_key,
+                 OrgType.VETTER_AUTHORITY, "gsma_org_id"),
+            )
+
+        state_changed = False
+        try:
+            with get_db_session() as db:
+                for name, aid, registry_key, org_type, state_field in trust_anchors:
+                    org = None
+                    persisted_org_id = getattr(self._state, state_field, "")
+
+                    # Strategy 1: Load by persisted org_id
+                    if persisted_org_id:
+                        org = db.query(Organization).filter(
+                            Organization.id == persisted_org_id
+                        ).first()
+                        if org:
+                            # Ensure org_type is correct (upgrade path)
+                            if org.org_type != org_type.value:
+                                org.org_type = org_type.value
+                                state_changed = True
+                            log.debug(f"Trust anchor {name}: found by persisted org_id {persisted_org_id[:8]}...")
+                            continue
+
+                    # Strategy 2: Find by AID
+                    if aid:
+                        org = db.query(Organization).filter(
+                            Organization.aid == aid
+                        ).first()
+                        if org:
+                            if org.org_type != org_type.value:
+                                org.org_type = org_type.value
+                            setattr(self._state, state_field, org.id)
+                            state_changed = True
+                            log.info(f"Trust anchor {name}: matched by AID, org_id={org.id[:8]}...")
+                            continue
+
+                    # Strategy 3: Create new Organization
+                    org_id = str(uuid.uuid4())
+                    pseudo_lei = generate_pseudo_lei(name, org_id)
+
+                    # Name collision safety: if name already taken, append disambiguator
+                    org_name = name
+                    existing = db.query(Organization).filter(
+                        Organization.name == org_name
+                    ).first()
+                    if existing:
+                        org_name = f"{name}-ta-{aid[:8] if aid else org_id[:8]}"
+                        log.warning(
+                            f"Trust anchor name '{name}' already taken by org {existing.id[:8]}..., "
+                            f"using '{org_name}' instead"
+                        )
+
+                    org = Organization(
+                        id=org_id,
+                        name=org_name,
+                        pseudo_lei=pseudo_lei,
+                        aid=aid,
+                        registry_key=registry_key,
+                        org_type=org_type.value,
+                        enabled=True,
+                    )
+                    db.add(org)
+                    setattr(self._state, state_field, org_id)
+                    state_changed = True
+                    log.info(f"Trust anchor {name}: created org {org_id[:8]}... (type={org_type.value})")
+
+                db.flush()
+
+            if state_changed:
+                self._persist_state(self._state)
+                log.info("Trust anchor promotion complete — state updated")
+            else:
+                log.debug("Trust anchor promotion: no changes needed")
+
+        except Exception as e:
+            log.error(f"Trust anchor promotion failed (non-fatal): {e}")
+
     def _load_persisted_state(self) -> Optional[MockVLEIState]:
         """Load persisted mock vLEI state from database."""
         try:
@@ -541,6 +655,9 @@ class MockVLEIManager:
                         gsma_aid=state_record.gsma_aid or "",
                         gsma_registry_key=state_record.gsma_registry_key or "",
                         gsma_governance_said=getattr(state_record, "gsma_governance_said", None) or "",
+                        gleif_org_id=getattr(state_record, "gleif_org_id", None) or "",
+                        qvi_org_id=getattr(state_record, "qvi_org_id", None) or "",
+                        gsma_org_id=getattr(state_record, "gsma_org_id", None) or "",
                     )
         except Exception as e:
             # Database may not be initialized yet
@@ -564,6 +681,9 @@ class MockVLEIManager:
                     gsma_aid=state.gsma_aid or None,
                     gsma_registry_key=state.gsma_registry_key or None,
                     gsma_governance_said=state.gsma_governance_said or None,
+                    gleif_org_id=state.gleif_org_id or None,
+                    qvi_org_id=state.qvi_org_id or None,
+                    gsma_org_id=state.gsma_org_id or None,
                 )
                 db.add(state_record)
                 log.info("Persisted mock vLEI state to database")

@@ -9,6 +9,7 @@ This module defines the database schema for:
 """
 
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 from sqlalchemy import (
@@ -23,6 +24,22 @@ from sqlalchemy import (
     event,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+class OrgType(str, Enum):
+    """Organization types in the trust chain hierarchy.
+
+    Sprint 67: Distinguishes trust-anchor organizations from regular tenants.
+    - ROOT_AUTHORITY: GLEIF (issues QVI credentials)
+    - QVI: Qualified vLEI Issuer (issues LE credentials)
+    - VETTER_AUTHORITY: GSMA or similar (issues VetterCertifications)
+    - REGULAR: Standard AP organizations (issue Brand, TN Alloc, DE credentials)
+    """
+
+    ROOT_AUTHORITY = "root_authority"
+    QVI = "qvi"
+    VETTER_AUTHORITY = "vetter_authority"
+    REGULAR = "regular"
 
 
 class Base(DeclarativeBase):
@@ -51,6 +68,7 @@ class Organization(Base):
     le_credential_said = Column(String(44), nullable=True)  # Legal Entity credential SAID
     registry_key = Column(String(44), nullable=True)  # TEL registry prefix
     vetter_certification_said = Column(String(44), nullable=True)  # Active VetterCert SAID
+    org_type = Column(String(20), default=OrgType.REGULAR.value, nullable=False)  # Sprint 67
     enabled = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -237,6 +255,9 @@ class MockVLEIState(Base):
     gsma_aid = Column(String(44), nullable=True)
     gsma_registry_key = Column(String(44), nullable=True)
     gsma_governance_said = Column(String(44), nullable=True)  # Sprint 62
+    gleif_org_id = Column(String(36), nullable=True)  # Sprint 67: promoted Organization ID
+    qvi_org_id = Column(String(36), nullable=True)  # Sprint 67: promoted Organization ID
+    gsma_org_id = Column(String(36), nullable=True)  # Sprint 67: promoted Organization ID
     initialized_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self) -> str:

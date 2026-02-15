@@ -13,7 +13,7 @@ import logging
 import secrets
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -47,6 +47,8 @@ class Session:
     created_at: datetime
     expires_at: datetime
     last_accessed: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    home_org_id: str | None = None     # Sprint 67: Immutable — set on session creation
+    active_org_id: str | None = None   # Sprint 67: Mutable — set by POST /session/switch-org
 
     @property
     def is_expired(self) -> bool:
@@ -164,6 +166,7 @@ class InMemorySessionStore(SessionStore):
             created_at=now,
             expires_at=now + timedelta(seconds=ttl_seconds),
             last_accessed=now,
+            home_org_id=principal.organization_id,  # Sprint 67: immutable
         )
 
         async with self._lock:
@@ -234,7 +237,31 @@ class InMemorySessionStore(SessionStore):
 
             # Update last accessed time
             session.last_accessed = datetime.now(timezone.utc)
+
+            # Sprint 67: If active_org_id is set, return a cloned session
+            # with overridden principal.organization_id. The stored session
+            # is NOT mutated — the original principal is preserved.
+            if session.active_org_id:
+                effective_principal = replace(
+                    session.principal,
+                    organization_id=session.active_org_id,
+                )
+                return replace(session, principal=effective_principal)
+
             return session
+
+    async def set_active_org(self, session_id: str, org_id: str | None) -> bool:
+        """Set the active_org_id on the stored session (not a clone).
+
+        Sprint 67: Used by switch-org to update the stored session directly,
+        since get() returns a clone when active_org_id is set.
+        """
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return False
+            session.active_org_id = org_id
+            return True
 
     async def delete(self, session_id: str) -> bool:
         """Delete a session."""

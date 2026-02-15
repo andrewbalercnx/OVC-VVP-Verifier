@@ -146,3 +146,5 @@ def init_database() -> None:
     run_sprint61(engine)
     from app.db.migrations.sprint62_gsma_governance import run_migrations as run_sprint62
     run_sprint62(engine)
+    from app.db.migrations.sprint67_org_type import run_migrations as run_sprint67
+    run_sprint67(engine)

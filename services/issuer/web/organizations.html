@@ -76,6 +76,27 @@
       background: var(--vvp-danger-bg, #fee2e2);
       color: var(--vvp-danger);
     }
+    .type-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .type-badge.root_authority { background: #dbeafe; color: #1d4ed8; }
+    .type-badge.qvi { background: #ede9fe; color: #6d28d9; }
+    .type-badge.vetter_authority { background: #dcfce7; color: #15803d; }
+    .type-badge.regular { background: #f3f4f6; color: #6b7280; }
+    .org-card-header h3 a {
+      color: inherit;
+      text-decoration: none;
+    }
+    .org-card-header h3 a:hover {
+      text-decoration: underline;
+      color: var(--vvp-primary, #2563eb);
+    }
     .org-card-actions {
       padding: 0.75rem 1.25rem;
       border-top: 1px solid var(--vvp-border);
@@ -256,13 +277,19 @@
         return;
       }
 
-      container.innerHTML = orgs.map(org => `
+      container.innerHTML = orgs.map(org => {
+        const orgType = org.org_type || 'regular';
+        const typeLabel = { root_authority: 'Root Authority', qvi: 'QVI', vetter_authority: 'Vetter Authority', regular: 'Organization' }[orgType] || orgType;
+        return `
         <div class="org-card" data-org-id="${escapeHtml(org.id)}">
           <div class="org-card-header">
-            <h3>${escapeHtml(org.name)}</h3>
-            <span class="status-badge ${org.enabled ? 'enabled' : 'disabled'}">
-              ${org.enabled ? 'Active' : 'Disabled'}
-            </span>
+            <h3><a href="/ui/organization-detail?id=${encodeURIComponent(org.id)}">${escapeHtml(org.name)}</a></h3>
+            <div>
+              <span class="type-badge ${escapeHtml(orgType)}">${escapeHtml(typeLabel)}</span>
+              <span class="status-badge ${org.enabled ? 'enabled' : 'disabled'}">
+                ${org.enabled ? 'Active' : 'Disabled'}
+              </span>
+            </div>
           </div>
           <div class="org-card-body">
             <div class="org-field">
@@ -295,7 +322,7 @@
             </button>
           </div>
         </div>
-      `).join('');
+      `}).join('');
 
       // Load API keys for each org
       orgs.forEach(org => loadApiKeys(org.id));

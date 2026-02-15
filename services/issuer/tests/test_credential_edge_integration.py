@@ -59,11 +59,50 @@ async def create_test_registry(
     return response.json()["registry"]
 
 
-async def setup_identity_and_registry(client: AsyncClient) -> tuple[dict, dict]:
-    """Helper to set up identity and registry for tests."""
+def _create_test_org(org_type: str = "regular") -> str:
+    """Create a test org in DB. Returns org_id (Sprint 67: required for cred issuance)."""
+    from app.db.session import init_database, SessionLocal
+    from app.db.models import Organization
+
+    init_database()
+    org_id = str(uuid.uuid4())
+    db = SessionLocal()
+    try:
+        org = Organization(
+            id=org_id,
+            name=f"edge-test-{uuid.uuid4().hex[:8]}",
+            pseudo_lei=f"54930{uuid.uuid4().hex[:15]}",
+            aid=f"E{uuid.uuid4().hex[:43]}",
+            registry_key=f"E{uuid.uuid4().hex[:43]}",
+            org_type=org_type,
+            enabled=True,
+        )
+        db.add(org)
+        db.commit()
+        return org_id
+    finally:
+        db.close()
+
+
+async def setup_identity_and_registry(client: AsyncClient) -> tuple[dict, dict, str]:
+    """Helper to set up identity, registry, and org for tests."""
     identity = await create_test_identity(client)
     registry = await create_test_registry(client, identity["name"])
-    return identity, registry
+    org_id = _create_test_org("regular")
+
+    # Sprint 67: Sync org AID and registry_key with real KERI identity/registry
+    from app.db.session import SessionLocal
+    from app.db.models import Organization
+    db = SessionLocal()
+    try:
+        org = db.query(Organization).filter(Organization.id == org_id).first()
+        org.aid = identity["aid"]
+        org.registry_key = registry["registry_key"]
+        db.commit()
+    finally:
+        db.close()
+
+    return identity, registry, org_id
 
 
 # =============================================================================
@@ -77,7 +116,7 @@ class TestCredentialEdgePayload:
     @pytest.mark.asyncio
     async def test_issue_with_edges_including_operator(self, client: AsyncClient):
         """Issue a credential with edges that include the 'o' (operator) field."""
-        identity, registry = await setup_identity_and_registry(client)
+        identity, registry, org_id = await setup_identity_and_registry(client)
 
         # First issue a credential to use as an edge target
         target_response = await client.post(
@@ -91,6 +130,7 @@ class TestCredentialEdgePayload:
                     "doNotOriginate": False,
                 },
                 "publish_to_witnesses": False,
+                "organization_id": org_id,
             },
         )
         assert target_response.status_code == 200
@@ -115,6 +155,7 @@ class TestCredentialEdgePayload:
                     },
                 },
                 "publish_to_witnesses": False,
+                "organization_id": org_id,
             },
         )
         assert response.status_code == 200
@@ -124,7 +165,7 @@ class TestCredentialEdgePayload:
     @pytest.mark.asyncio
     async def test_issue_with_edges_no_operator(self, client: AsyncClient):
         """Issue a credential with edges without the 'o' field (optional)."""
-        identity, registry = await setup_identity_and_registry(client)
+        identity, registry, org_id = await setup_identity_and_registry(client)
 
         target_response = await client.post(
             "/credential/issue",
@@ -137,6 +178,7 @@ class TestCredentialEdgePayload:
                     "doNotOriginate": False,
                 },
                 "publish_to_witnesses": False,
+                "organization_id": org_id,
             },
         )
         assert target_response.status_code == 200
@@ -159,6 +201,7 @@ class TestCredentialEdgePayload:
                     },
                 },
                 "publish_to_witnesses": False,
+                "organization_id": org_id,
             },
         )
         assert response.status_code == 200
@@ -166,7 +209,7 @@ class TestCredentialEdgePayload:
     @pytest.mark.asyncio
     async def test_edge_payload_structure_in_detail(self, client: AsyncClient):
         """Verify edge payload {n, s, o} is preserved in credential detail."""
-        identity, registry = await setup_identity_and_registry(client)
+        identity, registry, org_id = await setup_identity_and_registry(client)
 
         target_response = await client.post(
             "/credential/issue",
@@ -179,6 +222,7 @@ class TestCredentialEdgePayload:
                     "doNotOriginate": False,
                 },
                 "publish_to_witnesses": False,
+                "organization_id": org_id,
             },
         )
         assert target_response.status_code == 200
@@ -203,6 +247,7 @@ class TestCredentialEdgePayload:
                     },
                 },
                 "publish_to_witnesses": False,
+                "organization_id": org_id,
             },
         )
         assert issue_response.status_code == 200
@@ -232,7 +277,7 @@ class TestCredentialListFiltering:
     @pytest.mark.asyncio
     async def test_list_by_schema_said(self, client: AsyncClient):
         """GET /credential?schema_said=... filters by schema."""
-        identity, registry = await setup_identity_and_registry(client)
+        identity, registry, org_id = await setup_identity_and_registry(client)
 
         # Issue credential with TN Allocation schema
         response = await client.post(
@@ -246,6 +291,7 @@ class TestCredentialListFiltering:
                     "doNotOriginate": False,
                 },
                 "publish_to_witnesses": False,
+                "organization_id": org_id,
             },
         )
         assert response.status_code == 200
@@ -263,7 +309,7 @@ class TestCredentialListFiltering:
     @pytest.mark.asyncio
     async def test_list_includes_status(self, client: AsyncClient):
         """Listed credentials include status field."""
-        identity, registry = await setup_identity_and_registry(client)
+        identity, registry, org_id = await setup_identity_and_registry(client)
 
         await client.post(
             "/credential/issue",
@@ -276,6 +322,7 @@ class TestCredentialListFiltering:
                     "doNotOriginate": False,
                 },
                 "publish_to_witnesses": False,
+                "organization_id": org_id,
             },
         )
 

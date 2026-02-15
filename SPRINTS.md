@@ -53,7 +53,8 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 63 | Dossier Creation Wizard UI | COMPLETE | Sprint 41, 32, 60b |
 | 64 | Repository Migration to Rich-Connexions-Ltd | COMPLETE | - |
 | 65 | Schema-Aware Credential Management | COMPLETE | Sprint 63, 34 |
-| 66 | Knowledge Base & Documentation Refresh | TODO | - |
+| 66 | Knowledge Base & Documentation Refresh | COMPLETE | - |
+| 67 | Trust Anchor Admin & Credential Issuance UI | COMPLETE | Sprint 61, 65 |
 
 ---
 
@@ -4665,5 +4666,151 @@ Add an interactive guided walkthrough that presents documentation alongside the 
 - Walkthrough steps cover main user journeys (credentials, dossier, verification)
 - Right pane iframe updates to the correct UI page on each step transition
 
+---
+
+## Sprint 67: Trust Anchor Admin & Credential Issuance UI
+
+**Goal:** Enable administrators to manage trust-chain organizations (GLEIF, QVI, GSMA) through the same UI as regular organizations, create admin users for them, issue credentials scoped to what each organization is authorized to issue, and switch org context ("act on behalf of") when performing actions.
+
+### Why This Matters
+
+Today the mock trust-chain entities (GLEIF, QVI, GSMA) exist as standalone KERI identities managed by `MockVLEIManager`, invisible to the Organization UI. There is no way to:
+- See GLEIF/QVI/GSMA in the organizations list
+- Create admin users for these organizations
+- Log in "as GSMA" and issue VetterCertifications through the UI
+- Restrict which credential schemas an organization is authorized to issue
+
+This sprint promotes trust anchors to first-class organizations and adds schema-scoped credential issuance, making the system fully administrable through the web UI.
+
+### Current State (Gaps)
+
+| Area | Current State | Gap |
+|------|---------------|-----|
+| Trust anchors | KERI identities only, not Organization DB records | Not visible in org UI, can't assign admin users |
+| Credential issuance | Generic form, any admin can issue any schema type | No schema authorization per org type |
+| VetterCert issuance | Dedicated API endpoint, admin-only, hard-coded to mock-gsma | No UI; can't issue "as GSMA" |
+| LE credential issuance | Auto-issued during org creation, hard-coded to mock-qvi | No UI; can't issue "as QVI" |
+| Org switching | Users bound to one org; admins can cross-org via request body | No UI org switcher |
+| Org types | All orgs structurally identical | No way to distinguish trust anchor from regular org |
+
+### Deliverables
+
+#### Phase 1: Organization Type Model
+
+Add an `org_type` field to the Organization model to distinguish trust anchors from regular organizations.
+
+- [x] **Organization type enum** — Add `OrgType` enum to `app/db/models.py`:
+  - `root_authority` — GLEIF (issues QVI credentials)
+  - `qvi` — Qualified vLEI Issuer (issues LE credentials to organizations)
+  - `vetter_authority` — GSMA (issues VetterCertification and Governance credentials)
+  - `regular` — Standard organization (issues Brand, TNAlloc credentials)
+- [x] **DB migration** — Add `org_type` column (String, default `"regular"`) to `organizations` table
+- [x] **Promote trust anchors** — Modify `MockVLEIManager.initialize()` to create Organization DB records for GLEIF, QVI, and GSMA alongside their KERI identities, linking `Organization.aid` to the mock identity AID. Maintain backward compatibility: if orgs already exist (matching by AID), update them rather than duplicating.
+- [x] **MockVLEIState linkage** — Store `gleif_org_id`, `qvi_org_id`, `gsma_org_id` in `MockVLEIState` so the manager can find its DB records. Update `issue_le_credential()` and `issue_vetter_certification()` to reference org records.
+- [x] **Organization API updates** — Return `org_type` in `GET /organizations` and `GET /organizations/{id}` responses. Protect `org_type` from modification by non-admins.
+- [x] **Tests** — Verify trust anchor orgs are created on bootstrap, org_type persists across restarts, backward-compatible upgrade from pre-Sprint 67 state.
+
+#### Phase 2: Schema Authorization
+
+Restrict which credential schemas each organization type is authorized to issue.
+
+- [x] **Schema authorization mapping** — Add a module `app/auth/schema_auth.py` that defines:
+  ```
+  root_authority → [QVI Credential schema]
+  qvi            → [Legal Entity schema, Legal Entity (Extended) schema]
+  vetter_authority → [VetterCertification schema, Governance schema]
+  regular        → [Brand Credential schema, Brand (Extended) schema,
+                     TN Allocation schema, TN Allocation (Extended) schema]
+  ```
+  This is a hard-coded mapping (not a DB table) since the trust chain structure is defined by the vLEI/VVP specification and not user-configurable.
+
+- [x] **Credential issuance enforcement** — In `POST /credential/issue`, after resolving the issuing org, check that the org's `org_type` authorizes the requested schema SAID. Return 403 if unauthorized.
+
+- [x] **Schema listing per org** — Add `GET /schema/authorized` + `GET /schemas/authorized` dual-route with `organization_id` query param. Cross-org requires `issuer:admin`.
+
+- [ ] **Refactor VetterCert issuance** — Deferred. Schema auth blocks unauthorized schemas by org type; Sprint 61 VetterCert guard remains intact.
+
+- [ ] **Refactor LE issuance** — Deferred. QVI issuance continues via mock-qvi state.
+
+- [x] **Tests** — 32 schema authorization tests covering all org types, cross-org access control, and Sprint 61 guard preservation.
+
+#### Phase 3: Org Context Switching ("Act on Behalf of")
+
+Allow system administrators to switch their active organization context in the UI.
+
+- [x] **Session org context** — Extend the session model to carry an `active_org_id` field separate from `User.organization_id`. The user's "home org" stays the same, but their session can be switched to act on behalf of another org.
+
+- [x] **Org switch API** — Add `POST /session/switch-org` endpoint:
+  - Request: `{ "organization_id": "..." }`
+  - Requires `issuer:admin` system role (only admins can switch)
+  - Updates session's `active_org_id`
+  - Returns updated session info including active org name and type
+  - Switching to `null` reverts to user's home org
+
+- [x] **Principal resolution** — Update the auth middleware to populate `principal.organization_id` from `session.active_org_id` when set, falling back to `user.organization_id`. All downstream org-scoped operations automatically use the active context.
+
+- [x] **UI org switcher** — Shared modal in `shared.js` with org list, type badges, page reload on switch/revert. Non-admin users see org name (read-only).
+
+- [x] **Tests** — 17 org switching tests covering session update, principal resolution, non-admin 403, invalid org 404, audit events.
+
+#### Phase 4: Org Admin Management UI
+
+Enable creation and management of admin users for any organization, including trust anchors.
+
+- [x] **Organization detail page** — Create `web/organization-detail.html` (linked from org cards) with:
+  - Organization info panel (name, type, AID, pseudo-LEI, status, registry key)
+  - **Users tab** — List users belonging to this org with their roles
+  - **Add user** button — Form to create a new user in this org with selectable org roles
+  - **Credentials tab** — List credentials issued by this org (filtered by `ManagedCredential.organization_id`)
+  - **VetterCert tab** (vetter_authority orgs only) — List VetterCertifications issued by this org
+
+- [x] **Organization cards update** — Show `org_type` badge on each card in the organizations list (e.g., "Root Authority", "QVI", "Vetter Authority", "Organization"). Trust anchor orgs get a distinct visual treatment.
+
+- [x] **User creation scoped to org** — The existing `POST /users` endpoint already supports `organization_id` and `org_roles`. The new UI page calls this endpoint with the viewed org's ID pre-filled.
+
+- [x] **Tests** — Org detail page loads for all org types, user creation assigns correct org.
+
+#### Phase 5: Credential Issuance UI Enhancements
+
+Update the credential issuance UI to respect org context and schema authorization.
+
+- [x] **Schema filter by active org** — Schema dropdown fetches from `GET /schema/authorized?organization_id={active_org_id}`. VetterCert filtered from generic picker; vetter link banner shown for vetter_authority orgs.
+
+- [x] **Issuer identity display** — "Issuing as" banner shows effective org name and type.
+
+- [x] **Recipient org picker** — Org picker dropdown populated from `GET /organizations/names`.
+
+- [x] **Issuance confirmation** — `confirm()` dialog before POST showing schema name and org.
+
+- [x] **Issued credentials view** — Credential table scoped by org_id for admins.
+
+- [x] **Tests** — Schema dropdown respects org type, unauthorized schema returns 403, issuer-binding enforced.
+
+### Technical Notes
+
+- **Backward compatibility** — Existing organizations (org_type `regular`) continue to work exactly as before. The `org_type` column defaults to `"regular"` for existing rows.
+- **Bootstrap idempotency** — `MockVLEIManager.initialize()` must be idempotent: if trust anchor orgs already exist in DB (matched by AID), update rather than recreate. If mock_vlei_state already has org IDs, skip creation.
+- **No new external dependencies** — All changes use existing FastAPI, SQLAlchemy, and vanilla JS patterns already in the codebase.
+- **Session store** — The `InMemorySessionStore` already holds `Principal` objects per session. Adding `active_org_id` is a lightweight extension — no schema migration needed (sessions are in-memory).
+- **Credential issuance refactor** — The refactor of `issue_le_credential()` and `issue_vetter_certification()` to use org-type checks instead of hard-coded mock entity names is internal to `MockVLEIManager`. External API contracts don't change.
+- **UI pattern** — Follow existing patterns: vanilla JS, `authFetch()` helper, Alpine.js-style templating (if used), cards/tables layout consistent with `organizations.html` and `credentials.html`.
+
+### Dependencies
+
+- Sprint 61 (VetterCertification API and GSMA mock infrastructure)
+- Sprint 65 (Schema-aware credential management, schema browser)
+
+### Exit Criteria
+
+- GLEIF, QVI, and GSMA appear as organizations in the organizations UI with correct type badges
+- System admin can create admin users for any org (including trust anchors) via the org detail page
+- System admin can switch org context via the top-nav dropdown
+- Credential issuance UI shows only schemas authorized for the active org's type
+- Issuing a credential from the GSMA org context uses GSMA's AID and registry
+- Issuing a VetterCert credential from the GSMA org context succeeds
+- Issuing an LE credential from the QVI org context succeeds
+- Attempting to issue an unauthorized schema type returns 403
+- All existing tests pass (no regressions)
+- New tests cover: org type model, schema authorization, org switching, admin user creation for trust anchors, credential issuance per org type
 
 

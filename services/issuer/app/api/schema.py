@@ -1,8 +1,9 @@
 """Schema management endpoints."""
 import logging
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.orm import Session
 
 from app.api.models import (
     SchemaResponse,
@@ -17,8 +18,10 @@ from app.api.models import (
     WebOfTrustRegistryResponse,
 )
 from app.auth.api_key import Principal
-from app.auth.roles import require_readonly, require_admin
+from app.auth.roles import require_readonly, require_admin, require_auth
 from app.audit import get_audit_logger
+from app.db.session import get_db
+from app.db.models import Organization
 from common.vvp.schema.registry import (
     is_known_schema,
     KNOWN_SCHEMA_SAIDS,
@@ -26,6 +29,9 @@ from common.vvp.schema.registry import (
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/schema", tags=["schema"])
+
+# Sprint 67: Spec-compatible alias at /schemas/authorized (dual-route design)
+schemas_compat_router = APIRouter(prefix="/schemas", tags=["schema"])
 
 
 # Import schema store and SAID functions
@@ -79,6 +85,72 @@ async def list_schemas() -> SchemaListResponse:
         schemas=schemas,
         count=len(schemas),
     )
+
+
+async def _list_authorized_schemas_impl(
+    organization_id: Optional[str],
+    principal: Principal,
+    db: Session,
+) -> SchemaListResponse:
+    """Shared implementation for GET /schema/authorized and /schemas/authorized.
+
+    Sprint 67: Returns only schemas authorized for the resolved org's type.
+    """
+    from app.auth.schema_auth import get_authorized_schemas
+
+    # Resolve org context
+    if organization_id:
+        if organization_id != principal.organization_id and not principal.is_system_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Only system admins can query another organization's authorized schemas.",
+            )
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+        if org is None:
+            raise HTTPException(status_code=404, detail=f"Organization not found: {organization_id}")
+    elif principal.organization_id:
+        org = db.query(Organization).filter(Organization.id == principal.organization_id).first()
+        if org is None:
+            raise HTTPException(status_code=404, detail="Principal's organization not found")
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="No organization context. Provide organization_id or authenticate as an org member.",
+        )
+
+    authorized_saids = get_authorized_schemas(org.org_type or "regular")
+    all_schemas = list_all_schemas()
+
+    schemas = [
+        SchemaResponse(
+            said=s["said"],
+            title=s["title"],
+            description=s.get("description"),
+            source=s["source"],
+            schema_document=None,
+        )
+        for s in all_schemas
+        if s["said"] in authorized_saids
+    ]
+
+    return SchemaListResponse(schemas=schemas, count=len(schemas))
+
+
+@router.get("/authorized", response_model=SchemaListResponse)
+async def list_authorized_schemas(
+    organization_id: Optional[str] = None,
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
+) -> SchemaListResponse:
+    """List schemas authorized for an organization's type.
+
+    Sprint 67: Returns only schemas that the org is allowed to issue,
+    based on org_type → SCHEMA_AUTHORIZATION mapping.
+
+    Query params:
+        organization_id: Optional org ID (admin-only cross-org). Defaults to principal's org.
+    """
+    return await _list_authorized_schemas_impl(organization_id, principal, db)
 
 
 @router.get("/weboftrust/registry", response_model=WebOfTrustRegistryResponse)
@@ -378,3 +450,17 @@ async def delete_schema(
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# Sprint 67: Spec-compatible alias — identical handler on /schemas/authorized
+@schemas_compat_router.get("/authorized", response_model=SchemaListResponse)
+async def list_authorized_schemas_compat(
+    organization_id: Optional[str] = None,
+    principal: Principal = require_auth,
+    db: Session = Depends(get_db),
+) -> SchemaListResponse:
+    """Spec-compatible alias for GET /schema/authorized.
+
+    Sprint 67: Dual-route design — shared service function, independent handlers.
+    """
+    return await _list_authorized_schemas_impl(organization_id, principal, db)

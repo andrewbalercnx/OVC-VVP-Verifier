@@ -17,6 +17,34 @@ def unique_name(prefix: str = "test") -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
+def _create_test_org(org_type: str = "regular") -> str:
+    """Create a test org in DB. Returns org_id.
+
+    Sprint 67: Credential issuance requires org context with matching org_type.
+    """
+    from app.db.session import init_database, SessionLocal
+    from app.db.models import Organization
+
+    init_database()
+    org_id = str(uuid.uuid4())
+    db = SessionLocal()
+    try:
+        org = Organization(
+            id=org_id,
+            name=f"cred-test-{uuid.uuid4().hex[:8]}",
+            pseudo_lei=f"54930{uuid.uuid4().hex[:15]}",
+            aid=f"E{uuid.uuid4().hex[:43]}",
+            registry_key=f"E{uuid.uuid4().hex[:43]}",
+            org_type=org_type,
+            enabled=True,
+        )
+        db.add(org)
+        db.commit()
+        return org_id
+    finally:
+        db.close()
+
+
 async def create_test_identity(client: AsyncClient, name: str = None) -> dict:
     """Helper to create a test identity."""
     name = name or unique_name("identity")
@@ -45,11 +73,31 @@ async def create_test_registry(
     return response.json()["registry"]
 
 
-async def setup_identity_and_registry(client: AsyncClient) -> tuple[dict, dict]:
-    """Helper to set up identity and registry for credential tests."""
+async def setup_identity_and_registry(client: AsyncClient) -> tuple[dict, dict, str]:
+    """Helper to set up identity, registry, and org for credential tests.
+
+    Sprint 67: Also creates a 'regular' org for schema authorization context.
+    The org's AID and registry_key are synced with the real KERI identity/registry
+    so the issuer-binding check passes.
+    Returns (identity, registry, org_id).
+    """
     identity = await create_test_identity(client)
     registry = await create_test_registry(client, identity["name"])
-    return identity, registry
+    org_id = _create_test_org("regular")
+
+    # Sprint 67: Sync org AID and registry_key with real KERI identity/registry
+    from app.db.session import SessionLocal
+    from app.db.models import Organization
+    db = SessionLocal()
+    try:
+        org = db.query(Organization).filter(Organization.id == org_id).first()
+        org.aid = identity["aid"]
+        org.registry_key = registry["registry_key"]
+        db.commit()
+    finally:
+        db.close()
+
+    return identity, registry, org_id
 
 
 # =============================================================================
@@ -60,7 +108,7 @@ async def setup_identity_and_registry(client: AsyncClient) -> tuple[dict, dict]:
 @pytest.mark.asyncio
 async def test_issue_credential_basic(client: AsyncClient):
     """Test basic credential issuance via API."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     response = await client.post(
         "/credential/issue",
@@ -73,6 +121,7 @@ async def test_issue_credential_basic(client: AsyncClient):
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert response.status_code == 200, f"Credential issuance failed: {response.text}"
@@ -91,7 +140,7 @@ async def test_issue_credential_basic(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_issue_credential_with_recipient(client: AsyncClient):
     """Test credential issuance with recipient AID."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Create another identity as recipient
     recipient = await create_test_identity(client)
@@ -108,6 +157,7 @@ async def test_issue_credential_with_recipient(client: AsyncClient):
             },
             "recipient_aid": recipient["aid"],
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert response.status_code == 200, f"Credential issuance failed: {response.text}"
@@ -120,7 +170,7 @@ async def test_issue_credential_with_recipient(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_issue_credential_private(client: AsyncClient):
     """Test credential issuance with privacy-preserving nonces."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     response = await client.post(
         "/credential/issue",
@@ -134,6 +184,7 @@ async def test_issue_credential_private(client: AsyncClient):
             },
             "private": True,
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert response.status_code == 200, f"Credential issuance failed: {response.text}"
@@ -152,6 +203,7 @@ async def test_issue_credential_private(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_issue_credential_registry_not_found(client: AsyncClient):
     """Test 400 when registry doesn't exist."""
+    org_id = _create_test_org("regular")
     response = await client.post(
         "/credential/issue",
         json={
@@ -163,6 +215,7 @@ async def test_issue_credential_registry_not_found(client: AsyncClient):
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert response.status_code == 400
@@ -170,9 +223,9 @@ async def test_issue_credential_registry_not_found(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_issue_credential_schema_not_found(client: AsyncClient):
-    """Test 400 when schema doesn't exist."""
-    identity, registry = await setup_identity_and_registry(client)
+async def test_issue_credential_schema_not_authorized(client: AsyncClient):
+    """Test 403 when schema is not authorized for org type (Sprint 67)."""
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     response = await client.post(
         "/credential/issue",
@@ -181,10 +234,13 @@ async def test_issue_credential_schema_not_found(client: AsyncClient):
             "schema_said": "Enonexistent12345678901234567890123456789012",
             "attributes": {"test": "data"},
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
-    assert response.status_code == 400
-    assert "schema not found" in response.json()["detail"].lower()
+    # Sprint 67: Unknown schemas are blocked by schema authorization (403) before
+    # reaching the "schema not found" check (400)
+    assert response.status_code == 403
+    assert "not authorized" in response.json()["detail"].lower()
 
 
 # =============================================================================
@@ -195,7 +251,7 @@ async def test_issue_credential_schema_not_found(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_get_credential(client: AsyncClient):
     """Test getting credential by SAID."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Issue a credential first
     issue_response = await client.post(
@@ -209,6 +265,7 @@ async def test_get_credential(client: AsyncClient):
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert issue_response.status_code == 200
@@ -240,7 +297,7 @@ async def test_get_credential_not_found(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_list_credentials(client: AsyncClient):
     """Test listing all credentials."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Issue two credentials
     for i in range(2):
@@ -255,6 +312,7 @@ async def test_list_credentials(client: AsyncClient):
                     "doNotOriginate": False,
                 },
                 "publish_to_witnesses": False,
+                "organization_id": org_id,
             },
         )
         assert response.status_code == 200
@@ -271,7 +329,7 @@ async def test_list_credentials(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_list_credentials_filter_by_registry(client: AsyncClient):
     """Test listing credentials filtered by registry key."""
-    identity, registry1 = await setup_identity_and_registry(client)
+    identity, registry1, org_id = await setup_identity_and_registry(client)
     registry2 = await create_test_registry(client, identity["name"])
 
     # Issue credential to registry1
@@ -286,6 +344,7 @@ async def test_list_credentials_filter_by_registry(client: AsyncClient):
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert response.status_code == 200
@@ -302,6 +361,7 @@ async def test_list_credentials_filter_by_registry(client: AsyncClient):
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert response.status_code == 200
@@ -319,7 +379,7 @@ async def test_list_credentials_filter_by_registry(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_list_credentials_filter_by_status(client: AsyncClient):
     """Test listing credentials filtered by status."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Issue a credential
     issue_response = await client.post(
@@ -333,6 +393,7 @@ async def test_list_credentials_filter_by_status(client: AsyncClient):
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert issue_response.status_code == 200
@@ -354,7 +415,7 @@ async def test_list_credentials_filter_by_status(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_revoke_credential(client: AsyncClient):
     """Test credential revocation."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Issue a credential
     issue_response = await client.post(
@@ -368,6 +429,7 @@ async def test_revoke_credential(client: AsyncClient):
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert issue_response.status_code == 200
@@ -400,7 +462,7 @@ async def test_revoke_credential_not_found(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_revoke_credential_already_revoked(client: AsyncClient):
     """Test 400 when credential is already revoked."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Issue a credential
     issue_response = await client.post(
@@ -414,6 +476,7 @@ async def test_revoke_credential_already_revoked(client: AsyncClient):
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert issue_response.status_code == 200
@@ -536,7 +599,7 @@ async def test_get_anchor_ixn_bytes_for_issued_credential(client: AsyncClient):
     """Test that get_anchor_ixn_bytes returns a valid KEL event for issued credential."""
     from app.keri.issuer import get_credential_issuer
 
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Issue a credential
     issue_response = await client.post(
@@ -550,6 +613,7 @@ async def test_get_anchor_ixn_bytes_for_issued_credential(client: AsyncClient):
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert issue_response.status_code == 200
@@ -572,7 +636,7 @@ async def test_get_anchor_ixn_bytes_for_revoked_credential(client: AsyncClient):
     """Test that get_anchor_ixn_bytes returns revocation anchor after revoke."""
     from app.keri.issuer import get_credential_issuer
 
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Issue a credential
     issue_response = await client.post(
@@ -586,6 +650,7 @@ async def test_get_anchor_ixn_bytes_for_revoked_credential(client: AsyncClient):
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert issue_response.status_code == 200
@@ -711,7 +776,7 @@ async def test_credential_witness_publishing_integration():
 @pytest.mark.asyncio
 async def test_delete_credential_success(client: AsyncClient):
     """Test successful credential deletion."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Issue a credential first
     issue_response = await client.post(
@@ -725,6 +790,7 @@ async def test_delete_credential_success(client: AsyncClient):
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         },
     )
     assert issue_response.status_code == 200

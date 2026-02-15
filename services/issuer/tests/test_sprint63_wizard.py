@@ -463,7 +463,7 @@ class TestCredentialFilters:
         """Schema SAID filter returns only matching credentials."""
         from tests.test_credential import setup_identity_and_registry
 
-        identity, registry = await setup_identity_and_registry(client)
+        identity, registry, org_id = await setup_identity_and_registry(client)
 
         # Issue a TN Allocation credential
         resp1 = await client.post("/credential/issue", json={
@@ -475,6 +475,7 @@ class TestCredentialFilters:
                 "doNotOriginate": False,
             },
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         })
         assert resp1.status_code == 200
 
@@ -484,6 +485,7 @@ class TestCredentialFilters:
             "schema_said": GCD_SCHEMA_SAID,
             "attributes": {"d": "", "dt": "2024-01-01T00:00:00Z"},
             "publish_to_witnesses": False,
+            "organization_id": org_id,
         })
         assert resp2.status_code == 200
 

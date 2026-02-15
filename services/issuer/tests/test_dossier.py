@@ -60,12 +60,38 @@ async def create_test_registry(
     return response.json()["registry"]
 
 
+def _create_test_org(org_type: str = "regular") -> str:
+    """Create a test org in DB. Returns org_id (Sprint 67: required for cred issuance)."""
+    from app.db.session import init_database, SessionLocal
+    from app.db.models import Organization
+
+    init_database()
+    org_id = str(uuid.uuid4())
+    db = SessionLocal()
+    try:
+        org = Organization(
+            id=org_id,
+            name=f"dossier-test-{uuid.uuid4().hex[:8]}",
+            pseudo_lei=f"54930{uuid.uuid4().hex[:15]}",
+            aid=f"E{uuid.uuid4().hex[:43]}",
+            registry_key=f"E{uuid.uuid4().hex[:43]}",
+            org_type=org_type,
+            enabled=True,
+        )
+        db.add(org)
+        db.commit()
+        return org_id
+    finally:
+        db.close()
+
+
 async def issue_test_credential(
     client: AsyncClient,
     registry_name: str,
     schema_said: str = TN_ALLOCATION_SCHEMA,
     attributes: dict = None,
     edges: dict = None,
+    organization_id: str = None,
 ) -> dict:
     """Helper to issue a test credential."""
     if attributes is None:
@@ -75,6 +101,10 @@ async def issue_test_credential(
             "doNotOriginate": False,
         }
 
+    # Sprint 67: Credential issuance requires org context
+    if organization_id is None:
+        organization_id = _create_test_org("regular")
+
     response = await client.post(
         "/credential/issue",
         json={
@@ -83,17 +113,36 @@ async def issue_test_credential(
             "attributes": attributes,
             "edges": edges,
             "publish_to_witnesses": False,
+            "organization_id": organization_id,
         },
     )
     assert response.status_code == 200, f"Failed to issue credential: {response.text}"
     return response.json()["credential"]
 
 
-async def setup_identity_and_registry(client: AsyncClient) -> tuple[dict, dict]:
-    """Helper to set up identity and registry for tests."""
+async def setup_identity_and_registry(client: AsyncClient) -> tuple[dict, dict, str]:
+    """Helper to set up identity, registry, and synced org for tests.
+
+    Sprint 67: Returns (identity, registry, org_id) with org AID/registry_key
+    synced to the real KERI identity for issuer-binding compliance.
+    """
     identity = await create_test_identity(client)
     registry = await create_test_registry(client, identity["name"])
-    return identity, registry
+    org_id = _create_test_org("regular")
+
+    # Sprint 67: Sync org AID and registry_key with real KERI identity/registry
+    from app.db.session import SessionLocal
+    from app.db.models import Organization
+    db = SessionLocal()
+    try:
+        org = db.query(Organization).filter(Organization.id == org_id).first()
+        org.aid = identity["aid"]
+        org.registry_key = registry["registry_key"]
+        db.commit()
+    finally:
+        db.close()
+
+    return identity, registry, org_id
 
 
 # =============================================================================
@@ -260,8 +309,8 @@ def test_serialize_dossier_content_types():
 @pytest.mark.asyncio
 async def test_build_single_credential_dossier(client: AsyncClient):
     """Test building dossier with single credential (no edges)."""
-    identity, registry = await setup_identity_and_registry(client)
-    credential = await issue_test_credential(client, registry["name"])
+    identity, registry, org_id = await setup_identity_and_registry(client)
+    credential = await issue_test_credential(client, registry["name"], organization_id=org_id)
 
     response = await client.post(
         "/dossier/build",
@@ -280,8 +329,8 @@ async def test_build_single_credential_dossier(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_build_dossier_cesr_format(client: AsyncClient):
     """Test building dossier in CESR format."""
-    identity, registry = await setup_identity_and_registry(client)
-    credential = await issue_test_credential(client, registry["name"])
+    identity, registry, org_id = await setup_identity_and_registry(client)
+    credential = await issue_test_credential(client, registry["name"], organization_id=org_id)
 
     response = await client.post(
         "/dossier/build",
@@ -298,8 +347,8 @@ async def test_build_dossier_cesr_format(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_build_dossier_info_endpoint(client: AsyncClient):
     """Test getting dossier metadata without content."""
-    identity, registry = await setup_identity_and_registry(client)
-    credential = await issue_test_credential(client, registry["name"])
+    identity, registry, org_id = await setup_identity_and_registry(client)
+    credential = await issue_test_credential(client, registry["name"], organization_id=org_id)
 
     response = await client.post(
         "/dossier/build/info",
@@ -321,8 +370,8 @@ async def test_build_dossier_info_endpoint(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_get_dossier_by_said(client: AsyncClient):
     """Test getting dossier by credential SAID."""
-    identity, registry = await setup_identity_and_registry(client)
-    credential = await issue_test_credential(client, registry["name"])
+    identity, registry, org_id = await setup_identity_and_registry(client)
+    credential = await issue_test_credential(client, registry["name"], organization_id=org_id)
 
     response = await client.get(
         f"/dossier/{credential['said']}",
@@ -344,16 +393,17 @@ async def test_get_dossier_by_said(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_build_chained_dossier(client: AsyncClient):
     """Test building dossier with chained credentials (root -> leaf)."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Issue leaf credential first
-    leaf = await issue_test_credential(client, registry["name"])
+    leaf = await issue_test_credential(client, registry["name"], organization_id=org_id)
 
     # Issue root credential with edge to leaf
     root = await issue_test_credential(
         client,
         registry["name"],
         edges={"auth": {"n": leaf["said"], "s": TN_ALLOCATION_SCHEMA}},
+        organization_id=org_id,
     )
 
     response = await client.post(
@@ -375,19 +425,21 @@ async def test_build_chained_dossier(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_dossier_topological_order(client: AsyncClient):
     """Test credentials are in topological order (dependencies first)."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Create chain: root -> mid -> leaf
-    leaf = await issue_test_credential(client, registry["name"])
+    leaf = await issue_test_credential(client, registry["name"], organization_id=org_id)
     mid = await issue_test_credential(
         client,
         registry["name"],
         edges={"source": {"n": leaf["said"], "s": TN_ALLOCATION_SCHEMA}},
+        organization_id=org_id,
     )
     root = await issue_test_credential(
         client,
         registry["name"],
         edges={"auth": {"n": mid["said"], "s": TN_ALLOCATION_SCHEMA}},
+        organization_id=org_id,
     )
 
     response = await client.post(
@@ -428,8 +480,8 @@ async def test_build_dossier_not_found(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_build_dossier_invalid_format(client: AsyncClient):
     """Test building dossier with invalid format."""
-    identity, registry = await setup_identity_and_registry(client)
-    credential = await issue_test_credential(client, registry["name"])
+    identity, registry, org_id = await setup_identity_and_registry(client)
+    credential = await issue_test_credential(client, registry["name"], organization_id=org_id)
 
     response = await client.post(
         "/dossier/build",
@@ -441,13 +493,14 @@ async def test_build_dossier_invalid_format(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_dangling_edge_warning(client: AsyncClient):
     """Test warning when edge target doesn't exist."""
-    identity, registry = await setup_identity_and_registry(client)
+    identity, registry, org_id = await setup_identity_and_registry(client)
 
     # Issue credential with edge to non-existent credential
     root = await issue_test_credential(
         client,
         registry["name"],
         edges={"missing": {"n": "Enonexistent_said", "s": TN_ALLOCATION_SCHEMA}},
+        organization_id=org_id,
     )
 
     response = await client.post(
@@ -480,8 +533,8 @@ async def test_json_format_verifier_compatible(client: AsyncClient):
     except ImportError:
         pytest.skip("Verifier's parse_dossier not available")
 
-    identity, registry = await setup_identity_and_registry(client)
-    credential = await issue_test_credential(client, registry["name"])
+    identity, registry, org_id = await setup_identity_and_registry(client)
+    credential = await issue_test_credential(client, registry["name"], organization_id=org_id)
 
     response = await client.post(
         "/dossier/build",
@@ -508,8 +561,8 @@ async def test_cesr_format_verifier_compatible(client: AsyncClient):
     except ImportError:
         pytest.skip("Verifier's parse_dossier not available")
 
-    identity, registry = await setup_identity_and_registry(client)
-    credential = await issue_test_credential(client, registry["name"])
+    identity, registry, org_id = await setup_identity_and_registry(client)
+    credential = await issue_test_credential(client, registry["name"], organization_id=org_id)
 
     response = await client.post(
         "/dossier/build",
@@ -536,12 +589,13 @@ async def test_chained_dossier_verifier_compatible(client: AsyncClient):
     except ImportError:
         pytest.skip("Verifier's parse_dossier not available")
 
-    identity, registry = await setup_identity_and_registry(client)
-    leaf = await issue_test_credential(client, registry["name"])
+    identity, registry, org_id = await setup_identity_and_registry(client)
+    leaf = await issue_test_credential(client, registry["name"], organization_id=org_id)
     root = await issue_test_credential(
         client,
         registry["name"],
         edges={"auth": {"n": leaf["said"], "s": TN_ALLOCATION_SCHEMA}},
+        organization_id=org_id,
     )
 
     response = await client.post(

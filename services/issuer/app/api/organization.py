@@ -16,7 +16,7 @@ from app.auth.roles import require_admin, require_auth
 from app.api.models import OrganizationNameListResponse, OrganizationNameResponse
 from app.audit import get_audit_logger
 from app.db.session import get_db
-from app.db.models import Organization, ManagedCredential
+from app.db.models import Organization, ManagedCredential, OrgType
 from app.config import MOCK_VLEI_ENABLED
 from app.org.lei_generator import generate_pseudo_lei
 from app.org.mock_vlei import get_mock_vlei_manager
@@ -50,6 +50,7 @@ class OrganizationResponse(BaseModel):
     vetter_certification_said: Optional[str] = Field(
         None, description="Active VetterCertification SAID"
     )
+    org_type: str = Field("regular", description="Organization type: root_authority, qvi, vetter_authority, regular")
     enabled: bool = Field(..., description="Whether the organization is enabled")
     created_at: str = Field(..., description="Creation timestamp (ISO8601)")
     updated_at: str = Field(..., description="Last update timestamp (ISO8601)")
@@ -66,6 +67,8 @@ class OrganizationListResponse(BaseModel):
 
 class UpdateOrganizationRequest(BaseModel):
     """Request to update an organization."""
+
+    model_config = {"extra": "forbid"}
 
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     enabled: Optional[bool] = Field(None)
@@ -199,6 +202,7 @@ async def create_organization(
         le_credential_said=org.le_credential_said,
         registry_key=org.registry_key,
         vetter_certification_said=org.vetter_certification_said,
+        org_type=org.org_type or "regular",
         enabled=org.enabled,
         created_at=org.created_at.isoformat(),
         updated_at=org.updated_at.isoformat(),
@@ -227,6 +231,7 @@ async def list_organizations(
                 le_credential_said=org.le_credential_said,
                 registry_key=org.registry_key,
                 vetter_certification_said=org.vetter_certification_said,
+                org_type=org.org_type or "regular",
                 enabled=org.enabled,
                 created_at=org.created_at.isoformat(),
                 updated_at=org.updated_at.isoformat(),
@@ -326,6 +331,7 @@ async def get_organization(
         le_credential_said=org.le_credential_said,
         registry_key=org.registry_key,
         vetter_certification_said=org.vetter_certification_said,
+        org_type=org.org_type or "regular",
         enabled=org.enabled,
         created_at=org.created_at.isoformat(),
         updated_at=org.updated_at.isoformat(),
@@ -387,6 +393,7 @@ async def update_organization(
         le_credential_said=org.le_credential_said,
         registry_key=org.registry_key,
         vetter_certification_said=org.vetter_certification_said,
+        org_type=org.org_type or "regular",
         enabled=org.enabled,
         created_at=org.created_at.isoformat(),
         updated_at=org.updated_at.isoformat(),

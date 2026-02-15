@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.authentication import AuthenticationMiddleware
 
 from common.vvp.core.logging import configure_logging
-from app.api import admin, auth, credential, dashboard, dossier, health, identity, organization, org_api_key, registry, schema, tn, user, vetter_certification, vvp
+from app.api import admin, auth, credential, dashboard, dossier, health, identity, organization, org_api_key, registry, schema, session, tn, user, vetter_certification, vvp
 from app.auth.api_key import APIKeyBackend, get_api_key_store
 from app.auth.session import get_session_store
 from app.config import (
@@ -256,6 +256,12 @@ def ui_walkthrough():
     return FileResponse(WEB_DIR / "walkthrough.html", media_type="text/html")
 
 
+@app.get("/ui/organization-detail", response_class=FileResponse)
+def ui_organization_detail():
+    """Serve the organization detail page (Sprint 67)."""
+    return FileResponse(WEB_DIR / "organization-detail.html", media_type="text/html")
+
+
 # -----------------------------------------------------------------------------
 # Sprint 41: User Management & Multi-tenancy UI Routes
 # -----------------------------------------------------------------------------
@@ -337,11 +343,13 @@ app.include_router(org_api_key.router)  # Sprint 41: Organization API key manage
 app.include_router(user.router)  # Sprint 41: User management
 app.include_router(registry.router)
 app.include_router(schema.router)
+app.include_router(schema.schemas_compat_router)  # Sprint 67: /schemas/authorized alias
 app.include_router(credential.router)
 app.include_router(dossier.router)
 app.include_router(vvp.router)
 app.include_router(tn.router)  # Sprint 42: TN mapping for SIP redirect
 app.include_router(vetter_certification.router)  # Sprint 61: Vetter certification
+app.include_router(session.router)  # Sprint 67: Org context switching
 app.include_router(admin.router)
 
 

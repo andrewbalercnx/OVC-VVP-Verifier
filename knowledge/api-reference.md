@@ -416,11 +416,13 @@ Convenience endpoint — resolves current user's org and returns constraints. Re
 | `POST` | `/tn/lookup` | Look up TN (used by SIP Redirect) |
 | `POST` | `/tn/test-lookup/{mapping_id}` | Test a specific mapping |
 
-### Schemas (`/schema`)
+### Schemas (`/schema`, `/schemas`)
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/schema` | List schemas |
+| `GET` | `/schema/authorized` | List schemas authorized for org type (Sprint 67) |
+| `GET` | `/schemas/authorized` | Compat alias for `/schema/authorized` (Sprint 67) |
 | `GET` | `/schema/weboftrust/registry` | WebOfTrust schema registry |
 | `GET` | `/schema/{said}` | Get schema by SAID |
 | `GET` | `/schema/{said}/verify` | Verify schema SAID |
@@ -428,6 +430,16 @@ Convenience endpoint — resolves current user's org and returns constraints. Re
 | `POST` | `/schema/import` | Import schema from URL |
 | `POST` | `/schema/create` | Create custom schema |
 | `DELETE` | `/schema/{said}` | Delete schema by SAID |
+
+**`GET /schema/authorized`** query params: `organization_id` (optional, defaults to principal's org). Cross-org queries require `issuer:admin` role (403 otherwise). Returns `SchemaListResponse` filtered by org type's authorized schemas.
+
+### Session (`/session`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/session/switch-org` | Switch admin org context (Sprint 67) |
+
+**`POST /session/switch-org`** — Admin-only. Body: `{ "organization_id": "uuid" }` (null to revert to home org). Emits `session.switch_org` audit event. Returns `SwitchOrgResponse` with active/home org details.
 
 ### VVP Attestation (`/vvp`)
 
@@ -492,6 +504,7 @@ Convenience endpoint — resolves current user's org and returns constraints. Re
 | `GET` | `/ui/benchmarks` | Performance benchmarks |
 | `GET` | `/ui/help` | Help/documentation |
 | `GET` | `/ui/walkthrough` | Interactive split-pane walkthrough (Sprint 66) |
+| `GET` | `/ui/organization-detail` | Organization detail page with tabs (Sprint 67) |
 | `GET` | `/organizations/ui` | Organization management |
 | `GET` | `/users/ui` | User management |
 | `GET` | `/profile` | User profile |

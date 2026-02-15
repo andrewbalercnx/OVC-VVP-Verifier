@@ -1,5 +1,57 @@
 # VVP Verifier Change Log
 
+## Sprint 67: Trust Anchor Admin & Credential Issuance UI
+
+**Date:** 2026-02-15
+**Status:** Complete
+
+### Summary
+
+Promotes trust-chain entities (GLEIF, QVI, GSMA) to first-class organizations with type-based schema authorization, org context switching for admins, and enhanced credential issuance UI. Adds 5 phases: org type model, schema authorization, org context switching, org admin management UI, and credential issuance UI enhancements. 8 review rounds (R1-R8).
+
+### Key Changes
+
+- **Organization type model** — `OrgType` enum (root_authority, qvi, vetter_authority, regular), `org_type` column on Organization, trust anchor promotion in MockVLEIManager bootstrap (idempotent, AID-based matching)
+- **Schema authorization** — `app/auth/schema_auth.py` with hard-coded trust-chain mapping, enforced in `POST /credential/issue` (403 for unauthorized), `GET /schema/authorized` + `/schemas/authorized` dual-route endpoints
+- **Org context switching** — `POST /session/switch-org` (admin-only), Session `home_org_id`/`active_org_id`, principal cloning via `dataclasses.replace()`, audit events with outcome tracking (success/denied)
+- **Org admin management UI** — Organization detail page (`/ui/organization-detail`) with Users/Credentials/VetterCert tabs, org type badges on org cards, clickable org names
+- **Credential issuance UI** — Schema dropdown filtered by org type, "Issuing as" banner, issuer-binding enforcement (registry must match org AID), issuance confirmation dialog, org-scoped credential listing for admins
+- **Auth status enhancements** — `home_org_id`, `home_org_name`, `home_org_type`, `active_org_id`, `active_org_name`, `active_org_type` fields
+- **Org switcher** — Shared modal in `shared.js` with org list, type badges, page reload on switch/revert
+
+### Files Changed
+
+| File | Action | Summary |
+|------|--------|---------|
+| `services/issuer/app/db/models.py` | Modified | OrgType enum, org_type column, MockVLEIState org_id fields |
+| `services/issuer/app/db/migrations/sprint67_org_type.py` | Created | DB migration for org_type and MockVLEIState org_id columns |
+| `services/issuer/app/org/mock_vlei.py` | Modified | Trust anchor promotion (_promote_trust_anchors) |
+| `services/issuer/app/auth/schema_auth.py` | Created | Schema authorization mapping and helpers |
+| `services/issuer/app/api/credential.py` | Modified | Mandatory org context + schema auth + issuer-binding |
+| `services/issuer/app/api/schema.py` | Modified | GET /schema/authorized + /schemas/authorized |
+| `services/issuer/app/api/organization.py` | Modified | org_type in responses |
+| `services/issuer/app/auth/session.py` | Modified | home_org_id, active_org_id, principal override |
+| `services/issuer/app/api/session.py` | Created | POST /session/switch-org endpoint |
+| `services/issuer/app/api/auth.py` | Modified | AuthStatusResponse home/active org fields |
+| `services/issuer/app/main.py` | Modified | Session router, schemas_compat router, org-detail route |
+| `services/issuer/app/config.py` | Modified | Auth-exempt path for org-detail |
+| `services/issuer/web/shared.js` | Modified | Org switcher, session state, page reload on switch |
+| `services/issuer/web/organizations.html` | Modified | Type badges, clickable org names |
+| `services/issuer/web/organization-detail.html` | Created | Org detail page with tabs |
+| `services/issuer/web/credentials.html` | Modified | Schema filter, issuing-as banner, confirmation dialog |
+| `services/issuer/tests/test_org_type.py` | Created | 13 org type tests |
+| `services/issuer/tests/test_schema_auth.py` | Created | 32 schema authorization tests |
+| `services/issuer/tests/test_org_switching.py` | Created | 17 org switching tests |
+| `services/issuer/tests/test_credential.py` | Modified | Updated for mandatory org context |
+| `services/issuer/tests/test_credential_edge_integration.py` | Modified | Updated for mandatory org context |
+| `services/issuer/tests/test_dossier.py` | Modified | Updated for mandatory org context |
+| `services/issuer/tests/test_sprint63_wizard.py` | Modified | Updated for mandatory org context |
+| `knowledge/api-reference.md` | Modified | New endpoints documented |
+| `knowledge/data-models.md` | Modified | OrgType, Session, schema_auth models |
+| `services/issuer/CLAUDE.md` | Modified | New router, key files |
+
+---
+
 ## Sprint 66: Knowledge Base & Documentation Refresh + Interactive Walkthrough
 
 **Date:** 2026-02-15

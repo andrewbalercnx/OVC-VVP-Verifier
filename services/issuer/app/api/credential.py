@@ -190,6 +190,48 @@ async def issue_credential(
         ).first()
         resolved_org_id = principal.organization_id
 
+    # Sprint 67: Org context is MANDATORY for credential issuance
+    if resolved_org is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Organization context required for credential issuance. "
+                   "Authenticate as an org member or specify organization_id.",
+        )
+
+    # Sprint 67: Schema authorization check
+    from app.auth.schema_auth import is_schema_authorized
+    if not is_schema_authorized(resolved_org.org_type or "regular", request.schema_said):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Organization type '{resolved_org.org_type}' is not authorized "
+                   f"to issue schema {request.schema_said}.",
+        )
+
+    # Sprint 67: Issuer-binding — fail-closed validation
+    # Org MUST have issuer identity (AID) and registry to issue credentials
+    if not resolved_org.aid or not resolved_org.registry_key:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Organization '{resolved_org.name}' has incomplete issuer identity "
+                   f"(missing AID or registry). Cannot issue credentials.",
+        )
+    if request.registry_name:
+        from app.keri.registry import get_registry_manager
+        registry_manager = await get_registry_manager()
+        registry_info = await registry_manager.get_registry_by_name(request.registry_name)
+        if not registry_info:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Registry '{request.registry_name}' not found.",
+            )
+        # Registry issuer AID must match the org's AID
+        if registry_info.issuer_aid and registry_info.issuer_aid != resolved_org.aid:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Registry '{request.registry_name}' does not belong to "
+                       f"organization '{resolved_org.name}'. Use the org's own registry.",
+            )
+
     # Sprint 61: Inject certification edge for extended schemas
     edges = request.edges
     edges = await _inject_certification_edge(request.schema_said, edges, resolved_org)

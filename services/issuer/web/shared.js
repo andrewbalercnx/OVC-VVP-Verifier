@@ -198,6 +198,13 @@ let currentSession = {
   expiresAt: null,
   organizationId: null,
   organizationName: null,
+  // Sprint 67: Org context switching
+  homeOrgId: null,
+  homeOrgName: null,
+  homeOrgType: null,
+  activeOrgId: null,
+  activeOrgName: null,
+  activeOrgType: null,
 };
 
 /**
@@ -225,6 +232,13 @@ async function checkAuthStatus() {
         expiresAt: data.expires_at,
         organizationId: data.organization_id || null,
         organizationName: data.organization_name || null,
+        // Sprint 67: Org context switching
+        homeOrgId: data.home_org_id || null,
+        homeOrgName: data.home_org_name || null,
+        homeOrgType: data.home_org_type || null,
+        activeOrgId: data.active_org_id || null,
+        activeOrgName: data.active_org_name || null,
+        activeOrgType: data.active_org_type || null,
       };
     }
   } catch (err) {
@@ -575,8 +589,25 @@ function updateAuthUI() {
       if (currentSession.organizationName) {
         userInfo += ` <span class="auth-org">| ${escapeHtml(currentSession.organizationName)}</span>`;
       }
+      // Sprint 67: Show org switcher badge for admins with active org
+      let orgSwitcherHtml = '';
+      if (currentSession.roles.includes('issuer:admin')) {
+        if (currentSession.activeOrgId) {
+          orgSwitcherHtml = `
+            <button onclick="showOrgSwitcher()" class="small secondary org-switch-btn" title="Acting as ${escapeHtml(currentSession.activeOrgName || '')}">
+              Acting as: ${escapeHtml(currentSession.activeOrgName || 'Unknown')}
+            </button>
+            <button onclick="revertOrgContext()" class="small secondary" title="Revert to home org">x</button>
+          `;
+        } else {
+          orgSwitcherHtml = `
+            <button onclick="showOrgSwitcher()" class="small secondary org-switch-btn" title="Switch org context">Switch Org</button>
+          `;
+        }
+      }
       authStatus.innerHTML = `
         <span class="auth-user">${userInfo}</span>
+        ${orgSwitcherHtml}
         <a href="/profile" class="small secondary" style="margin-right:0.5rem">Profile</a>
         <button onclick="logout()" class="small secondary">Logout</button>
       `;
@@ -589,6 +620,106 @@ function updateAuthUI() {
 
   // Update role-based navigation visibility
   updateNavVisibility();
+}
+
+/**
+ * Sprint 67: Show org switcher modal for admins.
+ * Fetches all orgs and lets admin select one to act as.
+ */
+async function showOrgSwitcher() {
+  try {
+    const response = await authFetch('/organizations');
+    if (!response.ok) {
+      showToast('Failed to load organizations', 'error');
+      return;
+    }
+    const data = await response.json();
+    const orgs = data.organizations || [];
+
+    if (orgs.length === 0) {
+      showToast('No organizations available', 'warning');
+      return;
+    }
+
+    // Build org list HTML
+    const orgItems = orgs.map(org => {
+      const isCurrent = org.id === currentSession.activeOrgId ||
+                        (!currentSession.activeOrgId && org.id === currentSession.homeOrgId);
+      const typeBadge = org.org_type && org.org_type !== 'regular'
+        ? `<span class="badge badge-${org.org_type}">${org.org_type}</span>`
+        : '';
+      return `
+        <div class="org-switch-item ${isCurrent ? 'current' : ''}"
+             onclick="switchOrgContext('${org.id}')" style="cursor:pointer; padding:0.5rem; border-bottom:1px solid var(--border);">
+          <strong>${escapeHtml(org.name)}</strong> ${typeBadge}
+          ${isCurrent ? '<span class="badge">current</span>' : ''}
+        </div>
+      `;
+    }).join('');
+
+    showModal(`
+      <p style="margin-bottom:0.5rem">Select an organization to act on behalf of:</p>
+      <div style="max-height:300px; overflow-y:auto; border:1px solid var(--border); border-radius:4px;">
+        ${orgItems}
+      </div>
+      <div style="margin-top:0.75rem">
+        <button onclick="revertOrgContext()" class="small secondary">Revert to Home Org</button>
+      </div>
+    `, { title: 'Switch Organization' });
+  } catch (err) {
+    showToast('Failed to load organizations: ' + err.message, 'error');
+  }
+}
+
+/**
+ * Sprint 67: Switch org context via POST /session/switch-org.
+ * @param {string} orgId - Organization ID to switch to
+ */
+async function switchOrgContext(orgId) {
+  try {
+    const response = await authFetch('/session/switch-org', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ organization_id: orgId }),
+    });
+    if (response.ok) {
+      const data = await response.json();
+      showToast(`Switched to ${data.active_org_name || 'organization'}`, 'success');
+      document.querySelector('.modal-overlay')?.remove();
+      // Sprint 67 R5: Full page reload to refresh all org-scoped data
+      // (schemas, registries, credential lists, etc.)
+      window.location.reload();
+    } else {
+      const err = await response.json().catch(() => ({}));
+      showToast(err.detail || 'Failed to switch organization', 'error');
+    }
+  } catch (err) {
+    showToast('Failed to switch organization: ' + err.message, 'error');
+  }
+}
+
+/**
+ * Sprint 67: Revert to home org (clear active_org_id).
+ */
+async function revertOrgContext() {
+  try {
+    const response = await authFetch('/session/switch-org', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ organization_id: null }),
+    });
+    if (response.ok) {
+      showToast('Reverted to home organization', 'success');
+      document.querySelector('.modal-overlay')?.remove();
+      // Sprint 67 R5: Full page reload to refresh all org-scoped data
+      window.location.reload();
+    } else {
+      const err = await response.json().catch(() => ({}));
+      showToast(err.detail || 'Failed to revert organization', 'error');
+    }
+  } catch (err) {
+    showToast('Failed to revert organization: ' + err.message, 'error');
+  }
 }
 
 /**
