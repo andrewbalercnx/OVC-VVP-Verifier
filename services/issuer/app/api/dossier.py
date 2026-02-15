@@ -287,6 +287,27 @@ async def create_dossier(
         db, principal, owner_org, body.edges
     )
 
+    # Sprint 62: Dossier-creation-time vetter constraint validation
+    from app.vetter.constraints import validate_dossier_constraints
+    from app.config import ENFORCE_VETTER_CONSTRAINTS
+
+    all_cred_saids = list(body.edges.values())
+    constraint_violations = await validate_dossier_constraints(
+        credential_saids=all_cred_saids,
+    )
+    failed_constraints = [v for v in constraint_violations if not v.is_authorized]
+    if failed_constraints:
+        detail = "; ".join(
+            f"{v.credential_type} {v.check_type}: {v.reason}" for v in failed_constraints
+        )
+        if ENFORCE_VETTER_CONSTRAINTS:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Dossier constraint violation: {detail}",
+            )
+        else:
+            log.warning(f"Dossier constraint warning (soft): {detail}")
+
     # Step 4: Validate OSP org (BEFORE issuance — all 4xx errors must be side-effect free)
     osp_org_id_result: str | None = None
     if body.osp_org_id:

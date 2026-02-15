@@ -236,6 +236,7 @@ class MockVLEIState(Base):
     qvi_registry_key = Column(String(44), nullable=False)
     gsma_aid = Column(String(44), nullable=True)
     gsma_registry_key = Column(String(44), nullable=True)
+    gsma_governance_said = Column(String(44), nullable=True)  # Sprint 62
     initialized_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self) -> str:

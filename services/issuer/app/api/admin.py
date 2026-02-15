@@ -462,6 +462,84 @@ async def reload_users(
 
 
 # =============================================================================
+# Vetter Constraint Enforcement Toggle (Sprint 62)
+# =============================================================================
+
+
+class VetterEnforcementResponse(BaseModel):
+    """Response for vetter enforcement setting."""
+
+    enforce_vetter_constraints: bool
+    message: str
+
+
+@router.get("/settings/vetter-enforcement", response_model=VetterEnforcementResponse)
+async def get_vetter_enforcement(
+    principal: Principal = require_admin,
+) -> VetterEnforcementResponse:
+    """Get current vetter constraint enforcement setting.
+
+    When false (default): issuer logs warnings but allows credentials
+    that violate vetter constraints (e.g., TN outside vetter's ECC scope).
+    When true: issuer rejects such credentials with 403.
+
+    The verifier always evaluates constraints regardless of this setting.
+
+    Requires: issuer:admin role
+    """
+    from app.config import ENFORCE_VETTER_CONSTRAINTS
+
+    return VetterEnforcementResponse(
+        enforce_vetter_constraints=ENFORCE_VETTER_CONSTRAINTS,
+        message="Enforcement ON — violations are rejected"
+        if ENFORCE_VETTER_CONSTRAINTS
+        else "Enforcement OFF — violations are logged as warnings",
+    )
+
+
+@router.put("/settings/vetter-enforcement", response_model=VetterEnforcementResponse)
+async def set_vetter_enforcement(
+    request: Request,
+    enabled: bool = True,
+    principal: Principal = require_admin,
+) -> VetterEnforcementResponse:
+    """Toggle vetter constraint enforcement at runtime.
+
+    Set enabled=true to block credential issuance that violates vetter
+    constraints (ECC/jurisdiction). Set enabled=false to allow issuing
+    mis-vetted credentials (logged as warnings) for testing.
+
+    The verifier always evaluates constraints regardless of this setting.
+
+    Requires: issuer:admin role
+    """
+    from app.config import set_enforce_vetter_constraints
+
+    set_enforce_vetter_constraints(enabled)
+    audit = get_audit_logger()
+
+    audit.log_access(
+        principal_id=principal.key_id,
+        resource="admin/settings/vetter-enforcement",
+        action="update",
+        request=request,
+        details={"enforce_vetter_constraints": enabled},
+    )
+
+    log.info(
+        f"Vetter constraint enforcement {'ENABLED' if enabled else 'DISABLED'} "
+        f"by {principal.key_id}"
+    )
+
+    return VetterEnforcementResponse(
+        enforce_vetter_constraints=enabled,
+        message="Enforcement ON — violations are rejected"
+        if enabled
+        else "Enforcement OFF — violations are logged as warnings",
+    )
+
+
+# =============================================================================
 # Configuration Endpoints
 # =============================================================================
 

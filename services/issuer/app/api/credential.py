@@ -194,6 +194,29 @@ async def issue_credential(
     edges = request.edges
     edges = await _inject_certification_edge(request.schema_said, edges, resolved_org)
 
+    # Sprint 62: Pre-issuance vetter constraint validation
+    if schema_requires_certification_edge(request.schema_said) and resolved_org:
+        from app.vetter.constraints import validate_issuance_constraints
+        from app.config import ENFORCE_VETTER_CONSTRAINTS
+
+        violations = await validate_issuance_constraints(
+            schema_said=request.schema_said,
+            attributes=request.attributes,
+            org=resolved_org,
+        )
+        failed = [v for v in violations if not v.is_authorized]
+        if failed:
+            detail = "; ".join(
+                f"{v.credential_type} {v.check_type}: {v.reason}" for v in failed
+            )
+            if ENFORCE_VETTER_CONSTRAINTS:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Vetter constraint violation: {detail}",
+                )
+            else:
+                log.warning(f"Vetter constraint warning (soft): {detail}")
+
     issuer = await get_credential_issuer()
     audit = get_audit_logger()
 

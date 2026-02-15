@@ -182,19 +182,24 @@ DASHBOARD_REQUEST_TIMEOUT: float = float(os.getenv("VVP_DASHBOARD_REQUEST_TIMEOU
 ADMIN_ENDPOINT_ENABLED: bool = os.getenv("ADMIN_ENDPOINT_ENABLED", "true").lower() == "true"
 SERVICE_PORT: int = int(os.getenv("VVP_ISSUER_PORT", "8001"))
 
-# Sprint 62: Vetter constraint enforcement
+# Sprint 62: Vetter constraint enforcement (issuer-side toggle)
 # When false (default): log warnings for constraint violations, proceed normally
+#   → allows admin to deliberately create mis-vetted credential chains for testing
 # When true: reject requests with 403 for constraint violations
+# The verifier always evaluates constraints regardless of this setting.
+# Toggleable at runtime via PUT /admin/settings/vetter-enforcement
 ENFORCE_VETTER_CONSTRAINTS: bool = os.getenv(
     "VVP_ENFORCE_VETTER_CONSTRAINTS", "false"
 ).lower() == "true"
 
-# Sprint 62: Constraint bypass gate for skip_vetter_constraints flag
-# Must be explicitly enabled for skip_vetter_constraints=True to work.
-# Only set to true in test/staging environments. Production should never enable this.
-ALLOW_CONSTRAINT_BYPASS: bool = os.getenv(
-    "VVP_ALLOW_CONSTRAINT_BYPASS", "false"
-).lower() == "true"
+
+def set_enforce_vetter_constraints(value: bool) -> None:
+    """Toggle vetter constraint enforcement at runtime.
+
+    Called by the admin API endpoint PUT /admin/settings/vetter-enforcement.
+    """
+    global ENFORCE_VETTER_CONSTRAINTS
+    ENFORCE_VETTER_CONSTRAINTS = value
 
 # VVP Header creation settings
 # Base URL for this issuer service (used to construct dossier URLs)

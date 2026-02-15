@@ -125,6 +125,28 @@ async def create_vvp_attestation(
         if revocation_warning:
             log.info(f"VVP creation proceeding with warning: {revocation_warning}")
 
+        # Sprint 62: Signing-time vetter constraint validation (ECC + jurisdiction)
+        from app.vetter.constraints import validate_signing_constraints
+        from app.config import ENFORCE_VETTER_CONSTRAINTS
+
+        signing_violations = await validate_signing_constraints(
+            orig_tn=body.orig_tn,
+            dossier_said=body.dossier_said,
+        )
+        failed_constraints = [v for v in signing_violations if not v.is_authorized]
+        if failed_constraints:
+            detail = "; ".join(
+                f"{v.credential_type} {v.check_type}: {v.reason}"
+                for v in failed_constraints
+            )
+            if ENFORCE_VETTER_CONSTRAINTS:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Signing constraint violation: {detail}",
+                )
+            else:
+                log.warning(f"Signing constraint warning (soft): {detail}")
+
         # Cap exp_seconds to normative maximum (§5.2B)
         exp_seconds = min(body.exp_seconds, MAX_VALIDITY_SECONDS)
 

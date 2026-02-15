@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from app.config import MOCK_GLEIF_NAME, MOCK_GSMA_NAME, MOCK_QVI_NAME, MOCK_VLEI_ENABLED
-from app.vetter.constants import VETTER_CERT_SCHEMA_SAID
+from app.vetter.constants import GSMA_GOVERNANCE_SCHEMA_SAID, VETTER_CERT_SCHEMA_SAID
 from app.db.session import get_db_session
 from app.db.models import MockVLEIState as MockVLEIStateModel
 
@@ -43,6 +43,7 @@ class MockVLEIState:
     qvi_registry_key: str
     gsma_aid: str = ""
     gsma_registry_key: str = ""
+    gsma_governance_said: str = ""  # Sprint 62: governance credential SAID
     initialized: bool = True
 
 
@@ -107,6 +108,11 @@ class MockVLEIManager:
             if not self._state.gsma_aid or not self._state.gsma_registry_key:
                 log.info("Pre-Sprint 61 state detected — bootstrapping GSMA infrastructure")
                 await self._bootstrap_gsma()
+            # Sprint 62: Partial-state upgrade — if governance credential is missing,
+            # issue it on top of existing GSMA infrastructure
+            if self._state.gsma_aid and not self._state.gsma_governance_said:
+                log.info("Pre-Sprint 62 state detected — issuing GSMA governance credential")
+                await self._bootstrap_governance_credential()
             return self._state
 
         # Import here to avoid circular imports
@@ -194,7 +200,12 @@ class MockVLEIManager:
             identity_mgr, registry_mgr
         )
 
-        # 8. Persist state to database
+        # 8. Issue GSMA governance credential (Sprint 62)
+        gsma_governance_said = await self._issue_governance_credential(
+            issuer=issuer, gsma_aid=gsma_aid
+        )
+
+        # 9. Persist state to database
         self._state = MockVLEIState(
             gleif_aid=gleif_info.aid,
             gleif_registry_key=gleif_registry_key,
@@ -203,6 +214,7 @@ class MockVLEIManager:
             qvi_registry_key=qvi_registry_key,
             gsma_aid=gsma_aid,
             gsma_registry_key=gsma_registry_key,
+            gsma_governance_said=gsma_governance_said,
         )
         self._persist_state(self._state)
 
@@ -379,6 +391,62 @@ class MockVLEIManager:
         self._persist_state(self._state)
         log.info("GSMA infrastructure bootstrapped and state updated")
 
+    async def _issue_governance_credential(
+        self,
+        issuer,
+        gsma_aid: str,
+    ) -> str:
+        """Issue GSMA governance credential (self-issued by GSMA AID).
+
+        Sprint 62: Creates a self-referencing governance credential that
+        establishes GSMA as the vetter certification governance authority.
+
+        Returns:
+            SAID of the governance credential
+        """
+        from app.keri.registry import get_registry_manager
+
+        # Check for existing governance credential in KERI store
+        registry_mgr = await get_registry_manager()
+        reger = registry_mgr.regery.reger
+        for _said, creder in reger.creds.getItemIter():
+            if hasattr(creder, "schema") and creder.schema == GSMA_GOVERNANCE_SCHEMA_SAID:
+                attrib = creder.attrib if hasattr(creder, "attrib") else {}
+                if attrib.get("i") == gsma_aid:
+                    log.info(f"Found existing GSMA governance credential: {creder.said[:16]}...")
+                    return creder.said
+
+        log.info("Issuing GSMA governance credential (self-issued)...")
+        gsma_registry_name = f"{MOCK_GSMA_NAME}-registry"
+        governance_attributes = {
+            "i": gsma_aid,
+            "name": "GSMA",
+            "role": "Vetter Governance Authority",
+        }
+        cred_info, _ = await issuer.issue_credential(
+            registry_name=gsma_registry_name,
+            schema_said=GSMA_GOVERNANCE_SCHEMA_SAID,
+            attributes=governance_attributes,
+            recipient_aid=gsma_aid,
+        )
+        log.info(f"Issued GSMA governance credential: {cred_info.said[:16]}...")
+        return cred_info.said
+
+    async def _bootstrap_governance_credential(self) -> None:
+        """Bootstrap governance credential for pre-Sprint 62 state.
+
+        Called when persisted state has GSMA AID but no governance credential.
+        """
+        from app.keri.issuer import get_credential_issuer
+
+        issuer = await get_credential_issuer()
+        gov_said = await self._issue_governance_credential(
+            issuer=issuer, gsma_aid=self._state.gsma_aid
+        )
+        self._state.gsma_governance_said = gov_said
+        self._persist_state(self._state)
+        log.info("GSMA governance credential bootstrapped and state updated")
+
     async def issue_vetter_certification(
         self,
         org_aid: str,
@@ -388,6 +456,9 @@ class MockVLEIManager:
         certification_expiry: Optional[str] = None,
     ) -> str:
         """Issue a VetterCertification credential from mock-gsma to an org.
+
+        Sprint 62: Now includes 'issuer' edge pointing to the GSMA governance
+        credential, establishing the trust chain.
 
         Args:
             org_aid: Organization's KERI AID (the certified vetter)
@@ -420,12 +491,24 @@ class MockVLEIManager:
         if certification_expiry:
             attributes["certificationExpiry"] = certification_expiry
 
+        # Sprint 62: Add 'issuer' edge to GSMA governance credential
+        edges = None
+        if self._state.gsma_governance_said:
+            edges = {
+                "issuer": {
+                    "n": self._state.gsma_governance_said,
+                    "s": GSMA_GOVERNANCE_SCHEMA_SAID,
+                    "o": "I2I",
+                }
+            }
+
         gsma_registry_name = f"{MOCK_GSMA_NAME}-registry"
         cred_info, _ = await issuer.issue_credential(
             registry_name=gsma_registry_name,
             schema_said=VETTER_CERT_SCHEMA_SAID,
             attributes=attributes,
             recipient_aid=org_aid,
+            edges=edges,
         )
 
         log.info(f"Issued VetterCertification for {name}: {cred_info.said[:16]}...")
@@ -445,6 +528,7 @@ class MockVLEIManager:
                         qvi_registry_key=state_record.qvi_registry_key,
                         gsma_aid=state_record.gsma_aid or "",
                         gsma_registry_key=state_record.gsma_registry_key or "",
+                        gsma_governance_said=getattr(state_record, "gsma_governance_said", None) or "",
                     )
         except Exception as e:
             # Database may not be initialized yet
@@ -467,6 +551,7 @@ class MockVLEIManager:
                     qvi_registry_key=state.qvi_registry_key,
                     gsma_aid=state.gsma_aid or None,
                     gsma_registry_key=state.gsma_registry_key or None,
+                    gsma_governance_said=state.gsma_governance_said or None,
                 )
                 db.add(state_record)
                 log.info("Persisted mock vLEI state to database")
