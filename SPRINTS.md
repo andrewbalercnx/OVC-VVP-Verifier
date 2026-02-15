@@ -45,15 +45,15 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 56 | System Operator User Manual | COMPLETE | Sprint 55 |
 | 57 | Complete STIR Header Compliance | COMPLETE | Sprint 44, 42 |
 | 58 | PASSporT vCard Card Claim | COMPLETE | Sprint 57 |
-| 59 | Infrastructure Fixes | IN PROGRESS | Sprint 53 |
+| 59 | Infrastructure Fixes | COMPLETE | Sprint 53 |
 | 60 | Spec-Compliant VVP Header Flow | COMPLETE | Sprint 58 |
 | 60b | TNAlloc in Dossier + Brand Logo Fix | COMPLETE | Sprint 60 |
 | 61 | Organization Vetter Certification Association | TODO | Sprint 41, 40 |
-| 62 | Multichannel Vetter Constraint Enforcement | TODO | Sprint 61 |
+| 62 | Multichannel Vetter Constraints — End-to-End | TODO | Sprint 61, 44 |
 | 63 | Dossier Creation Wizard UI | DONE | Sprint 41, 32, 60b |
 | 64 | Repository Migration to Rich-Connexions-Ltd | COMPLETE | - |
-| 65 | Schema-Aware Credential Management | TODO | Sprint 63, 34 |
-| 66 | Multichannel Vetter Constraints (E2E) | TODO | Sprint 62, 44 |
+| 65 | Schema-Aware Credential Management | DONE | Sprint 63, 34 |
+| 66 | Knowledge Base & Documentation Refresh | TODO | - |
 
 ---
 
