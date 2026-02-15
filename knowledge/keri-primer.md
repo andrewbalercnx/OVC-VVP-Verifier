@@ -70,6 +70,8 @@ ACDCs are self-describing, cryptographically bound credentials. A **dossier** is
 | **DE** (Delegate Entity) | Delegates authority to a sub-entity | Must have `delegation`/`issuer` edge | `authorization.py` |
 | **TNAlloc** (TN Allocation) | Allocates telephone numbers to an entity | Must have `jl` edge (jurisdiction) | `authorization.py` |
 | **Brand** | Associates brand info with an entity | Optional, for display purposes | `authorization.py` |
+| **VetterCert** | Certifies vetter for ECC/jurisdiction constraints | Issued by GSMA to org AID | `vetter/constraints.py` |
+| **Dossier (CVD)** | Root credential for VVP dossier | Aggregates edges to all chain credentials | `dossier/validator.py` |
 
 ### ACDC Variants
 ACDCs can appear in three forms (VVP §1.4):

@@ -136,131 +136,312 @@ class DossierDAG:
 ### db/models.py - SQLAlchemy Database Models
 ```python
 class Organization(Base):
-    id: UUID                       # Primary key
-    name: str                      # Organization name
-    lei: Optional[str]             # Legal Entity Identifier
-    aid: Optional[str]             # KERI AID
-    le_credential_said: Optional[str]  # Auto-issued LE credential
-    vetter_certification_said: Optional[str]  # Active VetterCert SAID (Sprint 61)
-    status: str                    # "active", "suspended"
+    id: String(36)                 # UUID, primary key
+    name: String(255)              # Organization name, unique
+    pseudo_lei: String(20)         # Deterministic pseudo-LEI, unique
+    aid: Optional[String(44)]      # KERI Autonomic Identifier
+    le_credential_said: Optional[String(44)]  # Auto-issued LE credential
+    registry_key: Optional[String(44)]  # TEL registry prefix
+    vetter_certification_said: Optional[String(44)]  # Active VetterCert SAID (Sprint 61)
+    enabled: bool                  # Tenant enabled flag (default True)
     created_at: datetime
     updated_at: datetime
-
-class OrgAPIKey(Base):
-    id: UUID
-    organization_id: UUID          # FK to Organization
-    key_hash: str                  # Hashed API key
-    key_prefix: str                # First 8 chars for identification
-    name: str                      # Human-readable name
-    roles: str                     # JSON list of roles
-    is_active: bool
-    created_at: datetime
-
-class Credential(Base):
-    said: str                      # Primary key (SAID)
-    organization_id: UUID          # FK to Organization
-    schema_said: str
-    credential_type: str
-    issuer_aid: str
-    issuee_aid: Optional[str]
-    registry_key: str
-    status: str                    # "issued", "revoked"
-    raw_json: str                  # Full credential JSON
-
-class Dossier(Base):
-    id: UUID
-    organization_id: UUID
-    root_credential_said: str
-    format: str                    # "cesr" or "json"
-    content: bytes                 # Serialized dossier
-    credential_count: int
-
-class TNMapping(Base):
-    id: UUID
-    organization_id: UUID
-    telephone_number: str          # E.164 format
-    dossier_id: UUID               # FK to Dossier
-    signing_identity_aid: str      # AID for signing
-    enabled: bool
-    brand_name: Optional[str]
-    brand_logo_url: Optional[str]
+    # Relationships: users, api_keys, credentials, tn_mappings
 
 class User(Base):
-    id: UUID
-    email: str
-    password_hash: str
-    name: str
-    roles: str                     # JSON list
-    organization_id: Optional[UUID]
-    is_active: bool
+    id: String(36)                 # UUID, primary key
+    email: String(255)             # Email, globally unique, lowercased
+    name: String(255)
+    password_hash: Optional[String(255)]  # bcrypt hash (nullable for OAuth users)
+    system_roles: String(255)      # Comma-separated system role list
+    organization_id: Optional[String(36)]  # FK to Organization
+    enabled: bool                  # Default True
+    is_oauth_user: bool            # Default False
+    created_at: datetime
+    updated_at: datetime
+    # Relationships: organization, org_roles
+    # Property: system_roles_set (computed set from comma-separated string)
+
+class UserOrgRole(Base):           # Sprint 41 — user org role join table
+    __tablename__ = "user_org_roles"
+    id: int                        # Auto-increment primary key
+    user_id: String(36)            # FK to User (cascade delete)
+    org_id: String(36)             # FK to Organization (cascade delete)
+    role: String(50)               # 'org:administrator' or 'org:dossier_manager'
+    created_at: datetime
+    # UniqueConstraint: (user_id, org_id, role)
+
+class OrgAPIKey(Base):
+    __tablename__ = "org_api_keys"
+    id: String(36)                 # UUID, primary key
+    name: String(255)              # Key name
+    key_hash: String(255)          # bcrypt hash
+    organization_id: String(36)    # FK to Organization (cascade delete)
+    revoked: bool                  # Default False
+    created_at: datetime
+    # Relationships: organization, roles
+
+class OrgAPIKeyRole(Base):         # Roles assigned to an org API key
+    __tablename__ = "org_api_key_roles"
+    id: int                        # Auto-increment primary key
+    key_id: String(36)             # FK to OrgAPIKey (cascade delete)
+    role: String(50)               # 'org:administrator' or 'org:dossier_manager'
+    # UniqueConstraint: (key_id, role)
+
+class ManagedCredential(Base):     # Tracks credential ownership by organization
+    __tablename__ = "managed_credentials"
+    said: String(44)               # Credential SAID, primary key
+    organization_id: String(36)    # FK to Organization (cascade delete)
+    schema_said: String(44)        # Schema SAID
+    issuer_aid: String(44)         # Issuing identity AID
+    created_at: datetime
+
+class TNMapping(Base):
+    __tablename__ = "tn_mappings"
+    id: String(36)                 # UUID, primary key
+    tn: String(20)                 # E.164 format (e.g., +15551234567)
+    organization_id: String(36)    # FK to Organization (cascade delete)
+    dossier_said: String(44)       # Root credential SAID
+    identity_name: String(255)     # KERI identity name for signing
+    brand_name: Optional[String(255)]
+    brand_logo_url: Optional[String(1024)]
+    enabled: bool                  # Default True
+    created_at: datetime
+    updated_at: datetime
+    # UniqueConstraint: (organization_id, tn), Index: tn
 
 class DossierOspAssociation(Base):   # Sprint 63
     """Administrative record: which OSP org can reference which dossier.
     Visibility only — does NOT gate TN mapping authorization."""
     __tablename__ = "dossier_osp_associations"
     id: int                        # Primary key, autoincrement
-    dossier_said: str(44)          # Dossier credential SAID
-    owner_org_id: UUID             # FK → organizations.id (AP), CASCADE
-    osp_org_id: UUID               # FK → organizations.id (OSP), CASCADE, indexed
+    dossier_said: String(44)       # Dossier credential SAID
+    owner_org_id: String(36)       # FK to Organization (AP), CASCADE
+    osp_org_id: String(36)         # FK to Organization (OSP), CASCADE, indexed
     created_at: datetime
     # Unique constraint: (dossier_said, osp_org_id)
 
-class ManagedCredential(Base):        # Tracks credential ownership
-    __tablename__ = "managed_credentials"
-    said: str(44)                  # Primary key (credential SAID)
-    organization_id: UUID          # FK → organizations.id
-    schema_said: str(44)           # Schema SAID
-    issuer_aid: str(44)            # Issuer AID
-    created_at: datetime
-
 class MockVLEIState(Base):            # Persists mock vLEI infrastructure state
     __tablename__ = "mock_vlei_state"
-    id: int                        # Primary key
-    gleif_aid: str(44)             # Mock GLEIF root AID
-    qvi_aid: str(44)              # Mock QVI AID
-    gleif_registry_key: str(44)
-    qvi_registry_key: str(44)
-    gsma_aid: Optional[str(44)]    # Mock GSMA AID (Sprint 61)
-    gsma_registry_key: Optional[str(44)]  # Mock GSMA registry (Sprint 61)
-    initialized_at: datetime
+    id: int                        # Primary key (single row expected)
+    gleif_aid: String(44)          # Mock GLEIF root AID
+    gleif_registry_key: String(44)
+    qvi_aid: String(44)            # Mock QVI AID
+    qvi_credential_said: String(44) # QVI credential SAID
+    qvi_registry_key: String(44)
+    gsma_aid: Optional[String(44)]  # Mock GSMA AID (Sprint 61)
+    gsma_registry_key: Optional[String(44)]  # Mock GSMA registry (Sprint 61)
+    gsma_governance_said: Optional[String(44)]  # GSMA governance cred (Sprint 62)
 ```
 
-### api/models.py - Issuer API Models
-Request/response Pydantic models for all issuer endpoints. Key models:
+### api/models.py - Issuer API Models (complete inventory)
+All Pydantic request/response models for the issuer API. Source: `services/issuer/app/api/models.py`.
 
+#### Identity Models
 ```python
 class CreateIdentityRequest(BaseModel):
-    name: str
-    witness_urls: Optional[List[str]]
+    name: str                      # Human-readable alias
+    transferable: bool = True      # Whether keys can rotate
+    key_count: Optional[int]       # Number of signing keys
+    key_threshold: Optional[str]   # Signing threshold
+    next_key_count: Optional[int]  # Number of next keys
+    next_threshold: Optional[str]  # Next signing threshold
+    publish_to_witnesses: bool = True
 
-class IssueCredentialRequest(BaseModel):
-    schema_said: str
+class IdentityResponse(BaseModel):
+    aid: str                       # Autonomic Identifier
+    name: str                      # Alias
+    created_at: Optional[str]      # ISO8601
+    witness_count: int
+    key_count: int
+    sequence_number: int
+    transferable: bool
+
+class OobiResponse(BaseModel):
+    aid: str
+    oobi_urls: list[str]
+
+class CreateIdentityResponse(BaseModel):
+    identity: IdentityResponse
+    oobi_urls: list[str]
+    publish_results: Optional[list[WitnessPublishResult]]
+
+class RotateIdentityRequest(BaseModel):
+    next_key_count: Optional[int]
+    next_threshold: Optional[str]
+    publish_to_witnesses: bool = True
+
+class WitnessPublishDetail(BaseModel):
+    witness_url: str
+    success: bool
+    error: Optional[str]
+
+class RotateIdentityResponse(BaseModel):
+    identity: IdentityResponse
+    previous_sequence_number: int
+    publish_results: Optional[list[WitnessPublishDetail]]
+    publish_threshold_met: bool = True
+
+class IdentityListResponse(BaseModel):
+    identities: list[IdentityResponse]
+    count: int
+```
+
+#### Common Response Models
+```python
+class DeleteResponse(BaseModel):
+    deleted: bool
+    resource_type: str
+    resource_id: str
+    message: Optional[str]
+
+class ErrorResponse(BaseModel):
+    error: str
+    detail: Optional[str]
+
+class HealthResponse(BaseModel):
+    ok: bool
+    service: str = "vvp-issuer"
+    identities_loaded: int = 0
+```
+
+#### Registry Models
+```python
+class CreateRegistryRequest(BaseModel):
+    name: str
+    identity_name: Optional[str]   # Issuer identity by name
+    issuer_aid: Optional[str]      # Issuer identity by AID
+    no_backers: bool = True
+    publish_to_witnesses: bool = True
+
+class RegistryResponse(BaseModel):
+    registry_key: str              # Registry prefix (regk)
+    name: str
     issuer_aid: str
-    issuee_aid: Optional[str]
+    created_at: Optional[str]
+    sequence_number: int
+    no_backers: bool
+
+class CreateRegistryResponse(BaseModel):
+    registry: RegistryResponse
+    publish_results: Optional[list[WitnessPublishResult]]
+
+class RegistryListResponse(BaseModel):
+    registries: list[RegistryResponse]
+    count: int
+```
+
+#### Schema Models
+```python
+class SchemaResponse(BaseModel):
+    said: str
+    title: str
+    description: Optional[str]
+    source: Optional[str]          # embedded, imported, custom
+    schema_document: Optional[dict]
+
+class SchemaListResponse(BaseModel):
+    schemas: list[SchemaResponse]
+    count: int
+
+class SchemaValidationRequest(BaseModel):
+    said: str
+    credential_type: Optional[str]
+
+class SchemaValidationResponse(BaseModel):
+    said: str
+    valid: bool
+    credential_type: Optional[str]
+
+class SchemaImportRequest(BaseModel):
+    source: str                    # 'weboftrust' or 'url'
+    schema_id: Optional[str]
+    url: Optional[str]
+    verify_said: bool = True
+
+class SchemaImportResponse(BaseModel):
+    said: str
+    title: str
+    source: str
+    verified: bool
+
+class SchemaCreateRequest(BaseModel):
+    title: str
+    description: Optional[str]
+    credential_type: str = "VerifiableCredential"
+    properties: Optional[dict]
+
+class SchemaCreateResponse(BaseModel):
+    said: str
+    title: str
+    schema_document: dict
+
+class SchemaVerifyResponse(BaseModel):
+    said: str
+    valid: bool
+    computed_said: Optional[str]
+
+class WebOfTrustRegistryResponse(BaseModel):
+    schemas: list[dict]
+    count: int
+    ref: str                       # Git ref used
+```
+
+#### Credential Models
+```python
+class IssueCredentialRequest(BaseModel):
+    registry_name: str
+    schema_said: str
+    attributes: dict               # Credential attributes (a section)
+    recipient_aid: Optional[str]
+    edges: Optional[dict]
+    rules: Optional[dict]
+    private: bool = False
+    publish_to_witnesses: bool = True
+    organization_id: Optional[str] # Cross-org issuance (Sprint 61)
+
+class CredentialResponse(BaseModel):
+    said: str
+    issuer_aid: str
+    recipient_aid: Optional[str]
     registry_key: str
+    schema_said: str
+    issuance_dt: str
+    status: str                    # "issued" or "revoked"
+    revocation_dt: Optional[str]
+    relationship: Optional[str]    # "issued" or "subject"
+    issuer_name: Optional[str]
+    recipient_name: Optional[str]
+
+class CredentialDetailResponse(CredentialResponse):
     attributes: dict
     edges: Optional[dict]
-    organization_id: Optional[str]  # Cross-org issuance (Sprint 61)
+    rules: Optional[dict]
 
-class CreateTNMappingRequest(BaseModel):
-    telephone_number: str          # E.164
-    dossier_id: str
-    signing_identity_aid: str
-    brand_name: Optional[str]
-    brand_logo_url: Optional[str]
+class IssueCredentialResponse(BaseModel):
+    credential: CredentialResponse
+    publish_results: Optional[list[WitnessPublishResult]]
 
-class TNLookupRequest(BaseModel):
-    telephone_number: str          # E.164 format
+class RevokeCredentialRequest(BaseModel):
+    reason: Optional[str]
+    publish_to_witnesses: bool = True
 
-class CreateOrganizationRequest(BaseModel):
-    name: str
-    lei: Optional[str]
+class RevokeCredentialResponse(BaseModel):
+    credential: CredentialResponse
+    publish_results: Optional[list[WitnessPublishResult]]
 
+class CredentialListResponse(BaseModel):
+    credentials: list[CredentialResponse]
+    count: int
+```
+
+#### Dossier Models
+```python
 # Sprint 63 — Dossier Creation Wizard
 class CreateDossierRequest(BaseModel):
     owner_org_id: str              # AP organization ID
-    name: Optional[str]            # Dossier name (max 255)
     edges: dict[str, str]          # {edge_name: credential_SAID}
+    name: Optional[str]
     osp_org_id: Optional[str]      # OSP org to associate
 
 class CreateDossierResponse(BaseModel):
@@ -273,44 +454,134 @@ class CreateDossierResponse(BaseModel):
     dossier_url: str
     publish_results: Optional[list[WitnessPublishResult]]
 
-class OrganizationNameResponse(BaseModel):
-    id: str
-    name: str
-    aid: Optional[str]             # Included only when purpose=ap (Sprint 65)
-
-class OrganizationNameListResponse(BaseModel):
-    count: int
-    organizations: list[OrganizationNameResponse]
-
 class AssociatedDossierEntry(BaseModel):
     dossier_said: str
     owner_org_id: str
-    owner_org_name: str
+    owner_org_name: Optional[str]
     osp_org_id: str
+    osp_org_name: Optional[str]
     created_at: str
 
 class AssociatedDossierListResponse(BaseModel):
-    count: int
     associations: list[AssociatedDossierEntry]
+    count: int
 
 # Sprint 65 — Dossier Readiness Assessment
 class DossierSlotStatus(BaseModel):
     edge: str                      # Edge name (vetting, alloc, tnalloc, etc.)
     label: str                     # Human-readable label
-    required: bool                 # Is this slot required?
+    required: bool
     schema_constraint: Optional[str]  # Required schema SAID (if constrained)
-    available_count: int           # Count of valid, available credentials
-    total_count: int               # Total credentials matching schema
+    available_count: int
+    total_count: int
     status: str                    # "ready", "missing", "invalid", "optional_missing", "optional_unconstrained"
 
 class DossierReadinessResponse(BaseModel):
-    org_id: str                    # Organization UUID
-    org_name: str                  # Organization name
-    ready: bool                    # Overall readiness (all required slots ready)
-    slots: list[DossierSlotStatus] # Per-slot assessment
-    blocking_reason: Optional[str] # Why not ready (if ready=False)
+    org_id: str
+    org_name: str
+    ready: bool                    # All required slots ready
+    slots: list[DossierSlotStatus]
+    blocking_reason: Optional[str]
 
-# Sprint 61 — Vetter Certification
+class OrganizationNameResponse(BaseModel):
+    id: str
+    name: str
+    aid: Optional[str]             # Included when purpose=ap (Sprint 65)
+
+class OrganizationNameListResponse(BaseModel):
+    organizations: list[OrganizationNameResponse]
+    count: int
+
+class BuildDossierRequest(BaseModel):
+    root_said: str
+    root_saids: Optional[list[str]]
+    format: str = "cesr"
+    include_tel: bool = True
+
+class DossierInfoResponse(BaseModel):
+    root_said: str
+    root_saids: list[str]
+    credential_count: int
+    is_aggregate: bool
+    format: str
+    content_type: str
+    size_bytes: int
+    warnings: list[str]
+
+class BuildDossierResponse(BaseModel):
+    dossier: DossierInfoResponse
+```
+
+#### VVP Header/PASSporT Models
+```python
+class CreateVVPRequest(BaseModel):
+    identity_name: str
+    dossier_said: str
+    orig_tn: str                   # E.164 format
+    dest_tn: list[str]             # E.164 format
+    exp_seconds: int = 300         # Max 300
+    call_id: Optional[str]         # SIP Call-ID for dialog binding
+    cseq: Optional[int]            # SIP CSeq for dialog binding
+
+class CreateVVPResponse(BaseModel):
+    vvp_identity_header: str       # Base64url VVP-Identity
+    passport_jwt: str              # Signed PASSporT JWT
+    dossier_url: str
+    kid_oobi: str
+    iat: int
+    exp: int
+    identity_header: str           # RFC 8224 Identity header
+    revocation_status: str = "TRUSTED"
+```
+
+#### TN Mapping Models
+```python
+class CreateTNMappingRequest(BaseModel):
+    tn: str                        # E.164 (e.g., +15551234567)
+    dossier_said: str              # Root credential SAID (44 chars)
+    identity_name: str             # KERI identity name
+
+class UpdateTNMappingRequest(BaseModel):
+    dossier_said: Optional[str]
+    identity_name: Optional[str]
+    brand_name: Optional[str]
+    brand_logo_url: Optional[str]
+    enabled: Optional[bool]
+
+class TNMappingResponse(BaseModel):
+    id: str                        # UUID
+    tn: str
+    organization_id: str
+    dossier_said: str
+    identity_name: str
+    brand_name: Optional[str]
+    brand_logo_url: Optional[str]
+    enabled: bool
+    created_at: str
+    updated_at: str
+
+class TNMappingListResponse(BaseModel):
+    count: int
+    mappings: list[TNMappingResponse]
+
+class TNLookupRequest(BaseModel):
+    tn: str                        # E.164 format
+    api_key: str
+
+class TNLookupResponse(BaseModel):
+    found: bool
+    tn: Optional[str]
+    organization_id: Optional[str]
+    organization_name: Optional[str]
+    dossier_said: Optional[str]
+    identity_name: Optional[str]
+    brand_name: Optional[str]
+    brand_logo_url: Optional[str]
+    error: Optional[str]
+```
+
+#### Vetter Certification Models (Sprint 61)
+```python
 class VetterCertificationCreateRequest(BaseModel):
     organization_id: str           # Target org UUID
     ecc_targets: list[str]         # E.164 country codes (validated against VALID_ECC_CODES)
@@ -351,22 +622,60 @@ class OrganizationConstraintsResponse(BaseModel):
 
 ### vvp/sip/models.py - Shared SIP Models
 ```python
-class SIPRequest(BaseModel):
+@dataclass
+class SIPRequest:
     method: str                    # INVITE, BYE, etc.
     request_uri: str               # Target URI
-    sip_version: str               # SIP/2.0
-    headers: Dict[str, str]        # All headers
-    body: Optional[str]            # SDP body
-    raw: bytes                     # Original bytes
-    from_tn: Optional[str]         # Extracted caller TN
-    to_tn: Optional[str]           # Extracted callee TN
-    call_id: Optional[str]
-    cseq: Optional[str]
-    via: Optional[str]
-    api_key: Optional[str]         # X-VVP-API-Key
-    identity_header: Optional[str] # Identity (PASSporT)
-    vvp_identity_header: Optional[str]  # VVP-Identity
+    sip_version: str = "SIP/2.0"
+    via: list[str]                 # All Via headers (RFC 3261)
+    from_header: str               # From header value
+    to_header: str                 # To header value
+    call_id: str                   # Call-ID header
+    cseq: str                      # CSeq header
+    from_tn: Optional[str]         # Extracted caller TN (E.164)
+    to_tn: Optional[str]           # Extracted callee TN (E.164)
+    vvp_api_key: Optional[str]     # X-VVP-API-Key (signing)
+    identity_header: Optional[str] # RFC 8224 Identity header
+    p_vvp_identity: Optional[str]  # P-VVP-Identity (base64url JSON)
+    p_vvp_passport: Optional[str]  # P-VVP-Passport (JWT)
+    contact: Optional[str]
+    headers: dict                  # All headers dict (for monitoring)
+    source_addr: Optional[str]     # Source address (for monitoring)
+    raw: bytes                     # Raw message for debugging
+    # Properties: is_invite, has_verification_headers, has_signing_headers
+
+@dataclass
+class SIPResponse:
+    status_code: int               # 302, 400, 401, 403, 404, 500
+    reason_phrase: str
+    sip_version: str = "SIP/2.0"
+    via: list[str]                 # Copied from request (RFC 3261)
+    from_header: str               # Copied from request
+    to_header: str                 # Copied from request (with tag)
+    call_id: str                   # Copied from request
+    cseq: str                      # Copied from request
+    contact: Optional[str]         # Redirect destination
+    identity: Optional[str]        # RFC 8224 Identity header
+    vvp_identity: Optional[str]    # P-VVP-Identity header
+    vvp_passport: Optional[str]    # P-VVP-Passport header
+    vvp_status: str = "INDETERMINATE"  # VALID | INVALID | INDETERMINATE
+    brand_name: Optional[str]      # X-VVP-Brand-Name
+    brand_logo_url: Optional[str]  # X-VVP-Brand-Logo
+    caller_id: Optional[str]       # X-VVP-Caller-ID
+    vetter_status: Optional[str]   # X-VVP-Vetter-Status (Sprint 62)
+    error_reason: Optional[str]    # Error info for non-2xx
+    error_code: Optional[str]      # X-VVP-Error code
+    # Method: to_bytes() -> bytes
 ```
+
+### vvp/sip/builder.py - SIP Response Builder
+Factory functions for SIP responses (all copy transaction headers per RFC 3261):
+- `build_302_redirect(request, contact_uri, identity, vvp_identity, vvp_passport, vvp_status, brand_name, brand_logo_url, caller_id, error_code, vetter_status)` — VVP redirect with all headers
+- `build_400_bad_request(request, reason)` — Malformed request
+- `build_401_unauthorized(request, reason, vvp_status="INVALID")` — Auth failure
+- `build_403_forbidden(request, reason, vvp_status="INVALID")` — Authorization denied
+- `build_404_not_found(request, reason, vvp_status="INVALID")` — TN not mapped
+- `build_500_error(request, reason, vvp_status="INDETERMINATE")` — Internal error
 
 ### vvp/canonical/ - Serialization
 - `said.py`: SAID computation (Blake3-256)

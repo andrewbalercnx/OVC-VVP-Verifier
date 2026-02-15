@@ -61,8 +61,16 @@ When OP == AP (self-signing): `bproxy` is optional even with `bownr`.
 | 9 | Revocation Check | Query TEL for each credential's status |
 | 10 | Chain Validation | Walk credential chain to trusted root AID |
 | 11 | Authorization | Check TN rights (TNAlloc), delegation (delsig), brand |
+| 11b | Vetter Constraints | ECC/jurisdiction validation against VetterCert (Sprint 62) |
 
 ### Verification Result: `VALID` | `INVALID` | `INDETERMINATE`
+
+### Phase 11b: Vetter Constraints (Sprint 62)
+- Walks dossier looking for `certification` edges → VetterCertification ACDCs
+- Checks caller TN country code against `ecc_targets`
+- Checks jurisdiction against `jurisdiction_targets`
+- Status: INDETERMINATE (not INVALID) when constraints fail
+- SIP header: `X-VVP-Vetter-Status` (PASS / FAIL-ECC / FAIL-JURISDICTION / INDETERMINATE)
 
 ## Delegation Model
 
@@ -99,6 +107,25 @@ Incoming call with caller TN
 - Brand info (name, logo URL) is extracted from dossier during verification
 - Brand derived from dossier only — signing 302 has no X-VVP-* headers
 - Logo served via issuer `/static/` mount (`web/` directory → `/static/` URL)
+
+## Dossier Readiness (Sprint 65)
+
+`GET /dossier/readiness?org_id=<uuid>` — Pre-flight check for dossier creation. Parses the dossier schema edge block to determine required/optional slots, then checks whether the org has valid credentials for each.
+
+Slot statuses: `ready`, `missing`, `invalid`, `optional_missing`, `optional_unconstrained`
+
+## Vetter Certification (Sprint 61-62)
+
+### Issuance (Issuer)
+- Mock GSMA trust chain (separate from QVI)
+- `POST /vetter-certifications` — Issue VetterCert with ECC targets + jurisdiction targets
+- Extended schemas auto-inject `certification` edge at issuance time
+- Constraint validation: `validate_issuance_constraints()` checks TN ranges vs ECC
+
+### Verification (Verifier — Phase 11b)
+- Walks credential chain looking for VetterCertification backlinks
+- 4 error codes: VETTER_ECC_UNAUTHORIZED, VETTER_JURISDICTION_UNAUTHORIZED, VETTER_CERTIFICATION_MISSING, VETTER_CERTIFICATION_INVALID
+- Status is INDETERMINATE (not INVALID) — non-blocking
 
 ## Key Configuration
 

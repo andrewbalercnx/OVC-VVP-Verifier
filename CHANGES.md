@@ -1,5 +1,53 @@
 # VVP Verifier Change Log
 
+## Sprint 66: Knowledge Base & Documentation Refresh + Interactive Walkthrough
+
+**Date:** 2026-02-15
+**Status:** Complete
+
+### Summary
+
+Comprehensive documentation audit and refresh across all knowledge tiers, plus an interactive split-pane walkthrough page. All knowledge files, service CLAUDE.md guides, API references, data model docs, and environment variable references brought into alignment with current codebase. Automated coverage verification script validates consistency.
+
+### Key Changes
+
+- **Knowledge files refreshed** — All 10 `knowledge/` files updated to match current code (api-reference, data-models, deployment, architecture, schemas, test-patterns, keri-primer, dossier-parsing-algorithm, verification-pipeline, dossier-creation-guide)
+- **Service CLAUDE.md files** — Issuer, verifier, and common CLAUDE.md fully refreshed with current APIs, models, and architecture
+- **deployment.md env vars** — Comprehensive reference for all 96 environment variables with correct defaults derived from code
+- **data-models.md** — Complete inventory of all 78 model classes (SQLAlchemy, Pydantic, Enum)
+- **Interactive walkthrough** — `/ui/walkthrough` route with split-pane layout (tutorial text + live UI iframe), 10-step guided tour
+- **Doc coverage script** — `scripts/check-doc-coverage.sh` verifying 6 sections (endpoints, models, schemas, env vars, directories, knowledge files)
+- **Context pack** — Updated `source-map.md` and `vvp.md` reviewer references
+
+### Files Changed
+
+| File | Action | Summary |
+|------|--------|---------|
+| `knowledge/api-reference.md` | Modified | Complete endpoint audit, exact path params |
+| `knowledge/data-models.md` | Modified | Full 78-model inventory |
+| `knowledge/deployment.md` | Modified | 96 env vars with correct defaults |
+| `knowledge/architecture.md` | Modified | Issuer architecture, 19 HTML pages |
+| `knowledge/schemas.md` | Modified | All schema SAIDs and edge structures |
+| `knowledge/test-patterns.md` | Modified | Issuer test patterns |
+| `knowledge/keri-primer.md` | Modified | Minor corrections |
+| `knowledge/dossier-creation-guide.md` | Created | Step-by-step dossier creation guide |
+| `services/issuer/CLAUDE.md` | Modified | Full service guide refresh |
+| `services/verifier/CLAUDE.md` | Modified | Updated phases, error codes, vetter |
+| `common/CLAUDE.md` | Modified | Schema registry, models, canonical |
+| `CLAUDE.md` | Modified | 19 HTML pages, structure updates |
+| `services/issuer/app/main.py` | Modified | `/ui/walkthrough` route |
+| `services/issuer/app/config.py` | Modified | Auth-exempt path for walkthrough |
+| `services/issuer/web/walkthrough.html` | Created | Interactive walkthrough page |
+| `services/issuer/web/help.html` | Modified | Walkthrough navigation link |
+| `services/issuer/web/index.html` | Modified | Walkthrough navigation link |
+| `services/issuer/tests/test_walkthrough.py` | Created | 7 walkthrough tests |
+| `scripts/check-doc-coverage.sh` | Created | Doc coverage verification script |
+| `Documentation/doc-coverage-report-sprint66.md` | Created | Coverage report (all PASS) |
+| `codex/skills/.../source-map.md` | Modified | Updated file layout |
+| `codex/skills/.../vvp.md` | Modified | Updated API surface |
+
+---
+
 ## Sprint 62: Multichannel Vetter Constraints — End-to-End
 
 **Date:** 2026-02-15

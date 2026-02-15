@@ -48,11 +48,11 @@ Sprints 1-25 implemented the VVP Verifier. See `Documentation/archive/PLAN_Sprin
 | 59 | Infrastructure Fixes | COMPLETE | Sprint 53 |
 | 60 | Spec-Compliant VVP Header Flow | COMPLETE | Sprint 58 |
 | 60b | TNAlloc in Dossier + Brand Logo Fix | COMPLETE | Sprint 60 |
-| 61 | Organization Vetter Certification Association | DONE | Sprint 41, 40 |
-| 62 | Multichannel Vetter Constraints — End-to-End | TODO | Sprint 61, 44 |
-| 63 | Dossier Creation Wizard UI | DONE | Sprint 41, 32, 60b |
+| 61 | Organization Vetter Certification Association | COMPLETE | Sprint 41, 40 |
+| 62 | Multichannel Vetter Constraints — End-to-End | COMPLETE | Sprint 61, 44 |
+| 63 | Dossier Creation Wizard UI | COMPLETE | Sprint 41, 32, 60b |
 | 64 | Repository Migration to Rich-Connexions-Ltd | COMPLETE | - |
-| 65 | Schema-Aware Credential Management | DONE | Sprint 63, 34 |
+| 65 | Schema-Aware Credential Management | COMPLETE | Sprint 63, 34 |
 | 66 | Knowledge Base & Documentation Refresh | TODO | - |
 
 ---
@@ -4447,9 +4447,9 @@ Add a view showing organizational readiness for dossier assembly:
 
 ---
 
-## Sprint 66: Knowledge Base & Documentation Refresh (TODO)
+## Sprint 66: Knowledge Base & Documentation Refresh + Interactive Walkthrough (COMPLETE)
 
-**Goal:** Bring all knowledge files, service CLAUDE.md guides, API references, data model docs, and user-facing help text into alignment with the current codebase. Sprints 58-65 introduced significant features (PASSporT vCard, spec-compliant VVP headers, dossier creation wizard, schema-aware credential management, dossier readiness) that are not fully reflected in the documentation. This sprint is a comprehensive audit and refresh — no code changes, only documentation.
+**Goal:** Bring all knowledge files, service CLAUDE.md guides, API references, data model docs, and user-facing help text into alignment with the current codebase. Sprints 58-65 introduced significant features (PASSporT vCard, spec-compliant VVP headers, dossier creation wizard, schema-aware credential management, dossier readiness) that are not fully reflected in the documentation. This sprint is primarily a documentation audit and refresh, with minimal code changes for the interactive walkthrough (one route, one auth-exempt path, one HTML page, one test file).
 
 ### Why This Matters
 
@@ -4593,7 +4593,7 @@ These are the most impactful — loaded automatically when working in a service 
 
 #### Phase 4: Reviewer Context Pack
 
-- [ ] **`codex/skills/keri-acdc-vlei-vvp/references/vvp-reference.md`** — Update:
+- [ ] **`codex/skills/keri-acdc-vlei-vvp/references/vvp.md`** — Update:
   - Reflect current API surface
   - Include dossier creation and readiness endpoints
   - Include credential issuance flow
@@ -4602,7 +4602,33 @@ These are the most impactful — loaded automatically when working in a service 
   - Reflect current file layout across all services
   - Include files added in Sprints 58-65
 
-#### Phase 5: Consistency Verification
+#### Phase 5: Interactive Split-Pane Walkthrough
+
+Add an interactive guided walkthrough that presents documentation alongside the live UI:
+
+- [ ] **Split-pane layout** — A walkthrough page (e.g., `/ui/walkthrough`) with two panes side by side:
+  - **Left pane**: Step-by-step documentation/tutorial content (Markdown-rendered or HTML)
+  - **Right pane**: An `<iframe>` that loads the appropriate UI page for the current step
+
+- [ ] **Step navigation** — Walkthrough steps are defined in a structured data format (JSON or JS array), each step specifying:
+  - `title`: Step heading
+  - `content`: Explanation text (what this page does, how to use it, key concepts)
+  - `uiPath`: The URL path to load in the iframe (e.g., `/ui/credentials`, `/ui/dossier`, `/create`)
+  - `highlights`: Optional CSS selectors to highlight specific UI elements in the iframe
+  - Previous/Next buttons to navigate between steps
+
+- [ ] **Walkthrough content** — Cover the main user journeys:
+  - **Getting Started**: Organization setup, API keys, AID creation
+  - **Credential Management**: Schema browser → credential creation → edge linking
+  - **Dossier Assembly**: Readiness check → wizard → credential selection → dossier creation
+  - **Verification**: How the verifier processes a dossier, reading verification results
+  - **TN Allocation**: Creating and managing TN Allocation credentials
+
+- [ ] **Responsive design** — Panes can be resized via a draggable divider; collapse to stacked layout on narrow screens
+
+- [ ] **Step synchronization** — When the user clicks "Next", the right pane iframe navigates to the appropriate page automatically. Optionally, a "Try it" mode that lets the user interact with the iframe while the walkthrough text stays visible.
+
+#### Phase 6: Consistency Verification
 
 - [ ] **Cross-reference check** — Verify that:
   - Every API endpoint in code appears in `knowledge/api-reference.md`
@@ -4613,7 +4639,7 @@ These are the most impactful — loaded automatically when working in a service 
 
 ### Technical Notes
 
-- **No code changes** — This sprint is documentation-only. No functional code, tests, or configuration changes.
+- **Minimal code changes** — This sprint is primarily documentation. The only functional code is the walkthrough page (Phase 5), which is a standalone HTML page with minimal backend changes (one route in `main.py`, one auth-exempt path in `config.py`) — it uses an iframe to display existing UI pages alongside tutorial text.
 - **Read before writing** — For each knowledge file, READ the current content first, then READ the corresponding source code, then update the doc. Do not write documentation from memory alone.
 - **Accuracy over completeness** — It is better to have fewer documented items that are correct than many items that are wrong. If uncertain about a detail, check the code.
 - **Preserve existing structure** — Each knowledge file has an established format. Follow the same conventions (headers, tables, code blocks) rather than redesigning.
@@ -4621,7 +4647,7 @@ These are the most impactful — loaded automatically when working in a service 
 
 ### Dependencies
 
-- None — documentation-only sprint, no code dependencies
+- None — primarily documentation sprint with minimal walkthrough code (no external dependencies)
 
 ### Exit Criteria
 
@@ -4634,7 +4660,10 @@ These are the most impactful — loaded automatically when working in a service 
 - `knowledge/test-patterns.md` covers issuer test patterns and PostgreSQL constraints
 - `knowledge/dossier-creation-guide.md` provides complete step-by-step instructions for dossier creation in both models (with and without vetter certification)
 - Cross-reference check passes: no undocumented endpoints, models, or schemas
-- Reviewer context pack (`source-map.md`, `vvp-reference.md`) reflects current file layout and API surface
+- Reviewer context pack (`source-map.md`, `vvp.md`) reflects current file layout and API surface
+- Interactive walkthrough page loads at `/ui/walkthrough` with split-pane layout
+- Walkthrough steps cover main user journeys (credentials, dossier, verification)
+- Right pane iframe updates to the correct UI page on each step transition
 
 
 

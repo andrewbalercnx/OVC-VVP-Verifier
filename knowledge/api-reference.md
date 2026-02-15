@@ -28,12 +28,39 @@ Base URL: `https://vvp-verifier.wittytree-2a937ccd.uksouth.azurecontainerapps.io
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/` | Landing page |
-| `GET` | `/verify` | Verification mode selection |
+| `GET` | `/verify` | Verification mode selection (redirect alias) |
+| `GET` | `/verify/` | Verification mode selection (landing page) |
+| `GET` | `/simple` | Redirect (301) to `/verify/simple` |
 | `GET` | `/verify/full` | Full verification explorer (HTMX) |
 | `GET` | `/verify/simple` | Simple single-step verification |
 | `GET` | `/verify/explore` | Tabbed explorer (JWT/SIP/SAID) |
 | `GET` | `/create` | Dossier creation landing |
 | `GET` | `/ui/admin` | Admin dashboard |
+
+### HTMX Endpoints (return HTML fragments)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/ui/parse-jwt` | Parse PASSporT JWT |
+| `POST` | `/ui/parse-sip` | Parse SIP INVITE |
+| `POST` | `/ui/fetch-dossier` | Fetch and display dossier |
+| `POST` | `/ui/check-revocation` | Revocation check fragment |
+| `POST` | `/ui/credential-graph` | Credential chain visualization |
+| `POST` | `/ui/revocation-badge` | Revocation status badge |
+| `GET` | `/ui/revocation-status` | Revocation polling endpoint |
+| `POST` | `/ui/verify-result` | Full verify result display |
+| `GET` | `/ui/credential/{said}` | Single credential detail |
+| `POST` | `/ui/browse-said` | SAID browser |
+| `POST` | `/ui/jwt-explore` | JWT explorer fragment |
+| `POST` | `/ui/sip-explore` | SIP explorer fragment |
+| `POST` | `/ui/simple-verify` | Simple verify fragment |
+
+### Data Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/proxy-fetch` | Proxy dossier fetch (JSON) |
+| `POST` | `/credential-graph` | Credential graph data (JSON) |
 
 ### POST /verify - Caller Verification
 
@@ -93,11 +120,12 @@ Same structure as `/verify` but requires:
 
 Base URL: `https://vvp-issuer.rcnx.io`
 
-### Health
+### Health & Dashboard
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/healthz` | Health check with witness status |
+| `GET` | `/api/dashboard/status` | Dashboard health data (service status, KERI state) |
 
 ### Authentication (`/auth`)
 
@@ -110,17 +138,17 @@ Base URL: `https://vvp-issuer.rcnx.io`
 | `GET` | `/auth/oauth/m365/start` | Start Microsoft OAuth flow |
 | `GET` | `/auth/oauth/m365/callback` | OAuth callback handler |
 
-### Organizations (`/api/organizations`)
+### Organizations (`/organizations`)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/api/organizations` | Create organization (auto-provisions KERI identity + LE credential) |
-| `GET` | `/api/organizations` | List organizations |
-| `GET` | `/api/organizations/names` | List org names (lightweight, any auth) |
-| `GET` | `/api/organizations/{id}` | Get organization details |
-| `PATCH` | `/api/organizations/{id}` | Update organization |
+| `POST` | `/organizations` | Create organization (auto-provisions KERI identity + LE credential) |
+| `GET` | `/organizations` | List organizations |
+| `GET` | `/organizations/names` | List org names (lightweight, any auth) |
+| `GET` | `/organizations/{org_id}` | Get organization details |
+| `PATCH` | `/organizations/{org_id}` | Update organization |
 
-#### GET /api/organizations/names (Sprint 63, updated Sprint 65)
+#### GET /organizations/names (Sprint 63, updated Sprint 65)
 
 Lightweight org name list for any authenticated user. Used by dossier wizard for AP and OSP dropdowns.
 
@@ -140,44 +168,44 @@ Lightweight org name list for any authenticated user. Used by dossier wizard for
 }
 ```
 
-### Organization API Keys (`/api/organizations/{id}/api-keys`)
+### Organization API Keys (`/organizations/{org_id}/api-keys`)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/api/organizations/{id}/api-keys` | Create API key |
-| `GET` | `/api/organizations/{id}/api-keys` | List API keys |
-| `GET` | `/api/organizations/{id}/api-keys/{key_id}` | Get API key |
-| `DELETE` | `/api/organizations/{id}/api-keys/{key_id}` | Revoke API key |
+| `POST` | `/organizations/{org_id}/api-keys` | Create API key |
+| `GET` | `/organizations/{org_id}/api-keys` | List API keys |
+| `GET` | `/organizations/{org_id}/api-keys/{key_id}` | Get API key |
+| `DELETE` | `/organizations/{org_id}/api-keys/{key_id}` | Revoke API key |
 
-### KERI Identities (`/api/identities`)
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `POST` | `/api/identities` | Create KERI identity (inception) |
-| `GET` | `/api/identities` | List identities |
-| `GET` | `/api/identities/{aid}` | Get identity details |
-| `GET` | `/api/identities/{aid}/oobi` | Get OOBI URL |
-| `POST` | `/api/identities/{aid}/rotate` | Rotate keys |
-| `DELETE` | `/api/identities/{aid}` | Delete identity |
-
-### Credential Registries (`/api/registries`)
+### KERI Identities (`/identity`)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/api/registries` | Create credential registry |
-| `GET` | `/api/registries` | List registries |
-| `GET` | `/api/registries/{key}` | Get registry details |
-| `DELETE` | `/api/registries/{key}` | Delete registry |
+| `POST` | `/identity` | Create KERI identity (inception) |
+| `GET` | `/identity` | List identities |
+| `GET` | `/identity/{aid}` | Get identity details |
+| `GET` | `/identity/{aid}/oobi` | Get OOBI URL |
+| `POST` | `/identity/{aid}/rotate` | Rotate keys |
+| `DELETE` | `/identity/{aid}` | Delete identity |
 
-### Credentials (`/api/credentials`)
+### Credential Registries (`/registry`)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/api/credentials/issue` | Issue ACDC credential |
-| `GET` | `/api/credentials` | List credentials |
-| `GET` | `/api/credentials/{said}` | Get credential details |
-| `POST` | `/api/credentials/{said}/revoke` | Revoke credential |
-| `DELETE` | `/api/credentials/{said}` | Delete credential |
+| `POST` | `/registry` | Create credential registry |
+| `GET` | `/registry` | List registries |
+| `GET` | `/registry/{registry_key}` | Get registry details |
+| `DELETE` | `/registry/{registry_key}` | Delete registry |
+
+### Credentials (`/credential`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/credential/issue` | Issue ACDC credential |
+| `GET` | `/credential` | List credentials |
+| `GET` | `/credential/{said}` | Get credential details |
+| `POST` | `/credential/{said}/revoke` | Revoke credential |
+| `DELETE` | `/credential/{said}` | Delete credential |
 
 #### GET /credential Query Filters (Sprint 63)
 
@@ -185,18 +213,18 @@ Lightweight org name list for any authenticated user. Used by dossier wizard for
 - `org_id` (optional, admin-only): Scope credentials to a specific org. Non-admins receive 403. Relationship tagging is computed from the perspective of the specified org.
 - `status` (optional): Filter by credential status (e.g., `issued`)
 
-### Dossiers (`/api/dossiers`)
+### Dossiers (`/dossier`)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/api/dossier/create` | Create dossier ACDC with edge validation (Sprint 63) |
-| `POST` | `/api/dossier/build` | Build dossier from credential SAID |
-| `POST` | `/api/dossier/build/info` | Build info (credential count, format) |
-| `GET` | `/api/dossier/associated` | List dossiers associated with principal's org as OSP (Sprint 63) |
-| `GET` | `/api/dossier/{said}` | Get public dossier by SAID |
-| `GET` | `/api/dossier/readiness` | Pre-flight readiness assessment for dossier creation (Sprint 65) |
+| `POST` | `/dossier/create` | Create dossier ACDC with edge validation (Sprint 63) |
+| `POST` | `/dossier/build` | Build dossier from credential SAID |
+| `POST` | `/dossier/build/info` | Build info (credential count, format) |
+| `GET` | `/dossier/associated` | List dossiers associated with principal's org as OSP (Sprint 63) |
+| `GET` | `/dossier/{said}` | Get public dossier by SAID |
+| `GET` | `/dossier/readiness` | Pre-flight readiness assessment for dossier creation (Sprint 65) |
 
-#### POST /api/dossier/create (Sprint 63)
+#### POST /dossier/create (Sprint 63)
 
 Create a dossier ACDC with server-side edge validation, ACDC issuance, and optional OSP association.
 
@@ -228,7 +256,7 @@ Create a dossier ACDC with server-side edge validation, ACDC issuance, and optio
   "edge_count": 4,
   "name": "My VVP Dossier",
   "osp_org_id": "uuid or null",
-  "dossier_url": "https://vvp-issuer.rcnx.io/api/dossier/E...",
+  "dossier_url": "https://vvp-issuer.rcnx.io/dossier/E...",
   "publish_results": [{"witness_url": "...", "success": true}]
 }
 ```
@@ -242,7 +270,7 @@ Create a dossier ACDC with server-side edge validation, ACDC issuance, and optio
 - `bproxy` required when `bownr` present and OP differs from AP (§6.3.4)
 - Per-edge access policy: `ap_org` (5 edges) or `principal` (bproxy only)
 
-#### GET /api/dossier/associated (Sprint 63)
+#### GET /dossier/associated (Sprint 63)
 
 List dossiers associated with the principal's organization as OSP.
 
@@ -250,7 +278,7 @@ List dossiers associated with the principal's organization as OSP.
 **Query Parameters:** `org_id` (optional, admin-only): Filter by specific OSP org
 **Scoping:** Admins see all; org-scoped principals see only their org's associations
 
-#### GET /api/dossier/readiness (Sprint 65)
+#### GET /dossier/readiness (Sprint 65)
 
 Pre-flight readiness assessment for dossier creation. Analyzes available credentials against dossier schema requirements.
 
@@ -376,89 +404,101 @@ Convenience endpoint — resolves current user's org and returns constraints. Re
 
 **Auth:** Any authenticated user
 
-### TN Mappings (`/api/tn`)
+### TN Mappings (`/tn`)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/api/tn/mappings` | Create TN mapping |
-| `GET` | `/api/tn/mappings` | List mappings |
-| `GET` | `/api/tn/mappings/{id}` | Get mapping details |
-| `PATCH` | `/api/tn/mappings/{id}` | Update mapping |
-| `DELETE` | `/api/tn/mappings/{id}` | Delete mapping |
-| `POST` | `/api/tn/lookup` | Look up TN (used by SIP Redirect) |
-| `POST` | `/api/tn/test-lookup/{id}` | Test a specific mapping |
+| `POST` | `/tn/mappings` | Create TN mapping |
+| `GET` | `/tn/mappings` | List mappings |
+| `GET` | `/tn/mappings/{mapping_id}` | Get mapping details |
+| `PATCH` | `/tn/mappings/{mapping_id}` | Update mapping |
+| `DELETE` | `/tn/mappings/{mapping_id}` | Delete mapping |
+| `POST` | `/tn/lookup` | Look up TN (used by SIP Redirect) |
+| `POST` | `/tn/test-lookup/{mapping_id}` | Test a specific mapping |
 
-### Schemas (`/api/schemas`)
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/api/schemas` | List schemas |
-| `GET` | `/api/schemas/weboftrust/registry` | WebOfTrust schema registry |
-| `GET` | `/api/schemas/{said}` | Get schema by SAID |
-| `GET` | `/api/schemas/{said}/verify` | Verify schema SAID |
-| `POST` | `/api/schemas/validate` | Validate data against schema |
-| `POST` | `/api/schemas/import` | Import schema from URL |
-| `POST` | `/api/schemas/create` | Create custom schema |
-| `DELETE` | `/api/schemas/{said}` | Delete schema |
-
-### VVP Attestation (`/api/vvp`)
+### Schemas (`/schema`)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/api/vvp/create` | Create VVP attestation (PASSporT + headers) |
+| `GET` | `/schema` | List schemas |
+| `GET` | `/schema/weboftrust/registry` | WebOfTrust schema registry |
+| `GET` | `/schema/{said}` | Get schema by SAID |
+| `GET` | `/schema/{said}/verify` | Verify schema SAID |
+| `POST` | `/schema/validate` | Validate data against schema |
+| `POST` | `/schema/import` | Import schema from URL |
+| `POST` | `/schema/create` | Create custom schema |
+| `DELETE` | `/schema/{said}` | Delete schema by SAID |
 
-### Users (`/api/users`)
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `POST` | `/api/users` | Create user |
-| `GET` | `/api/users` | List users |
-| `GET` | `/api/users/me` | Get current user |
-| `PATCH` | `/api/users/me/password` | Change own password |
-| `GET` | `/api/users/{id}` | Get user |
-| `PATCH` | `/api/users/{id}` | Update user |
-| `PATCH` | `/api/users/{id}/password` | Reset user password |
-| `DELETE` | `/api/users/{id}` | Delete user |
-
-### Admin (`/api/admin`)
+### VVP Attestation (`/vvp`)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/api/admin/auth/reload` | Reload auth config |
-| `GET` | `/api/admin/auth/status` | Auth system status |
-| `GET` | `/api/admin/users` | List admin users |
-| `POST` | `/api/admin/users` | Create admin user |
-| `PATCH` | `/api/admin/users/{email}` | Update admin user |
-| `DELETE` | `/api/admin/users/{email}` | Delete admin user |
-| `POST` | `/api/admin/users/reload` | Reload users |
-| `GET` | `/api/admin/config` | Get configuration |
-| `POST` | `/api/admin/log-level` | Set log level |
-| `POST` | `/api/admin/witnesses/reload` | Reload witness config |
-| `GET` | `/api/admin/stats` | Service statistics |
-| `GET` | `/api/admin/scaling` | Scaling status |
-| `POST` | `/api/admin/scaling` | Update scaling |
-| `GET` | `/api/admin/deployment-tests` | Deployment test history |
-| `POST` | `/api/admin/deployment-tests` | Run deployment test |
-| `GET` | `/api/admin/benchmarks` | Benchmark results |
-| `GET` | `/api/admin/audit-logs` | Audit log viewer |
-| `POST` | `/api/admin/mock-vlei/reinitialize` | Clear all data and re-create mock GLEIF/QVI infrastructure |
-| `GET` | `/api/admin/features` | Feature flags and cache status |
+| `POST` | `/vvp/create` | Create VVP attestation (PASSporT + headers) |
+
+### Users (`/users`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/users` | Create user |
+| `GET` | `/users` | List users |
+| `GET` | `/users/me` | Get current user |
+| `PATCH` | `/users/me/password` | Change own password |
+| `GET` | `/users/{user_id}` | Get user |
+| `PATCH` | `/users/{user_id}` | Update user |
+| `PATCH` | `/users/{user_id}/password` | Change user password (admin) |
+| `DELETE` | `/users/{user_id}` | Delete user |
+
+### Admin (`/admin`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/admin/auth/reload` | Reload auth config |
+| `GET` | `/admin/auth/status` | Auth system status |
+| `GET` | `/admin/users` | List admin users |
+| `POST` | `/admin/users` | Create admin user |
+| `PATCH` | `/admin/users/{email}` | Update admin user |
+| `DELETE` | `/admin/users/{email}` | Delete admin user |
+| `POST` | `/admin/users/reload` | Reload users |
+| `GET` | `/admin/config` | Get configuration |
+| `POST` | `/admin/log-level` | Set log level |
+| `POST` | `/admin/witnesses/reload` | Reload witness config |
+| `GET` | `/admin/stats` | Service statistics |
+| `GET` | `/admin/scaling` | Scaling status |
+| `POST` | `/admin/scaling` | Update scaling |
+| `GET` | `/admin/deployment-tests` | Deployment test history |
+| `POST` | `/admin/deployment-tests` | Run deployment test |
+| `GET` | `/admin/benchmarks` | Benchmark results |
+| `GET` | `/admin/audit-logs` | Audit log viewer |
+| `POST` | `/admin/mock-vlei/reinitialize` | Clear all data and re-create mock GLEIF/QVI infrastructure |
 | `GET` | `/admin/settings/vetter-enforcement` | Get vetter constraint enforcement status |
-| `PUT` | `/admin/settings/vetter-enforcement?enabled=true\|false` | Toggle vetter constraint enforcement |
+| `PUT` | `/admin/settings/vetter-enforcement` | Toggle vetter constraint enforcement (query: `enabled=true\|false`) |
 
-### Issuer UI Pages
+### Issuer UI Pages (all `GET`, return HTML)
 
-| Path | Purpose |
-|------|---------|
-| `/login` | Login page |
-| `/create` | Identity creation UI |
-| `/registry/ui` | Registry management UI |
-| `/schemas/ui` | Schema browser UI |
-| `/ui/organizations` | Organization management |
-| `/ui/credentials` | Credential management |
-| `/ui/dossiers` | Dossier management |
-| `/ui/tn-mappings` | TN mapping management |
-| `/ui/admin` | Admin dashboard |
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/ui/` | Home/landing page |
+| `GET` | `/login` | Login page |
+| `GET` | `/ui/identity` | Identity management |
+| `GET` | `/ui/registry` | Registry management |
+| `GET` | `/ui/schemas` | Schema browser |
+| `GET` | `/ui/credentials` | Credential management |
+| `GET` | `/ui/dossier` | Dossier management |
+| `GET` | `/ui/vvp` | VVP attestation |
+| `GET` | `/ui/dashboard` | Central dashboard |
+| `GET` | `/ui/admin` | Admin panel |
+| `GET` | `/ui/vetter` | Vetter certification |
+| `GET` | `/ui/tn-mappings` | TN mapping management |
+| `GET` | `/ui/benchmarks` | Performance benchmarks |
+| `GET` | `/ui/help` | Help/documentation |
+| `GET` | `/ui/walkthrough` | Interactive split-pane walkthrough (Sprint 66) |
+| `GET` | `/organizations/ui` | Organization management |
+| `GET` | `/users/ui` | User management |
+| `GET` | `/profile` | User profile |
+| `GET` | `/vvp/ui` | VVP UI redirect |
+| `GET` | `/admin/benchmarks/ui` | Benchmarks UI redirect |
+
+Legacy redirects (all `GET`, return 302): `/create` → `/ui/identity`, `/registry/ui` → `/ui/registry`, `/schemas/ui` → `/ui/schemas`, `/credentials/ui` → `/ui/credentials`, `/dossier/ui` → `/ui/dossier`
 
 ---
 
@@ -469,7 +509,7 @@ Convenience endpoint — resolves current user's org and returns constraints. Re
 
 | Input | Processing | Output |
 |-------|-----------|--------|
-| SIP INVITE with X-VVP-API-Key | Extract caller TN, call Issuer `/api/vvp/create` | SIP 302 with Identity + VVP-Identity headers |
+| SIP INVITE with X-VVP-API-Key | Extract caller TN, call Issuer `/vvp/create` | SIP 302 with Identity + VVP-Identity headers |
 
 **Status Endpoint** (HTTP):
 - `GET http://localhost:8080/health` - Health check

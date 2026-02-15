@@ -11,34 +11,43 @@ This document catalogs all credential schemas, their SAIDs, and governance rules
 
 ## Credential Types and Schema SAIDs
 
-### Official vLEI Governance Framework SAIDs
+### All Schema SAIDs
 
-| Credential Type | Schema SAID | Description |
-|----------------|-------------|-------------|
-| **QVI** (Qualified vLEI Issuer) | `EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao` | Identifies a QVI authorized by GLEIF |
-| **LE** (Legal Entity) | `EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao` | Identifies a legal entity vetted by a QVI |
-| **LE** (Provenant demo) | `EJrcLKzq4d1PFtlnHLb9tl4zGwPAjO6v0dec4CiJMZk6` | Provenant-specific LE schema (workaround) |
-| **APE** (Auth Phone Entity) | *(project-specific)* | Authorizes entity for phone operations |
-| **DE** (Delegate Entity) | `EL7irIKYJL9Io0hhKSGWI4OznhwC7qgJG5Qf4aEs6j0o` | Delegates authority (Provenant demo) |
-| **TNAlloc** (TN Allocation) | `EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ` | Allocates telephone numbers |
-| **Brand** (Brand Owner) | *(project-specific)* | Associates brand identity |
-| **VetterCertification** | `EOefmhWU2qTpMiEQhXohE6z3xRXkpLloZdhTYIenlD4H` | Certifies vetter for ECC/jurisdiction constraints (Sprint 61) |
-| **Extended LE** | `EPknTwPpSZi379molapnuN4V5AyhCxz_6TLYdiVNWvbV` | LE with `certification` edge to VetterCert (Sprint 61) |
-| **Extended Brand** | `EK7kPhs5YkPsq9mZgUfPYfU-zq5iSlU8XVYJWqrVPk6g` | Brand with `certification` edge to VetterCert (Sprint 61) |
-| **Extended TNAlloc** | `EGUh_fVLbjfkYFb5zAsY2Rqq0NqwnD3r5jsdKWLTpU8_` | TNAlloc with `certification` edge to VetterCert (Sprint 61) |
+| Credential Type | Schema SAID | Source |
+|----------------|-------------|--------|
+| **QVI** (Qualified vLEI Issuer) | `EBfdlu8R27Fbx-ehrqwImnK-8Cm79sqbAQ4MmvEAYqao` | vLEI Governance |
+| **LE** (Legal Entity) | `ENPXp1vQzRF6JwIuS-mp2U8Uf1MoADoP_GqQ62VsDZWY` | vLEI Governance |
+| **LE** (Provenant demo) | `EJrcLKzq4d1PFtlnHLb9tl4zGwPAjO6v0dec4CiJMZk6` | Provenant workaround |
+| **OOR Auth** | `EKA57bKBKxr_kN7iN5i7lMUxpMG-s19dRcmov1iDxz-E` | vLEI Governance |
+| **OOR** (Official Org Role) | `EBNaNu-M9P5cgrnfl2Fvymy4E_jvxxyjb70PRtiANlJy` | vLEI Governance |
+| **ECR Auth** | `EH6ekLjSr8V32WyFbGe1zXjTzFs9PkTYmupJ9H65O14g` | vLEI Governance |
+| **ECR** (Engagement Context) | `EEy9PkikFcANV1l7EHukCeXqrzT1hNZjGlUk7wuMO5jw` | vLEI Governance |
+| **APE** (Auth Phone Entity) | *(pending governance)* | Accept any |
+| **DE / GCD** (Delegate / Cooperative Delegation) | `EL7irIKYJL9Io0hhKSGWI4OznhwC7qgJG5Qf4aEs6j0o` | VVP project |
+| **TNAlloc** (TN Allocation) | `EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ` | VVP project |
+| **Brand** (Brand Owner) | *(pending governance)* | Accept any |
+| **Dossier (CVD)** | `EH1jN4U4LMYHmPVI4FYdZ10bIPR7YWKp8TDdZ9Y9Al-P` | VVP project |
+| **GSMA Governance** | `EIBowJmxx5hNWQlfXqGcbN0aP_RBuucMW6mle4tAN6TL` | VVP project (Sprint 62) |
+| **VetterCertification** | `EOefmhWU2qTpMiEQhXohE6z3xRXkpLloZdhTYIenlD4H` | VVP project (Sprint 61) |
+| **Extended LE** | `EPknTwPpSZi379molapnuN4V5AyhCxz_6TLYdiVNWvbV` | VVP project (Sprint 61) |
+| **Extended Brand** | `EK7kPhs5YkPsq9mZgUfPYfU-zq5iSlU8XVYJWqrVPk6g` | VVP project (Sprint 61) |
+| **Extended TNAlloc** | `EGUh_fVLbjfkYFb5zAsY2Rqq0NqwnD3r5jsdKWLTpU8_` | VVP project (Sprint 61) |
 
 ### Schema SAID Lookup
 Credential type is determined primarily by schema SAID, with edge-name heuristic as fallback:
 
 ```python
-# Primary: Schema SAID → credential type
-SCHEMA_SAID_MAP = {
-    "EBfdlu8R27Fbx-...": "LE",                # Official vLEI
-    "EJrcLKzq4d1PF...": "LE",                 # Provenant demo
-    "EL7irIKYJL9Io...": "DE",                 # Provenant demo
-    "EFvnoHDY7I-kaBBe...": "TNAlloc",         # Base TN Allocation
-    "EOefmhWU2qTpMiEQ...": "VetterCert",      # VetterCertification (Sprint 61)
-    ...
+# Primary: Schema SAID → credential type (KNOWN_SCHEMA_SAIDS in common/vvp/schema/registry.py)
+KNOWN_SCHEMA_SAIDS = {
+    "QVI": {"EBfdlu8R27Fbx-..."},
+    "LE": {"ENPXp1vQzRF6Jw...", "EJrcLKzq4d1PF..."},  # Official + Provenant
+    "OOR_AUTH": {"EKA57bKBKxr_kN..."},
+    "OOR": {"EBNaNu-M9P5cgr..."},
+    "ECR_AUTH": {"EH6ekLjSr8V32W..."},
+    "ECR": {"EEy9PkikFcANV1..."},
+    "APE": set(),                              # Pending governance — accept any
+    "DE": {"EL7irIKYJL9Io..."},                # GCD (delsig, TN allocator)
+    "TNAlloc": {"EFvnoHDY7I-kaBBe..."},
 }
 
 # Extended schemas — schemas with a `certification` edge to VetterCert (Sprint 61)
@@ -77,7 +86,23 @@ EDGE_NAME_MAP = {
 | `legal-entity-engagement-context-role-vLEI-credential.json` | ECR | Engagement Context Role |
 
 ### Issuer Schemas (`services/issuer/app/schema/schemas/`)
-Contains the same set plus additional types for credential issuance.
+
+| File | SAID | Schema Type |
+|------|------|-------------|
+| `qualified-vLEI-issuer-vLEI-credential.json` | `EBfdlu8R27Fbx-...` | QVI |
+| `legal-entity-vLEI-credential.json` | `ENPXp1vQzRF6Jw...` | LE |
+| `EL7irIKYJL9Io0hhKSGWI4OznhwC7qgJG5Qf4aEs6j0o.json` | `EL7irIKYJL9Io...` | GCD (DE) |
+| `EFvnoHDY7I-kaBBeKlbDbkjG4BaI0nKLGadxBdjMGgSQ.json` | `EFvnoHDY7I-ka...` | TNAlloc |
+| `EH1jN4U4LMYHmPVI4FYdZ10bIPR7YWKp8TDdZ9Y9Al-P.json` | `EH1jN4U4LMYHm...` | Dossier (CVD) |
+| `vetter-certification-credential.json` | `EOefmhWU2qTpMi...` | VetterCert |
+| `gsma-governance-credential.json` | `EIBowJmxx5hNWQ...` | GSMA Governance |
+| `extended-legal-entity-credential.json` | `EPknTwPpSZi379...` | Extended LE |
+| `extended-brand-credential.json` | `EK7kPhs5YkPsq9...` | Extended Brand |
+| `extended-tn-allocation-credential.json` | `EGUh_fVLbjfkYF...` | Extended TNAlloc |
+| `oor-authorization-vlei-credential.json` | `EKA57bKBKxr_kN...` | OOR Auth |
+| `ecr-authorization-vlei-credential.json` | `EH6ekLjSr8V32W...` | ECR Auth |
+| `legal-entity-official-organizational-role-vLEI-credential.json` | `EBNaNu-M9P5cgr...` | OOR |
+| `legal-entity-engagement-context-role-vLEI-credential.json` | `EEy9PkikFcANV1...` | ECR |
 
 ---
 

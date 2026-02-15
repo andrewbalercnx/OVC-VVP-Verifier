@@ -12,6 +12,7 @@ VVP/
 │       ├── models/             # ACDC, dossier data models
 │       ├── canonical/          # KERI/CESR serialization
 │       ├── schema/             # Schema registry, validation
+│       ├── sip/                # SIP models, builder, parser, transport
 │       └── utils/              # Shared utilities
 ├── services/
 │   ├── verifier/               # VVP Verifier service
@@ -23,10 +24,16 @@ VVP/
 │   │   └── Dockerfile          # Container definition
 │   └── issuer/                 # VVP Issuer service (Sprint 28+)
 │       ├── app/                # FastAPI application
-│       │   ├── api/            # API routers (health, identity)
-│       │   └── keri/           # KERI integration (identity, witness)
+│       │   ├── api/            # API routers (15 router files)
+│       │   ├── auth/           # Authentication (API keys, sessions, OAuth, RBAC)
+│       │   ├── keri/           # KERI integration (identity, registry, witness, issuer)
+│       │   ├── vetter/         # Vetter certification (service, constants)
+│       │   ├── dossier/        # Dossier assembly (builder)
+│       │   ├── org/            # Organization management (mock_vlei)
+│       │   ├── db/             # Database models and sessions
+│       │   └── audit/          # Audit logging
 │       ├── tests/              # Test suite
-│       ├── web/                # Static assets (/create UI)
+│       ├── web/                # Static assets (19 HTML pages)
 │       ├── config/             # witnesses.json
 │       ├── pyproject.toml      # Service dependencies
 │       └── Dockerfile          # Container definition
@@ -42,7 +49,9 @@ VVP/
 │   ├── api-reference.md        # All API endpoints
 │   ├── data-models.md          # All Pydantic/DB models
 │   ├── test-patterns.md        # Test structure and patterns
-│   └── deployment.md           # CI/CD, Azure, Docker
+│   ├── deployment.md           # CI/CD, Azure, Docker
+│   ├── dossier-parsing-algorithm.md  # Dossier parsing stages
+│   └── dossier-creation-guide.md     # Step-by-step dossier creation
 └── CLAUDE.md                   # This file
 ```
 
@@ -737,27 +746,44 @@ VVP/
 │       ├── models/                  # ACDC, Dossier data models
 │       ├── canonical/               # keri_canonical, cesr, parser, said
 │       ├── schema/                  # registry, store, validator
+│       ├── sip/                     # SIP models, builder, parser, transport
 │       └── utils/                   # tn_utils
 ├── services/
-│   └── verifier/
+│   ├── verifier/
+│   │   ├── app/
+│   │   │   ├── core/
+│   │   │   │   └── config.py        # Configuration (TRUSTED_ROOT_AIDS, etc.)
+│   │   │   ├── vvp/
+│   │   │   │   ├── api_models.py    # Pydantic models, ErrorCode enum
+│   │   │   │   ├── exceptions.py    # VVPIdentityError, PassportError
+│   │   │   │   ├── header.py        # VVP-Identity parser
+│   │   │   │   ├── passport.py      # PASSporT JWT parser
+│   │   │   │   ├── verify.py        # Main verification flow
+│   │   │   │   ├── keri/            # KERI integration
+│   │   │   │   ├── acdc/            # ACDC credential handling
+│   │   │   │   ├── dossier/         # Dossier handling
+│   │   │   │   └── vetter/          # Vetter constraint validation
+│   │   │   └── main.py              # FastAPI application
+│   │   ├── tests/                   # Test suite
+│   │   ├── scripts/                 # Service scripts
+│   │   ├── web/                     # Static assets
+│   │   ├── pyproject.toml           # Service dependencies
+│   │   ├── pytest.ini               # Test configuration
+│   │   └── Dockerfile               # Container definition
+│   └── issuer/
 │       ├── app/
-│       │   ├── core/
-│       │   │   └── config.py        # Configuration (TRUSTED_ROOT_AIDS, etc.)
-│       │   ├── vvp/
-│       │   │   ├── api_models.py    # Pydantic models, ErrorCode enum
-│       │   │   ├── exceptions.py    # VVPIdentityError, PassportError
-│       │   │   ├── header.py        # VVP-Identity parser
-│       │   │   ├── passport.py      # PASSporT JWT parser
-│       │   │   ├── verify.py        # Main verification flow
-│       │   │   ├── keri/            # KERI integration
-│       │   │   ├── acdc/            # ACDC credential handling
-│       │   │   └── dossier/         # Dossier handling
-│       │   └── main.py              # FastAPI application
+│       │   ├── api/                 # API routers (15 files)
+│       │   ├── auth/                # Authentication (API keys, sessions, OAuth, RBAC)
+│       │   ├── keri/                # KERI integration (identity, registry, witness, issuer)
+│       │   ├── vetter/              # Vetter certification (service, constants)
+│       │   ├── dossier/             # Dossier assembly (builder)
+│       │   ├── org/                 # Organization management (mock_vlei)
+│       │   ├── db/                  # Database models and sessions
+│       │   └── audit/               # Audit logging
 │       ├── tests/                   # Test suite
-│       ├── scripts/                 # Service scripts
-│       ├── web/                     # Static assets
+│       ├── web/                     # Static assets (19 HTML pages)
+│       ├── config/                  # witnesses.json
 │       ├── pyproject.toml           # Service dependencies
-│       ├── pytest.ini               # Test configuration
 │       └── Dockerfile               # Container definition
 ├── knowledge/                       # Deep reference docs (Tier 3)
 │   ├── architecture.md              # Full system architecture
@@ -767,7 +793,9 @@ VVP/
 │   ├── api-reference.md             # All API endpoints
 │   ├── data-models.md               # All Pydantic/DB models
 │   ├── test-patterns.md             # Test structure and patterns
-│   └── deployment.md                # CI/CD, Azure, Docker
+│   ├── deployment.md                # CI/CD, Azure, Docker
+│   ├── dossier-parsing-algorithm.md # Dossier parsing stages
+│   └── dossier-creation-guide.md    # Step-by-step dossier creation
 ├── Documentation/                   # Specs, checklists, archived plans
 ├── keripy/                          # Vendored KERI library
 ├── scripts/                         # Root convenience wrappers

@@ -20,23 +20,30 @@ VVP/
 │   ├── app/vvp/authorization.py # Authorization chain validation
 │   ├── app/vvp/keri/            # KEL resolver, TEL client, CESR parser
 │   ├── app/vvp/acdc/            # ACDC models, verifier, schema registry
-│   └── app/vvp/dossier/         # Dossier parser, validator, cache
+│   ├── app/vvp/dossier/         # Dossier parser, validator, cache
+│   └── app/vvp/vetter/          # Vetter constraint validation (Sprint 62)
 │
 ├── services/issuer/             # VVP Issuer (manages credentials)
 │   ├── app/main.py              # FastAPI app with all routers
-│   ├── app/api/                 # API routers
+│   ├── app/api/                 # API routers (15 router files)
 │   │   ├── health.py            # Health endpoints
-│   │   ├── credential.py        # GET /credential (list, filter)
-│   │   ├── dossier.py           # POST /create, GET /associated, build
-│   │   ├── organization.py      # GET /names, org management
-│   │   ├── tn_mapping.py        # TN mapping CRUD
-│   │   ├── vvp.py               # POST /api/vvp/create (signing)
+│   │   ├── credential.py        # Credential issue/list/revoke
+│   │   ├── dossier.py           # Dossier create, build, readiness, associated
+│   │   ├── organization.py      # Organization CRUD, /names
+│   │   ├── tn.py                # TN mapping CRUD + lookup
+│   │   ├── vvp.py               # POST /vvp/create (signing)
+│   │   ├── vetter_certification.py # VetterCert CRUD (Sprint 61)
+│   │   ├── admin.py             # Admin endpoints (~20)
+│   │   ├── dashboard.py         # Dashboard health
 │   │   └── models.py            # Pydantic request/response models
-│   ├── app/keri/                # KERI identity, witness, registry
-│   ├── app/auth/                # API keys, RBAC, sessions
-│   ├── app/db/models.py         # SQLAlchemy models (Organization, ManagedCredential, etc.)
+│   ├── app/keri/                # KERI identity, witness, registry, issuer
+│   ├── app/vetter/              # VetterCertification service + constants (Sprint 61)
+│   ├── app/dossier/             # Dossier assembly (builder)
+│   ├── app/org/                 # Organization management (mock_vlei)
+│   ├── app/auth/                # API keys, RBAC, sessions, OAuth
+│   ├── app/db/models.py         # SQLAlchemy models (9 tables)
 │   ├── app/audit/               # Audit logging
-│   ├── web/                     # Multi-page web UI
+│   ├── web/                     # Multi-page web UI (19 HTML pages)
 │   └── tests/                   # Test suite
 │
 ├── services/pbx/                # PBX configuration
@@ -49,7 +56,10 @@ VVP/
 │   ├── schemas.md               # Schema SAIDs and governance
 │   ├── api-reference.md         # All API endpoints
 │   ├── data-models.md           # All Pydantic/DB models
-│   └── test-patterns.md         # Test structure and patterns
+│   ├── test-patterns.md         # Test structure and patterns
+│   ├── deployment.md            # CI/CD, Azure, Docker
+│   ├── dossier-parsing-algorithm.md # Dossier parsing stages
+│   └── dossier-creation-guide.md # Step-by-step dossier creation
 │
 ├── keripy/                      # Vendored KERI library
 ├── scripts/                     # Convenience scripts
@@ -73,14 +83,24 @@ VVP/
 - `services/verifier/app/vvp/authorization.py` — TN rights, delegation checks
 - `services/verifier/app/vvp/keri/kel_resolver.py` — KEL resolution via OOBI
 
+### Vetter Constraints
+- `services/issuer/app/vetter/service.py` — VetterCertificationManager (7-point validation)
+- `services/issuer/app/vetter/constants.py` — Schema SAIDs, ECC/jurisdiction code lists
+- `services/issuer/app/api/vetter_certification.py` — VetterCert CRUD API
+- `services/verifier/app/vvp/vetter/constraints.py` — ECC/jurisdiction checking (Phase 11)
+- `services/verifier/app/vvp/vetter/certification.py` — VetterCert credential validation
+- `services/verifier/app/vvp/vetter/traversal.py` — Credential chain walk for cert backlinks
+
 ### Authentication & Authorization
 - `services/issuer/app/auth/api_key.py` — API key authentication
-- `services/issuer/app/auth/rbac.py` — Role-based access control
-- `services/issuer/app/api/scoping.py` — Credential access scoping
+- `services/issuer/app/auth/roles.py` — System role hierarchy
+- `services/issuer/app/auth/org_roles.py` — Organization role hierarchy
+- `services/issuer/app/auth/scoping.py` — Multi-tenant credential access control
+- `services/issuer/app/auth/oauth.py` — Microsoft OAuth (Entra ID)
 
 ### Database Models
-- `services/issuer/app/db/models.py` — Organization, ManagedCredential, TNMapping, DossierOspAssociation, etc.
+- `services/issuer/app/db/models.py` — 9 tables: Organization, User, UserOrgRole, OrgAPIKey, OrgAPIKeyRole, ManagedCredential, MockVLEIState, TNMapping, DossierOspAssociation
 
 ### Schema Registry
-- `common/vvp/schema/registry.py` — Shared schema registry
+- `common/vvp/schema/registry.py` — Shared schema registry (KNOWN_SCHEMA_SAIDS)
 - `services/verifier/app/vvp/acdc/schema_registry.py` — Verifier-specific registry

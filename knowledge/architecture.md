@@ -45,9 +45,10 @@ The system consists of three services plus shared infrastructure:
 | `app/vvp/acdc/` | ACDC credential handling (models, verifier, schema) |
 | `app/vvp/dossier/` | Dossier handling (parser, validator, cache) |
 | `app/vvp/authorization.py` | Authorization chain validation (TNAlloc, delegation) |
+| `app/vvp/vetter/` | Vetter constraint validation (constraints, certification, traversal) |
 | `app/vvp/api_models.py` | Request/Response Pydantic models |
 | `app/vvp/exceptions.py` | Domain exceptions |
-| `web/` | Static UI for JWT parsing and verification testing |
+| `web/` | Static UI for verification, JWT parsing, SIP explore, admin |
 | `tests/` | Test suite |
 
 **Deployed at**: `https://vvp-verifier.wittytree-2a937ccd.uksouth.azurecontainerapps.io`
@@ -69,7 +70,7 @@ The system consists of three services plus shared infrastructure:
 | `app/db/` | Database models and session management |
 | `app/audit/` | Audit logging |
 | `app/config.py` | Configuration |
-| `web/` | Multi-page web UI (create, registry, schemas, login, organizations, credentials, dossiers, tn-mappings, admin) |
+| `web/` | Multi-page web UI (19 pages: identity, registry, schemas, credentials, dossier, vvp, dashboard, admin, vetter, tn-mappings, benchmarks, help, walkthrough, organizations, users, profile, login, 404) |
 | `config/witnesses.json` | Witness pool configuration |
 | `tests/` | Test suite |
 
@@ -91,7 +92,13 @@ The system consists of three services plus shared infrastructure:
 | `app/issuer_client.py` | HTTP client for Issuer API |
 | `app/config.py` | Configuration |
 
-**Runs on**: PBX server (`pbx.rcnx.io`), port 5060 UDP
+**Runs on**: PBX server (`pbx.rcnx.io`), port 5070 UDP
+
+### 3b. SIP Verify Service (`services/sip-verify/`)
+
+**Purpose**: SIP proxy that receives redirected calls, verifies VVP headers via the Verifier API, and adds brand/vetter status headers before delivery.
+
+**Runs on**: PBX server (`pbx.rcnx.io`), port 5071 UDP (or OSS verifier at port 5072)
 
 ### 4. Common Library (`common/`)
 
@@ -104,7 +111,10 @@ The system consists of three services plus shared infrastructure:
 | `vvp/models/` | ACDC and dossier data models |
 | `vvp/canonical/` | KERI canonical serialization, CESR encoding, SAID computation |
 | `vvp/schema/` | Schema registry, store, validator |
-| `vvp/sip/models.py` | Shared SIP data models |
+| `vvp/sip/models.py` | Shared SIP data models (SIPRequest, SIPResponse) |
+| `vvp/sip/builder.py` | SIP response builders (302, 400, 401, 403, 404, 500) |
+| `vvp/sip/parser.py` | SIP message parser |
+| `vvp/sip/transport.py` | SIP UDP transport |
 | `vvp/utils/tn_utils.py` | Telephone number utilities |
 
 ---
@@ -124,20 +134,24 @@ SIP INVITE with VVP headers
     → Phase 9: Check revocation status via TEL
     → Phase 10: Validate credential chain (walk to trusted root)
     → Phase 11: Check authorization (TN rights, delegation)
+    → Phase 11b: Vetter constraint evaluation (ECC, jurisdiction)
   → Return Claim Tree (VALID | INVALID | INDETERMINATE)
 ```
 
 ### Call Signing Flow (SIP Redirect → Issuer)
 ```
 PBX dials 7XXXX (VVP prefix)
-  → SIP INVITE to SIP Redirect (port 5060)
+  → SIP INVITE to SIP Redirect (port 5070)
     → Extract caller TN from From header
-    → POST /api/vvp/create to Issuer API (with API key)
+    → POST /vvp/create to Issuer API (with API key)
       → Issuer looks up TN mapping
       → Issuer builds PASSporT JWT (Ed25519 signed)
       → Issuer returns VVP-Identity + Identity headers
     → SIP 302 Redirect with VVP headers
-  → PBX follows redirect to destination with VVP attestation
+  → PBX follows redirect to SIP Verify (port 5071)
+    → Verify VVP headers via Verifier API
+    → Add brand/vetter status headers
+    → Deliver to destination extension
 ```
 
 ---

@@ -382,5 +382,7 @@ def get_auth_exempt_paths() -> set[str]:
         # Sprint 52: Dashboard
         exempt.add("/ui/dashboard")
         exempt.add("/api/dashboard/status")
+        # Sprint 66: Walkthrough
+        exempt.add("/ui/walkthrough")
 
     return exempt

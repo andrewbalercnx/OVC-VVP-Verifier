@@ -131,6 +131,8 @@ Key shared fixtures:
 | `test_sprint41_multitenancy.py` | Multi-tenancy features |
 | `test_vetter_certification.py` | VetterCert API CRUD, access control, schema guard (22 tests, Sprint 61) |
 | `test_vetter_constraints.py` | Pydantic validation, `resolve_active_vetter_cert()`, edge injection, constants (27 tests, Sprint 61) |
+| `test_dossier_readiness.py` | Dossier readiness endpoint, per-slot status, I2I checks, bproxy gate (25 tests, Sprint 65) |
+| `test_walkthrough.py` | Walkthrough page auth/access, route registration (Sprint 66) |
 
 ---
 
@@ -171,3 +173,31 @@ async def test_constraints(mock_resolve, ...):
 ```
 
 **Schema JSON inspection**: `test_vetter_constraints.py` reads schema JSON files from disk to verify `schema_requires_certification_edge()` detects `oneOf` edge blocks correctly in extended schema definitions
+
+### Sprint 65 Test Patterns
+
+**In-memory SQLite with FK enforcement**: Readiness tests use an in-memory SQLite engine with `PRAGMA foreign_keys=ON` listener to enforce FK constraints during testing:
+```python
+@pytest.fixture
+def in_memory_db():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    @event.listens_for(engine, "connect")
+    def _set_fk_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+```
+
+**`_full_cred_set()` helper**: Generates a complete set of `ManagedCredential` rows for all dossier edge slots (dossier, GCD, TNAlloc, LE). Used in readiness tests to simulate full credential availability:
+```python
+def _full_cred_set(org_id, org_aid):
+    return [
+        ManagedCredential(said="Edossier...", organization_id=org_id,
+            schema_said=DOSSIER_SCHEMA_SAID, issuer_aid=org_aid),
+        ManagedCredential(said="Egcd...", organization_id=org_id,
+            schema_said=GCD_SCHEMA_SAID, issuer_aid=org_aid),
+        ...
+    ]
+```
+
+**Schema edge parsing mock**: Tests mock `_parse_schema_edges()` and `_check_edge_schema()` to test slot validation logic without loading real schema JSON files

@@ -250,6 +250,12 @@ def ui_tn_mappings():
     return FileResponse(WEB_DIR / "tn-mappings.html", media_type="text/html")
 
 
+@app.get("/ui/walkthrough", response_class=FileResponse)
+def ui_walkthrough():
+    """Serve the interactive guided walkthrough (Sprint 66)."""
+    return FileResponse(WEB_DIR / "walkthrough.html", media_type="text/html")
+
+
 # -----------------------------------------------------------------------------
 # Sprint 41: User Management & Multi-tenancy UI Routes
 # -----------------------------------------------------------------------------

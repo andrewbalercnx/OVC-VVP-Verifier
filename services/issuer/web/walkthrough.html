@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guided Walkthrough - VVP Issuer</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+  <style>
+    body {
+      padding: 0;
+      max-width: none;
+    }
+
+    .walkthrough-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 1.5rem;
+      border-bottom: 1px solid var(--vvp-border);
+      background: white;
+    }
+
+    .walkthrough-header .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .walkthrough-header .logo {
+      font-weight: bold;
+      font-size: 1.3rem;
+      text-decoration: none;
+      color: var(--vvp-dark);
+    }
+
+    .walkthrough-header .logo:hover {
+      color: var(--vvp-primary);
+    }
+
+    .walkthrough-header .back-link {
+      color: var(--vvp-primary);
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+
+    .walkthrough-header .back-link:hover {
+      text-decoration: underline;
+    }
+
+    /* Progress bar */
+    .progress-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1.5rem;
+      background: var(--vvp-light);
+      border-bottom: 1px solid var(--vvp-border);
+      font-size: 0.85rem;
+      color: var(--vvp-text-muted);
+    }
+
+    .progress-track {
+      flex: 1;
+      height: 4px;
+      background: var(--vvp-border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--vvp-primary);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
+    /* Split pane layout */
+    .split-pane {
+      display: grid;
+      grid-template-columns: minmax(300px, 1fr) 6px 2fr;
+      height: calc(100vh - 90px);
+    }
+
+    /* Tutorial pane (left) */
+    .tutorial-pane {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: white;
+    }
+
+    .tutorial-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem;
+    }
+
+    .tutorial-content h2 {
+      margin-top: 0;
+      font-size: 1.3rem;
+      color: var(--vvp-dark);
+    }
+
+    .tutorial-content p {
+      line-height: 1.6;
+      color: var(--vvp-text);
+    }
+
+    .tutorial-content .tip {
+      background: #e8f5e9;
+      border-left: 3px solid var(--vvp-primary);
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+      border-radius: 0 4px 4px 0;
+      font-size: 0.9rem;
+    }
+
+    .tutorial-content .note {
+      background: #fff3e0;
+      border-left: 3px solid var(--vvp-warning);
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+      border-radius: 0 4px 4px 0;
+      font-size: 0.9rem;
+    }
+
+    .tutorial-content ul {
+      padding-left: 1.5rem;
+      line-height: 1.8;
+    }
+
+    .tutorial-content code {
+      background: #f0f0f0;
+      padding: 0.15rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.9em;
+    }
+
+    /* Navigation buttons */
+    .tutorial-nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.5rem;
+      border-top: 1px solid var(--vvp-border);
+      background: var(--vvp-light);
+    }
+
+    .tutorial-nav button {
+      padding: 0.5rem 1.25rem;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: background 0.2s;
+    }
+
+    .tutorial-nav button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .btn-prev {
+      background: white;
+      color: var(--vvp-text);
+      border: 1px solid var(--vvp-border) !important;
+    }
+
+    .btn-prev:hover:not(:disabled) {
+      background: var(--vvp-light);
+    }
+
+    .btn-next {
+      background: var(--vvp-primary);
+      color: white;
+    }
+
+    .btn-next:hover:not(:disabled) {
+      background: var(--vvp-primary-hover);
+    }
+
+    .step-indicator {
+      font-size: 0.85rem;
+      color: var(--vvp-text-muted);
+    }
+
+    /* Divider (draggable) */
+    .pane-divider {
+      background: var(--vvp-border);
+      cursor: col-resize;
+      transition: background 0.2s;
+    }
+
+    .pane-divider:hover,
+    .pane-divider.dragging {
+      background: var(--vvp-primary);
+    }
+
+    /* Preview pane (right) */
+    .preview-pane {
+      overflow: hidden;
+      background: var(--vvp-light);
+    }
+
+    .preview-pane iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    /* Responsive: stack on narrow screens */
+    @media (max-width: 768px) {
+      .split-pane {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 6px 1fr;
+        height: auto;
+        min-height: calc(100vh - 90px);
+      }
+
+      .pane-divider {
+        cursor: row-resize;
+      }
+
+      .tutorial-pane {
+        min-height: 300px;
+      }
+
+      .preview-pane {
+        min-height: 400px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="walkthrough-header">
+    <div class="header-brand">
+      <a href="/ui/" class="logo">
+        <span class="service-label">VVP</span>
+        Guided Walkthrough
+      </a>
+    </div>
+    <a href="/ui/" class="back-link">Back to Home</a>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-bar">
+    <span id="progressLabel">Step 1 of 10</span>
+    <div class="progress-track">
+      <div class="progress-fill" id="progressFill" style="width: 10%"></div>
+    </div>
+  </div>
+
+  <!-- Split pane -->
+  <div class="split-pane" id="splitPane">
+    <!-- Left: Tutorial -->
+    <div class="tutorial-pane">
+      <div class="tutorial-content" id="tutorialContent">
+        <!-- Populated by JS -->
+      </div>
+      <div class="tutorial-nav">
+        <button class="btn-prev" id="btnPrev" disabled>Previous</button>
+        <span class="step-indicator" id="stepIndicator">1 / 10</span>
+        <button class="btn-next" id="btnNext">Next</button>
+      </div>
+    </div>
+
+    <!-- Divider -->
+    <div class="pane-divider" id="paneDivider"></div>
+
+    <!-- Right: Live UI iframe -->
+    <div class="preview-pane">
+      <iframe id="previewFrame" src="/ui/" title="VVP Issuer UI Preview"></iframe>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================================
+    // Walkthrough Step Definitions
+    // =========================================================================
+    const WALKTHROUGH_STEPS = [
+      {
+        title: "Welcome to VVP Issuer",
+        content: `
+          <p>The <strong>VVP Issuer</strong> manages verifiable credentials using KERI-based decentralized identifiers. It handles the full credential lifecycle: identity creation, credential issuance, dossier assembly, and VVP header generation for authenticated calls.</p>
+          <p>This walkthrough guides you through the main pages and workflows. The right pane shows the live UI &mdash; you can interact with it as you follow along.</p>
+          <div class="tip"><strong>Tip:</strong> You can resize the panes by dragging the divider between them.</div>
+          <p>Key concepts you'll encounter:</p>
+          <ul>
+            <li><strong>AID</strong> &mdash; Autonomic Identifier, a self-certifying cryptographic identity</li>
+            <li><strong>ACDC</strong> &mdash; Authentic Chained Data Container, a verifiable credential</li>
+            <li><strong>Dossier</strong> &mdash; A bundle of credentials proving a caller's rights</li>
+            <li><strong>PASSporT</strong> &mdash; A signed JWT token for call attestation</li>
+          </ul>
+        `,
+        uiPath: "/ui/"
+      },
+      {
+        title: "Organizations",
+        content: `
+          <p>The <strong>Organizations</strong> page manages the multi-tenant structure. Each organization is a separate tenant with its own credentials, users, and API keys.</p>
+          <p>An organization is the root entity for all VVP operations. Before you can issue credentials, you need at least one organization with a KERI identity (AID).</p>
+          <div class="tip"><strong>Tip:</strong> In a fresh deployment, a bootstrap script creates an initial organization. In production, organizations are managed by administrators.</div>
+          <p>Key actions on this page:</p>
+          <ul>
+            <li>View all organizations and their status</li>
+            <li>Create a new organization</li>
+            <li>Manage organization API keys for programmatic access</li>
+            <li>Assign users to organizations with specific roles</li>
+          </ul>
+        `,
+        uiPath: "/organizations/ui"
+      },
+      {
+        title: "Identity Management",
+        content: `
+          <p>The <strong>Identities</strong> page creates and manages KERI identities (AIDs). Each identity is backed by Ed25519 key pairs and published to KERI witnesses.</p>
+          <p>An identity is required before you can issue any credentials. The identity's public key is used to verify signatures on credentials and PASSporTs.</p>
+          <div class="note"><strong>Note:</strong> Creating an identity involves witness interaction. The witnesses must be running and reachable for identity creation to succeed.</div>
+          <p>What happens when you create an identity:</p>
+          <ul>
+            <li>An Ed25519 key pair is generated</li>
+            <li>An inception event is published to configured witnesses</li>
+            <li>An OOBI (Out-of-Band Introduction) URL is generated for discovery</li>
+            <li>A credential registry (TEL) can be created for the identity</li>
+          </ul>
+        `,
+        uiPath: "/ui/identity"
+      },
+      {
+        title: "Schema Browser",
+        content: `
+          <p>The <strong>Schemas</strong> page lets you browse, import, and inspect credential schemas. Schemas define what fields a credential contains and how credentials link to each other via edges.</p>
+          <p>VVP uses several schema types:</p>
+          <ul>
+            <li><strong>Legal Entity (LE)</strong> &mdash; Identifies an organization</li>
+            <li><strong>Brand</strong> &mdash; Brand name and logo for caller ID display</li>
+            <li><strong>TN Allocation</strong> &mdash; Telephone number rights</li>
+            <li><strong>GCD</strong> &mdash; General Cooperative Delegation (used for alloc and delsig edges)</li>
+            <li><strong>Dossier</strong> &mdash; The root credential that bundles everything</li>
+          </ul>
+          <div class="tip"><strong>Tip:</strong> Each schema has a unique SAID (Self-Addressing Identifier) derived from its content hash. Click on a schema to see its full edge structure and attribute definitions.</div>
+        `,
+        uiPath: "/ui/schemas"
+      },
+      {
+        title: "Credential Issuance",
+        content: `
+          <p>The <strong>Credentials</strong> page is where you issue ACDC credentials. The form is schema-driven &mdash; when you select a schema, the UI dynamically renders input fields based on the schema's attribute definitions.</p>
+          <p>Typical credential issuance order:</p>
+          <ul>
+            <li><strong>1.</strong> Issue a Legal Entity (LE) credential to identify the organization</li>
+            <li><strong>2.</strong> Issue a Brand credential with display name and logo URL</li>
+            <li><strong>3.</strong> Issue TN Allocation credential(s) covering the organization's phone numbers</li>
+            <li><strong>4.</strong> Issue a GCD credential for delegation (delsig edge)</li>
+          </ul>
+          <div class="note"><strong>Note:</strong> Credentials are linked via edges. When issuing a Brand credential, you'll select the LE credential as an edge dependency. The UI shows available edges based on the schema definition.</div>
+        `,
+        uiPath: "/ui/credentials"
+      },
+      {
+        title: "Dossier Assembly",
+        content: `
+          <p>The <strong>Dossiers</strong> page assembles individual credentials into a dossier &mdash; a DAG (Directed Acyclic Graph) of ACDCs that proves a caller's identity and rights.</p>
+          <p>The dossier creation wizard has four steps:</p>
+          <ul>
+            <li><strong>Step 1:</strong> Select the organization and its credentials</li>
+            <li><strong>Step 2:</strong> Map dossier edges (vetting, alloc, tnalloc, delsig, bownr)</li>
+            <li><strong>Step 3:</strong> Configure access policies for each edge</li>
+            <li><strong>Step 4:</strong> Review and create the dossier</li>
+          </ul>
+          <div class="tip"><strong>Tip:</strong> Use the <strong>Readiness Check</strong> button to verify all required credentials are in place before starting the wizard. It shows which edges are satisfied and which are missing.</div>
+        `,
+        uiPath: "/ui/dossier"
+      },
+      {
+        title: "VVP Attestation",
+        content: `
+          <p>The <strong>VVP Headers</strong> page creates PASSporT JWTs and VVP-Identity headers for authenticated calls. This is the final step in the VVP signing flow.</p>
+          <p>When a call needs VVP signing:</p>
+          <ul>
+            <li>The caller's TN is looked up to find the associated dossier</li>
+            <li>A PASSporT JWT is signed with Ed25519 using the originating party's key</li>
+            <li>A VVP-Identity header is generated with the OOBI and dossier evidence URL</li>
+            <li>Both headers are attached to the SIP INVITE for the verifier to check</li>
+          </ul>
+          <div class="note"><strong>Note:</strong> In production, this flow is triggered automatically by the SIP redirect service on the PBX. This page is useful for manual testing and debugging.</div>
+        `,
+        uiPath: "/ui/vvp"
+      },
+      {
+        title: "Service Dashboard",
+        content: `
+          <p>The <strong>Dashboard</strong> provides a central overview of service health and status. It monitors the issuer, witnesses, and connected services.</p>
+          <p>Dashboard indicators:</p>
+          <ul>
+            <li><strong>Service health</strong> &mdash; Green/red dots for each service endpoint</li>
+            <li><strong>Identity status</strong> &mdash; Whether AIDs are active and witnesses reachable</li>
+            <li><strong>Credential counts</strong> &mdash; Total issued, active, and revoked credentials</li>
+            <li><strong>Recent activity</strong> &mdash; Latest credential operations and VVP attestations</li>
+          </ul>
+        `,
+        uiPath: "/ui/dashboard"
+      },
+      {
+        title: "Vetter Certification",
+        content: `
+          <p>The <strong>Vetter</strong> page manages vetter certifications for enhanced credential governance. This is an advanced feature for deployments using GSMA-style trust chains.</p>
+          <p>When a vetter certification is active:</p>
+          <ul>
+            <li>Credentials are issued with <strong>extended schemas</strong> that include a <code>certification</code> edge</li>
+            <li>The certification edge links back to the vetter's authorization credential</li>
+            <li>The verifier checks <strong>ECC targets</strong> (country codes) and <strong>jurisdiction targets</strong> against the caller's TN and organization</li>
+            <li>Failed constraint checks result in <strong>INDETERMINATE</strong> status (not INVALID)</li>
+          </ul>
+          <div class="tip"><strong>Tip:</strong> Most deployments don't need vetter certification. It's designed for telecom regulatory compliance scenarios.</div>
+        `,
+        uiPath: "/ui/vetter"
+      },
+      {
+        title: "Help & Next Steps",
+        content: `
+          <p>The <strong>Help</strong> page provides detailed documentation, recipes, and troubleshooting guides directly within the UI.</p>
+          <p>You've completed the walkthrough! Here's a summary of the typical workflow:</p>
+          <ul>
+            <li><strong>1.</strong> Create an organization and KERI identity</li>
+            <li><strong>2.</strong> Import or browse the required schemas</li>
+            <li><strong>3.</strong> Issue credentials (LE, Brand, TNAlloc, GCD)</li>
+            <li><strong>4.</strong> Assemble a dossier from the credentials</li>
+            <li><strong>5.</strong> Use VVP Headers to sign calls or configure the SIP redirect</li>
+          </ul>
+          <p>For programmatic access, each operation is available via the REST API. Use organization API keys for authentication.</p>
+          <div class="tip"><strong>Tip:</strong> The Help page has copy-pasteable API recipes for common operations like credential issuance and dossier creation.</div>
+        `,
+        uiPath: "/ui/help"
+      }
+    ];
+
+    // =========================================================================
+    // State
+    // =========================================================================
+    let currentStep = 0;
+
+    // =========================================================================
+    // DOM References
+    // =========================================================================
+    const tutorialContent = document.getElementById('tutorialContent');
+    const previewFrame = document.getElementById('previewFrame');
+    const btnPrev = document.getElementById('btnPrev');
+    const btnNext = document.getElementById('btnNext');
+    const stepIndicator = document.getElementById('stepIndicator');
+    const progressLabel = document.getElementById('progressLabel');
+    const progressFill = document.getElementById('progressFill');
+    const paneDivider = document.getElementById('paneDivider');
+    const splitPane = document.getElementById('splitPane');
+
+    // =========================================================================
+    // Render
+    // =========================================================================
+    function renderStep() {
+      const step = WALKTHROUGH_STEPS[currentStep];
+      const total = WALKTHROUGH_STEPS.length;
+
+      // Tutorial content
+      tutorialContent.innerHTML = '<h2>' + step.title + '</h2>' + step.content;
+      tutorialContent.scrollTop = 0;
+
+      // Iframe
+      previewFrame.src = step.uiPath;
+
+      // Navigation
+      btnPrev.disabled = currentStep === 0;
+      btnNext.disabled = currentStep === total - 1;
+      btnNext.textContent = currentStep === total - 1 ? 'Done' : 'Next';
+      stepIndicator.textContent = (currentStep + 1) + ' / ' + total;
+
+      // Progress
+      const pct = ((currentStep + 1) / total * 100).toFixed(0);
+      progressLabel.textContent = 'Step ' + (currentStep + 1) + ' of ' + total;
+      progressFill.style.width = pct + '%';
+    }
+
+    // =========================================================================
+    // Navigation
+    // =========================================================================
+    btnPrev.addEventListener('click', function () {
+      if (currentStep > 0) {
+        currentStep--;
+        renderStep();
+      }
+    });
+
+    btnNext.addEventListener('click', function () {
+      if (currentStep < WALKTHROUGH_STEPS.length - 1) {
+        currentStep++;
+        renderStep();
+      }
+    });
+
+    // Keyboard navigation
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowLeft' && currentStep > 0) {
+        currentStep--;
+        renderStep();
+      } else if (e.key === 'ArrowRight' && currentStep < WALKTHROUGH_STEPS.length - 1) {
+        currentStep++;
+        renderStep();
+      }
+    });
+
+    // =========================================================================
+    // Pane Resize (drag divider)
+    // =========================================================================
+    let isDragging = false;
+
+    paneDivider.addEventListener('mousedown', function (e) {
+      isDragging = true;
+      paneDivider.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      // Prevent iframe from capturing mouse events
+      previewFrame.style.pointerEvents = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', function (e) {
+      if (!isDragging) return;
+      const rect = splitPane.getBoundingClientRect();
+      const offset = e.clientX - rect.left;
+      const total = rect.width;
+      const leftPct = Math.max(20, Math.min(70, (offset / total) * 100));
+      const rightPct = 100 - leftPct;
+      splitPane.style.gridTemplateColumns = leftPct + '% 6px ' + rightPct + '%';
+    });
+
+    document.addEventListener('mouseup', function () {
+      if (isDragging) {
+        isDragging = false;
+        paneDivider.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        previewFrame.style.pointerEvents = '';
+      }
+    });
+
+    // =========================================================================
+    // Init
+    // =========================================================================
+    renderStep();
+  </script>
+</body>
+</html>

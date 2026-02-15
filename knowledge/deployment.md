@@ -165,34 +165,201 @@ az vm run-command invoke --resource-group VVP --name vvp-pbx \
 
 ## Environment Variables
 
-### Verifier
+### Verifier (`services/verifier/app/core/config.py`)
+
+#### Core
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `TRUSTED_ROOT_AIDS` | GLEIF AIDs | Comma-separated trusted root identifiers |
-| `MAX_PASSPORT_VALIDITY_SECONDS` | 300 | Maximum PASSporT age |
-| `CLOCK_SKEW_SECONDS` | 300 | Allowed clock drift |
+| `VVP_TRUSTED_ROOT_AIDS` | GLEIF Root AID | Comma-separated trusted root identifiers |
+| `VVP_LOCAL_WITNESS_URLS` | *(none)* | Comma-separated witness URLs for KEL resolution |
+| `VVP_SIP_TIMING_TOLERANCE` | `30` | SIP contextual alignment timing tolerance (seconds) |
+| `VVP_CONTEXT_REQUIRED` | `false` | Require CallContext in verify requests |
+| `ADMIN_ENDPOINT_ENABLED` | `true` | Enable `/admin/*` endpoints |
+| `SCHEMA_VALIDATION_STRICT` | `true` | Strict schema validation mode |
+| `TIER2_KEL_RESOLUTION_ENABLED` | `true` | Enable Tier 2 KEL resolution |
 
-### Issuer
+#### Callee Verification
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `DATABASE_URL` | `sqlite:///data/vvp.db` | Database connection |
-| `OAUTH_M365_CLIENT_ID` | - | Microsoft OAuth client ID |
-| `OAUTH_M365_TENANT_ID` | - | Microsoft OAuth tenant |
-| `SESSION_TTL_SECONDS` | 3600 | Session timeout |
+| `VVP_CALLEE_TN_RIGHTS_REQUIRED` | true | Require TN rights check on callee |
+| `VVP_ACCEPTED_GOALS` | *(all)* | Allowed goal types |
+| `VVP_REJECT_UNKNOWN_GOALS` | false | Reject unrecognized goals |
+| `VVP_GEO_CONSTRAINTS_ENFORCED` | `true` | Enforce geographic constraints |
 
-### SIP Redirect
+#### Caching
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_DOSSIER_CACHE_TTL` | `300` | Dossier cache TTL (seconds) |
+| `VVP_DOSSIER_CACHE_MAX_ENTRIES` | `100` | Max dossier cache entries |
+| `VVP_IDENTITY_CACHE_TTL` | `300` | Identity cache TTL |
+| `VVP_SCHEMA_CACHE_TTL` | `300` | Schema cache TTL |
+| `VVP_VERIFICATION_CACHE_ENABLED` | `true` | Enable verification result cache |
+| `VVP_VERIFICATION_CACHE_TTL` | `3600` | Verification cache TTL |
+| `VVP_VERIFICATION_CACHE_MAX_ENTRIES` | `200` | Max verification cache entries |
+
+#### Schema Resolution
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_SCHEMA_RESOLVER_ENABLED` | `true` | Enable remote schema resolution |
+| `VVP_SCHEMA_RESOLVER_CACHE_TTL` | `3600` | Schema resolver cache TTL |
+| `VVP_SCHEMA_RESOLVER_CACHE_MAX_ENTRIES` | `200` | Max resolver cache entries |
+| `VVP_SCHEMA_RESOLVER_TIMEOUT` | `5` | Resolver HTTP timeout |
+| `VVP_SCHEMA_REGISTRY_URLS` | GLEIF + Provenant + GitHub | Schema registry base URLs |
+| `VVP_SCHEMA_OOBI_RESOLUTION` | `false` | Enable OOBI-based schema resolution |
+
+#### KERI/vLEI Chain Resolution
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_VLEI_CHAIN_RESOLUTION` | `true` | Enable vLEI chain resolution |
+| `VVP_VLEI_CHAIN_MAX_DEPTH` | `3` | Max chain resolution depth |
+| `VVP_VLEI_CHAIN_MAX_CONCURRENT` | `5` | Max concurrent chain fetches |
+| `VVP_VLEI_CHAIN_MAX_TOTAL_FETCHES` | `10` | Max total chain fetches |
+| `VVP_VLEI_CHAIN_TIMEOUT` | `10` | Chain resolution timeout |
+| `VVP_ALLOW_AGGREGATE_DOSSIERS` | `false` | Allow multi-root dossiers |
+| `VVP_DEFAULT_EVD_URL_PATTERN` | Provenant demo URL | Default evidence URL pattern |
+
+#### External SAID Resolution
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_EXTERNAL_SAID_RESOLUTION` | `true` | Enable external SAID lookups |
+| `VVP_EXTERNAL_SAID_TIMEOUT` | `5` | External SAID HTTP timeout |
+| `VVP_EXTERNAL_SAID_MAX_DEPTH` | `3` | Max external SAID depth |
+| `VVP_EXTERNAL_SAID_CACHE_TTL` | `300` | External SAID cache TTL |
+| `VVP_EXTERNAL_SAID_CACHE_MAX_ENTRIES` | `500` | Max external SAID cache entries |
+
+#### Identity Discovery
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_IDENTITY_DISCOVERY_ENABLED` | `false` | Enable OOBI-based identity discovery |
+| `VVP_IDENTITY_DISCOVERY_TIMEOUT` | `3` | Discovery timeout |
+
+#### GLEIF Witness
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_GLEIF_WITNESS_OOBI` | GLEIF Root OOBI URL | GLEIF witness OOBI URL |
+| `VVP_GLEIF_WITNESS_DISCOVERY` | `true` | Auto-discover GLEIF witnesses |
+| `VVP_GLEIF_WITNESS_CACHE_TTL` | `300` | GLEIF witness cache TTL |
+| `VVP_TEL_CLIENT_TIMEOUT` | `10` | TEL client timeout |
+
+#### Vetter Constraints
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_ENFORCE_VETTER_CONSTRAINTS` | false | Enforce ECC/jurisdiction constraints |
+| `VVP_OPERATOR_VIOLATION_SEVERITY` | INDETERMINATE | Severity for vetter violations |
+
+#### Revocation
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_REVOCATION_RECHECK_INTERVAL` | `300` | Interval between revocation re-checks |
+| `VVP_REVOCATION_CHECK_CONCURRENCY` | `1` | Max concurrent revocation checks |
+
+### Issuer (`services/issuer/app/config.py`)
+
+#### Core
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_ISSUER_BASE_URL` | `http://localhost:8001` | Public base URL for dossier/OOBI URLs |
+| `VVP_ISSUER_DATA_DIR` | auto-detect | LMDB data directory (priority: env → /data/vvp-issuer → ~/.vvp-issuer → /tmp) |
+| `VVP_ISSUER_PORT` | `8001` | HTTP listen port |
+| `VVP_DATABASE_URL` | `sqlite:///{DATA_DIR}/vvp_issuer.db` | Database connection string |
+| `VVP_POSTGRES_HOST` | *(none)* | PostgreSQL host (overrides DATABASE_URL) |
+| `VVP_POSTGRES_USER` | `vvpadmin` | PostgreSQL username |
+| `VVP_POSTGRES_PASSWORD` | *(none)* | PostgreSQL password |
+| `VVP_POSTGRES_DB` | `vvpissuer` | PostgreSQL database name |
+| `ADMIN_ENDPOINT_ENABLED` | `true` | Enable `/admin/*` endpoints |
+| `VVP_DASHBOARD_SERVICES` | local defaults | JSON dashboard service config |
+
+#### KERI/Witness
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_WITNESS_CONFIG` | `config/witnesses.json` | Witness pool config file |
+| `VVP_WITNESS_TIMEOUT` | 10 | Witness HTTP timeout |
+| `VVP_WITNESS_THRESHOLD` | 2 | Min witnesses for receipt threshold |
+| `VVP_DEFAULT_KEY_COUNT` | 1 | Default signing keys for new identities |
+| `VVP_DEFAULT_KEY_THRESHOLD` | `"1"` | Default signing threshold |
+| `VVP_DEFAULT_NEXT_KEY_COUNT` | 1 | Default pre-rotated next keys |
+| `VVP_DEFAULT_NEXT_THRESHOLD` | `"1"` | Default next key threshold |
+| `VVP_MOCK_VLEI_ENABLED` | true | Enable mock GLEIF/QVI infrastructure |
+| `VVP_MOCK_GLEIF_NAME` | `mock-gleif` | Mock GLEIF identity name |
+| `VVP_MOCK_QVI_NAME` | `mock-qvi` | Mock QVI identity name |
+| `VVP_MOCK_GSMA_NAME` | `mock-gsma` | Mock GSMA identity name |
+
+#### Authentication
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_AUTH_ENABLED` | true | Enable API key authentication |
+| `VVP_UI_AUTH_ENABLED` | false | Enable UI authentication (separate from API) |
+| `VVP_DOCS_AUTH_EXEMPT` | false | Exempt /docs and /redoc from auth |
+| `VVP_AUTH_RELOAD_ENABLED` | `true` | Enable periodic auth config reload |
+| `VVP_AUTH_RELOAD_INTERVAL` | `60` | Auth reload interval (seconds) |
+| `VVP_API_KEYS_FILE` | `config/api_keys.json` | Path to API keys JSON file |
+| `VVP_API_KEYS` | *(none)* | Inline API keys JSON |
+| `VVP_USERS_FILE` | `config/users.json` | Path to users JSON file |
+| `VVP_USERS` | *(none)* | Inline users JSON |
+
+#### Sessions
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_SESSION_TTL` | 3600 | Session timeout (seconds) |
+| `VVP_SESSION_SECURE` | `true` | Secure cookie flag |
+| `VVP_SESSION_CLEANUP_INTERVAL` | 300 | Session cleanup interval |
+| `VVP_LOGIN_RATE_LIMIT_MAX` | 5 | Max login attempts per window |
+| `VVP_LOGIN_RATE_LIMIT_WINDOW` | `900` | Login rate limit window (seconds) |
+
+#### OAuth (Microsoft 365)
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_OAUTH_M365_ENABLED` | false | Enable M365 SSO |
+| `VVP_OAUTH_M365_TENANT_ID` | *(none)* | Azure AD tenant ID |
+| `VVP_OAUTH_M365_CLIENT_ID` | *(none)* | OAuth client ID |
+| `VVP_OAUTH_M365_CLIENT_SECRET` | *(none)* | OAuth client secret |
+| `VVP_OAUTH_M365_REDIRECT_URI` | *(none)* | OAuth redirect URI |
+| `VVP_OAUTH_M365_AUTO_PROVISION` | false | Auto-create users on first OAuth login |
+| `VVP_OAUTH_M365_ALLOWED_DOMAINS` | *(all)* | Restrict OAuth to specific email domains |
+| `VVP_OAUTH_M365_DEFAULT_ROLES` | `issuer:readonly` | Default roles for auto-provisioned users |
+| `VVP_OAUTH_STATE_TTL` | `600` | OAuth state parameter TTL |
+
+#### Dashboard
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_DASHBOARD_REQUEST_TIMEOUT` | 5 | Dashboard health check timeout |
+| `VVP_DASHBOARD_SIP_REDIRECT_URL` | *(none)* | SIP redirect service URL |
+| `VVP_DASHBOARD_SIP_REDIRECT_HEALTH` | `/healthz` | SIP redirect health path |
+| `VVP_DASHBOARD_SIP_VERIFY_URL` | *(none)* | SIP verify service URL |
+| `VVP_DASHBOARD_SIP_VERIFY_HEALTH` | `/healthz` | SIP verify health path |
+| `VVP_DASHBOARD_SIP_MONITOR_URL` | *(none)* | SIP monitor URL |
+
+#### Vetter Constraints
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VVP_ENFORCE_VETTER_CONSTRAINTS` | false | Enforce vetter constraints on issuance |
+| `AZURE_SUBSCRIPTION_ID` | *(none)* | Azure subscription for config management |
+| `AZURE_RESOURCE_GROUP` | *(none)* | Azure resource group |
+
+### SIP Services
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `VVP_ISSUER_URL` | `http://localhost:8001` | Issuer API endpoint |
+| `VVP_VERIFIER_URL` | `http://localhost:8000` | Verifier API endpoint |
 | `VVP_SIP_LISTEN_PORT` | 5060 | SIP UDP listen port (PBX overrides to 5070) |
-| `VVP_STATUS_HTTP_PORT` | 8080 | Status endpoint port (PBX overrides to 8085) |
-| `VVP_STATUS_ADMIN_KEY` | *(none)* | Admin key for /status |
-| `VVP_RATE_LIMIT_RPS` | 10.0 | Requests per second |
-| `VVP_RATE_LIMIT_BURST` | 50 | Burst size |
-| `VVP_TN_CACHE_TTL` | 300 | TN lookup cache TTL (seconds) |
-| `VVP_TN_CACHE_MAX_ENTRIES` | 1000 | TN lookup cache max entries |
-| `VVP_MONITOR_ENABLED` | false | Enable monitoring dashboard |
+| `VVP_SIP_VERIFY_PORT` | 5071 | SIP verify listen port |
+| `VVP_REDIRECT_TARGET` | *(none)* | SIP redirect target |
+| `VVP_MONITOR_ENABLED` | false | Enable SIP monitoring dashboard |
+| `VVP_TEST_MODE` | false | Enable test mode |
+| `VVP_TEST_API_KEY` | *(none)* | Test API key for E2E |
+| `VVP_AZURE_STORAGE_CONNECTION_STRING` | *(none)* | Azure blob storage for PBX deploys |
 | `GIT_SHA` | unknown | Version tracking (injected by CI/CD) |
+
+### Witnesses (Docker)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `WITNESS_NAME` | *(set per container)* | Witness identity name |
+| `HTTP_PORT` | *(set per container)* | Witness HTTP port |
+| `TCP_PORT` | *(set per container)* | Witness TCP port |
+| `KERI_DB_PATH` | `/data/keri` | KERI database path |
+| `LOG_LEVEL` | `info` | Witness log level |
 
 ---
 
